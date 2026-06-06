@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   SafeAreaView,
   Platform,
+  PlatformColor,
   UIManager,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';

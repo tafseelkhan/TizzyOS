@@ -1,16 +1,35 @@
 // types/settings.ts
-export type Language = 'en' | 'es' | 'fr' | 'de' | 'it' | 'pt' | 'ru' | 'zh' | 'ja' | 'ko' | 'ar' | 'hi' | 'bn' | 'ur' | 'ta';
+export type Language =
+  | 'en'
+  | 'es'
+  | 'fr'
+  | 'de'
+  | 'it'
+  | 'pt'
+  | 'ru'
+  | 'zh'
+  | 'ja'
+  | 'ko'
+  | 'ar'
+  | 'hi'
+  | 'bn'
+  | 'ur'
+  | 'ta';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 
 export interface ProfileData {
   _id: string;
   name: string;
+  email: string;
+  phone: string;
+  joinDate: string;
+  verified: string;
   image: string;
 }
 
 export interface SettingsItem {
-  kind?: "header" | "divider";
+  kind?: 'header' | 'divider';
   segment?: string;
   title: string;
   icon?: React.ReactNode;

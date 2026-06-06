@@ -1,4 +1,5 @@
-// screens/SettingsScreen.tsx
+// SettingsScreen.tsx - FIXED VERSION
+
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -11,106 +12,109 @@ import {
   Modal,
   Image,
   Platform,
-  Dimensions,
+  ActivityIndicator,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-import Feather from 'react-native-vector-icons/Feather';
+import MaterialCommunityIcon from 'react-native-vector-icons/MaterialCommunityIcons';
+import FeatherIcon from 'react-native-vector-icons/Feather';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import LottieView from 'lottie-react-native';
 import { SettingsItem } from './SettingItem';
 import {
   SettingsItem as SettingsItemType,
   ThemeMode,
   ProfileData,
-} from '../../types/settings';
+} from '../../types/Settings';
 import { useTheme } from '../../contexts/theme/ThemeContext';
+import { useNavigation } from '@react-navigation/native';
+import { profileApi } from '../../../api/features/private/profilePrivateSlice';
 
-const { width: screenWidth } = Dimensions.get('window');
-
+// Helper function to get image URL
 const getImageUrl = (image?: string): string => {
   if (!image) return '';
   if (image.startsWith('http')) return image;
-  return '';
+  if (image.startsWith('/uploads')) {
+    return `http://your-server-url:5000${image}`; // Apne server URL se replace karo
+  }
+  return image;
 };
 
 export const SettingsScreen: React.FC = () => {
   const navigation = useNavigation();
-  const { theme, setTheme, isDark, resolvedTheme } = useTheme();
+  const {
+    theme,
+    setTheme,
+    isDark,
+    resolvedTheme,
+    loading: themeLoading,
+  } = useTheme();
   const [previewImage, setPreviewImage] = useState('');
   const [notifications, setNotifications] = useState(true);
   const [themeModal, setThemeModal] = useState(false);
   const [biometric, setBiometric] = useState(false);
-  const [currency, setCurrency] = useState('INR');
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
-  const lottieRef = useRef<LottieView>(null);
+  const animationRef = useRef<LottieView>(null);
 
-  // Profile fetch function
   useEffect(() => {
     fetchProfile();
   }, []);
 
-  useFocusEffect(
-    React.useCallback(() => {
-      // Refresh profile when screen comes into focus
-      fetchProfile();
-    }, []),
-  );
-
   const fetchProfile = async () => {
     try {
       setLoading(true);
-      const token = await AsyncStorage.getItem('authToken');
+      const data = await profileApi.getProfile();
 
-      const response = await fetch('http://172.20.10.12:5000/api/profile/me', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      console.log('✅ Profile data received:', JSON.stringify(data, null, 2));
 
-      const data = await response.json();
-      if (response.ok) {
-        const normalized = getImageUrl(data?.image);
-        setProfileData({
-          _id: data?._id ?? '',
-          name: data?.name ?? 'User',
-          image: normalized,
-        });
-        setPreviewImage(normalized);
-        setImageError(false);
+      // ✅ Profile data set karo
+      if (data) {
+        const profile: ProfileData = {
+          _id: data.userId || data._id || '',
+          name: data.name || '',
+          image: data.image || '',
+          email: data.email || '',
+          phone: data.phone || '',
+          joinDate: data.joinDate || new Date().toISOString(),
+          verified: data.verified || false,
+        };
+
+        setProfileData(profile);
+
+        // ✅ Image set karo
+        const imageUrl = getImageUrl(profile.image);
+        console.log('🖼️ Setting image URL:', imageUrl);
+        setPreviewImage(imageUrl);
       } else {
-        console.error(
-          'Error fetching profile:',
-          data?.message ?? 'Unknown error',
-        );
-        Alert.alert('Error', 'Failed to load profile data');
+        throw new Error('Invalid profile data received');
       }
-    } catch (error) {
-      console.error('Profile fetch error:', error);
-      Alert.alert('Error', 'Network error occurred');
+    } catch (error: any) {
+      console.error('❌ Profile fetch error:', error);
+      Alert.alert('Error', error.message || 'Failed to load profile');
     } finally {
       setLoading(false);
     }
   };
 
-  // Custom icons
   const Sparkles = () => (
-    <MaterialCommunityIcons name="star-four-points" size={24} color="#FFD700" />
-  );
-  const UserPlus = () => <Feather name="user-plus" size={24} color="#4CAF50" />;
-  const GitPullRequestIcon = () => (
-    <Feather name="git-pull-request" size={24} color="#FF5722" />
+    <MaterialCommunityIcon name="star-four-points" size={24} color="#FFD700" />
   );
 
   const handleItemPress = (segment: string) => {
-    console.log('Navigating to:', segment);
-    if (segment) {
-      navigation.navigate(segment as never);
+    if (segment === 'security') {
+      navigation.navigate('Security' as never);
+    } else if (segment === 'privacy') {
+      navigation.navigate('Privacy' as never);
+    } else if (segment === 'help') {
+      navigation.navigate('Help' as never);
+    } else if (segment === 'about') {
+      navigation.navigate('About' as never);
+    } else if (segment === 'YourOrders') {
+      navigation.navigate('YourOrders' as never);
+    } else {
+      console.log('Navigating to:', segment);
+      Alert.alert('Info', `Feature coming soon: ${segment}`);
     }
   };
 
@@ -128,31 +132,34 @@ export const SettingsScreen: React.FC = () => {
         text: 'Logout',
         style: 'destructive',
         onPress: async () => {
-          await AsyncStorage.clear();
-          navigation.reset({
-            index: 0,
-            routes: [{ name: 'Login' as never }],
-          });
+          try {
+            await AsyncStorage.multiRemove([
+              'authToken',
+              'userData',
+              'app-theme',
+            ]);
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'Login' as never }],
+            });
+          } catch (error) {
+            console.error('Logout error:', error);
+          }
         },
       },
     ]);
   };
 
-  // Theme display value with system mode
   const getThemeDisplayValue = () => {
     if (theme === 'system') {
-      return `System Default (${resolvedTheme})`;
+      return `System (${resolvedTheme})`;
     }
-    return theme === 'light' ? 'Light Mode' : 'Dark Mode';
+    return theme === 'light' ? 'Light' : 'Dark';
   };
 
   const handleThemeSelect = async (selectedTheme: ThemeMode) => {
-    try {
-      await setTheme(selectedTheme);
-      setThemeModal(false);
-    } catch (error) {
-      Alert.alert('Error', 'Failed to update theme');
-    }
+    await setTheme(selectedTheme);
+    setThemeModal(false);
   };
 
   const ThemeOption = ({
@@ -171,22 +178,17 @@ export const SettingsScreen: React.FC = () => {
         styles.themeOption,
         theme === mode && styles.themeOptionSelected,
         {
-          backgroundColor: isDark
-            ? theme === mode
-              ? '#2D3748'
-              : '#1E293B'
-            : theme === mode
-            ? '#F1F5F9'
-            : 'transparent',
+          backgroundColor: isDark ? '#2D3748' : '#F8FAFC',
           borderColor: theme === mode ? '#6366F1' : 'transparent',
         },
       ]}
       onPress={() => handleThemeSelect(mode)}
+      disabled={themeLoading}
     >
       <View style={styles.themeOptionContent}>
         <View style={styles.themeOptionHeader}>
           <Icon
-            name={icon as any}
+            name={icon}
             size={24}
             color={theme === mode ? '#6366F1' : isDark ? '#94A3B8' : '#64748B'}
           />
@@ -194,9 +196,13 @@ export const SettingsScreen: React.FC = () => {
             style={[
               styles.themeText,
               {
-                color:
-                  theme === mode ? '#6366F1' : isDark ? '#F1F5F9' : '#1E293B',
-                fontWeight: theme === mode ? '600' : '500',
+                color: isDark
+                  ? theme === mode
+                    ? '#6366F1'
+                    : '#F1F5F9'
+                  : theme === mode
+                  ? '#6366F1'
+                  : '#1E293B',
               },
             ]}
           >
@@ -204,6 +210,13 @@ export const SettingsScreen: React.FC = () => {
           </Text>
           {theme === mode && (
             <Icon name="check-circle" size={20} color="#6366F1" />
+          )}
+          {themeLoading && theme === mode && (
+            <ActivityIndicator
+              size="small"
+              color="#6366F1"
+              style={{ marginLeft: 8 }}
+            />
           )}
         </View>
         {description && (
@@ -220,7 +233,6 @@ export const SettingsScreen: React.FC = () => {
     </TouchableOpacity>
   );
 
-  // Settings data WITH VALUES for all buttons
   const settingsData: SettingsItemType[] = [
     {
       kind: 'header',
@@ -232,7 +244,11 @@ export const SettingsScreen: React.FC = () => {
       icon: <Sparkles />,
       value: 'AI Assistant',
       rightElement: (
-        <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
+        <Icon
+          name="keyboard-arrow-right"
+          size={24}
+          color={isDark ? '#94A3B8' : '#64748B'}
+        />
       ),
     },
     {
@@ -241,146 +257,15 @@ export const SettingsScreen: React.FC = () => {
       icon: <Icon name="palette" size={24} color="#6366F1" />,
       value: getThemeDisplayValue(),
       onPress: () => setThemeModal(true),
-      rightElement: (
-        <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
+      rightElement: themeLoading ? (
+        <ActivityIndicator size="small" color="#6366F1" />
+      ) : (
+        <Icon
+          name="keyboard-arrow-right"
+          size={24}
+          color={isDark ? '#94A3B8' : '#64748B'}
+        />
       ),
-    },
-    { kind: 'divider' } as SettingsItemType,
-    {
-      kind: 'header',
-      title: 'Business Tools',
-    } as SettingsItemType,
-    {
-      segment: ``,
-      title: 'Appointments',
-      icon: <Icon name="event-note" size={24} color="#2196F3" />,
-      value: 'Manage bookings',
-      rightElement: (
-        <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
-      ),
-      children: [
-        {
-          segment: `appointments`,
-          title: 'My Appointments',
-          icon: <Icon name="ballot" size={24} color="#FF9800" />,
-          value: 'View all',
-          rightElement: (
-            <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
-          ),
-        },
-        {
-          segment: `apply`,
-          title: 'Apply Appointment',
-          icon: <Icon name="approval" size={24} color="#4CAF50" />,
-          value: 'New booking',
-          rightElement: (
-            <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
-          ),
-        },
-        {
-          segment: `calendar/history`,
-          title: 'Calendar & History',
-          icon: <Icon name="insert-invitation" size={24} color="#E91E63" />,
-          value: 'Schedule',
-          rightElement: (
-            <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
-          ),
-        },
-        {
-          segment: `appointments/requests`,
-          title: 'Appointment Requests',
-          icon: <GitPullRequestIcon />,
-          value: 'Pending',
-          rightElement: (
-            <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
-          ),
-        },
-      ],
-    },
-    {
-      segment: `/seller-payment`,
-      title: 'Payout & Earnings',
-      icon: <Icon name="attach-money" size={24} color="#4CAF50" />,
-      value: 'View balance',
-      rightElement: (
-        <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
-      ),
-    },
-    {
-      segment: `pricing-guide`,
-      title: 'Pricing Guide',
-      icon: <Icon name="monetization-on" size={24} color="#FFC107" />,
-      value: 'Rate cards',
-      rightElement: (
-        <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
-      ),
-    },
-    {
-      segment: ``,
-      title: 'Invoice Management',
-      icon: <Icon name="receipt" size={24} color="#795548" />,
-      value: 'Billing',
-      rightElement: (
-        <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
-      ),
-      children: [
-        {
-          segment: `invoice`,
-          title: 'All Invoices',
-          icon: <Icon name="insert-drive-file" size={24} color="#607D8B" />,
-          value: 'History',
-          rightElement: (
-            <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
-          ),
-        },
-        {
-          segment: `invoice/create`,
-          title: 'Create Invoice',
-          icon: <Icon name="add-circle" size={24} color="#10B981" />,
-          value: 'New bill',
-          rightElement: (
-            <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
-          ),
-        },
-      ],
-    },
-    {
-      segment: ``,
-      title: 'Vacancy & Hiring',
-      icon: <UserPlus />,
-      value: 'Recruitment',
-      rightElement: (
-        <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
-      ),
-      children: [
-        {
-          segment: `/Create-Vacancy`,
-          title: 'Create Vacancy',
-          icon: <Icon name="post-add" size={24} color="#2196F3" />,
-          value: 'New job',
-          rightElement: (
-            <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
-          ),
-        },
-        {
-          segment: `Vacancies`,
-          title: 'View Vacancies',
-          icon: <Icon name="work-outline" size={24} color="#FF9800" />,
-          value: 'Open positions',
-          rightElement: (
-            <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
-          ),
-        },
-        {
-          segment: `Vacancy-Reviews`,
-          title: 'Vacancy Reviews',
-          icon: <Icon name="reviews" size={24} color="#9C27B0" />,
-          value: 'Applications',
-          rightElement: (
-            <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
-          ),
-        },
-      ],
     },
     { kind: 'divider' } as SettingsItemType,
     {
@@ -391,18 +276,39 @@ export const SettingsScreen: React.FC = () => {
       segment: `security`,
       title: 'Security Settings',
       icon: <Icon name="security" size={24} color="#EF4444" />,
-      value: 'Privacy',
+      value: 'Do have any changes. Please enter your issue here!',
       rightElement: (
-        <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
+        <Icon
+          name="keyboard-arrow-right"
+          size={24}
+          color={isDark ? '#94A3B8' : '#64748B'}
+        />
       ),
     },
     {
       segment: `privacy`,
       title: 'Privacy Policy',
       icon: <Icon name="privacy-tip" size={24} color="#6B7280" />,
-      value: 'Legal',
+      value: 'Did You have any questions? Click this.',
       rightElement: (
-        <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
+        <Icon
+          name="keyboard-arrow-right"
+          size={24}
+          color={isDark ? '#94A3B8' : '#64748B'}
+        />
+      ),
+    },
+    {
+      segment: `YourOrders`,
+      title: 'Your Orders',
+      icon: <FeatherIcon name="shopping-bag" size={24} color="#10B981" />,
+      value: "'Orders History' will be there!",
+      rightElement: (
+        <Icon
+          name="keyboard-arrow-right"
+          size={24}
+          color={isDark ? '#94A3B8' : '#64748B'}
+        />
       ),
     },
     {
@@ -411,7 +317,11 @@ export const SettingsScreen: React.FC = () => {
       icon: <Icon name="help-center" size={24} color="#8B5CF6" />,
       value: 'Contact us',
       rightElement: (
-        <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
+        <Icon
+          name="keyboard-arrow-right"
+          size={24}
+          color={isDark ? '#94A3B8' : '#64748B'}
+        />
       ),
     },
     {
@@ -420,7 +330,11 @@ export const SettingsScreen: React.FC = () => {
       icon: <Icon name="info" size={24} color="#06B6D4" />,
       value: 'Version 2.4.1',
       rightElement: (
-        <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
+        <Icon
+          name="keyboard-arrow-right"
+          size={24}
+          color={isDark ? '#94A3B8' : '#64748B'}
+        />
       ),
     },
     {
@@ -430,10 +344,68 @@ export const SettingsScreen: React.FC = () => {
       value: 'Sign out',
       onPress: handleLogout,
       rightElement: (
-        <Icon name="keyboard-arrow-right" size={24} color="#64748B" />
+        <Icon
+          name="keyboard-arrow-right"
+          size={24}
+          color={isDark ? '#94A3B8' : '#64748B'}
+        />
       ),
     },
   ];
+
+  // ✅ Render profile image component
+  const renderProfileImage = () => {
+    if (loading) {
+      return (
+        <View
+          style={[
+            styles.profileIcon,
+            { backgroundColor: isDark ? '#334155' : '#F1F5F9' },
+          ]}
+        >
+          <ActivityIndicator
+            size="small"
+            color={isDark ? '#94A3B8' : '#6366F1'}
+          />
+        </View>
+      );
+    }
+
+    // ✅ Agar image hai to dikhao
+    if (previewImage && previewImage !== '' && !imageError) {
+      return (
+        <Image
+          source={{ uri: previewImage }}
+          style={styles.profileImage}
+          onError={() => {
+            console.log('❌ Image load error:', previewImage);
+            setImageError(true);
+          }}
+        />
+      );
+    }
+
+    // ✅ Fallback - Lottie animation
+    return (
+      <View
+        style={[
+          styles.profileIcon,
+          {
+            backgroundColor: isDark ? '#334155' : '#F1F5F9',
+            overflow: 'hidden',
+          },
+        ]}
+      >
+        <LottieView
+          ref={animationRef}
+          source={require('../animations/lotties/Login icon (1).json')}
+          style={styles.lottieAnimation}
+          autoPlay={true}
+          loop={true}
+        />
+      </View>
+    );
+  };
 
   return (
     <View
@@ -442,7 +414,7 @@ export const SettingsScreen: React.FC = () => {
         { backgroundColor: isDark ? '#0F172A' : '#F8FAFC' },
       ]}
     >
-      {/* Header with Profile Image and Back Button */}
+      {/* Header with Back Button */}
       <View
         style={[
           styles.header,
@@ -478,29 +450,15 @@ export const SettingsScreen: React.FC = () => {
               { color: isDark ? '#94A3B8' : '#64748B' },
             ]}
           >
-            Manage your business preferences
+            Manage your preferences
           </Text>
         </View>
 
-        <TouchableOpacity style={styles.profileImageContainer}>
-          {profileData?.image && !imageError ? (
-            <Image
-              source={{ uri: profileData.image }}
-              style={styles.profileImage}
-              onError={() => setImageError(true)}
-            />
-          ) : (
-            <View style={styles.lottieContainer}>
-              <LottieView
-                ref={lottieRef}
-                source={require('../animations/lotties/Login icon (1).json')}
-                style={styles.lottieAnimation}
-                autoPlay={true}
-                loop={true}
-                resizeMode="contain"
-              />
-            </View>
-          )}
+        <TouchableOpacity
+          style={styles.profileImageContainer}
+          onPress={() => navigation.navigate('Profile' as never)}
+        >
+          {renderProfileImage()}
         </TouchableOpacity>
       </View>
 
@@ -508,101 +466,6 @@ export const SettingsScreen: React.FC = () => {
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
       >
-        {/* Quick Actions */}
-        <View style={styles.quickActions}>
-          <Text
-            style={[
-              styles.quickActionsTitle,
-              { color: isDark ? '#F1F5F9' : '#1E293B' },
-            ]}
-          >
-            Quick Actions
-          </Text>
-          <View style={styles.actionsRow}>
-            <TouchableOpacity
-              style={[
-                styles.actionButton,
-                {
-                  backgroundColor: isDark ? '#1E293B' : 'white',
-                  shadowColor: isDark ? '#000' : '#000',
-                },
-              ]}
-            >
-              <View
-                style={[
-                  styles.actionIcon,
-                  { backgroundColor: isDark ? '#334155' : '#FFFBEB' },
-                ]}
-              >
-                <Icon name="dashboard" size={24} color="#F59E0B" />
-              </View>
-              <Text
-                style={[
-                  styles.actionText,
-                  { color: isDark ? '#F1F5F9' : '#1E293B' },
-                ]}
-              >
-                Dashboard
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.actionButton,
-                {
-                  backgroundColor: isDark ? '#1E293B' : 'white',
-                  shadowColor: isDark ? '#000' : '#000',
-                },
-              ]}
-            >
-              <View
-                style={[
-                  styles.actionIcon,
-                  { backgroundColor: isDark ? '#334155' : '#F0FDF4' },
-                ]}
-              >
-                <Icon name="analytics" size={24} color="#10B981" />
-              </View>
-              <Text
-                style={[
-                  styles.actionText,
-                  { color: isDark ? '#F1F5F9' : '#1E293B' },
-                ]}
-              >
-                Analytics
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.actionButton,
-                {
-                  backgroundColor: isDark ? '#1E293B' : 'white',
-                  shadowColor: isDark ? '#000' : '#000',
-                },
-              ]}
-            >
-              <View
-                style={[
-                  styles.actionIcon,
-                  { backgroundColor: isDark ? '#334155' : '#EFF6FF' },
-                ]}
-              >
-                <Icon name="inventory" size={24} color="#3B82F6" />
-              </View>
-              <Text
-                style={[
-                  styles.actionText,
-                  { color: isDark ? '#F1F5F9' : '#1E293B' },
-                ]}
-              >
-                Inventory
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Settings List */}
         {settingsData.map((item, index) => (
           <SettingsItem
             key={index}
@@ -612,7 +475,6 @@ export const SettingsScreen: React.FC = () => {
           />
         ))}
 
-        {/* Toggle Settings */}
         <View
           style={[
             styles.toggleContainer,
@@ -658,7 +520,9 @@ export const SettingsScreen: React.FC = () => {
                 false: isDark ? '#374151' : '#E5E7EB',
                 true: '#10B981',
               }}
-              thumbColor={notifications ? '#FFFFFF' : '#FFFFFF'}
+              thumbColor={
+                notifications ? '#FFFFFF' : isDark ? '#94A3B8' : '#F1F5F9'
+              }
             />
           </View>
 
@@ -698,12 +562,13 @@ export const SettingsScreen: React.FC = () => {
                 false: isDark ? '#374151' : '#E5E7EB',
                 true: '#10B981',
               }}
-              thumbColor={biometric ? '#FFFFFF' : '#FFFFFF'}
+              thumbColor={
+                biometric ? '#FFFFFF' : isDark ? '#94A3B8' : '#F1F5F9'
+              }
             />
           </View>
         </View>
 
-        {/* App Info */}
         <View style={styles.appInfo}>
           <Text
             style={[
@@ -724,7 +589,6 @@ export const SettingsScreen: React.FC = () => {
         </View>
       </ScrollView>
 
-      {/* Theme Modal */}
       <Modal
         visible={themeModal}
         transparent={true}
@@ -791,15 +655,13 @@ export const SettingsScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
+  container: { flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: 24,
-    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    paddingTop: 60,
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
     shadowOffset: { width: 0, height: 4 },
@@ -808,16 +670,10 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
+    padding: 8,
+    marginRight: 8,
   },
-  headerContent: {
-    flex: 1,
-    marginLeft: 12,
-  },
+  headerContent: { flex: 1 },
   headerTitle: {
     fontSize: 32,
     fontWeight: '800',
@@ -827,67 +683,26 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
   },
-  profileImageContainer: {
-    marginLeft: 16,
-  },
+  profileImageContainer: { marginLeft: 16 },
   profileImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     borderWidth: 2,
     borderColor: '#E2E8F0',
   },
-  lottieContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    overflow: 'hidden',
-    backgroundColor: '#F1F5F9',
-  },
-  lottieAnimation: {
-    width: 60,
-    height: 60,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  quickActions: {
-    padding: 20,
-    paddingBottom: 0,
-  },
-  quickActionsTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 16,
-  },
-  actionsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  actionButton: {
-    alignItems: 'center',
-    flex: 1,
-    marginHorizontal: 6,
-    padding: 12,
-    borderRadius: 16,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 2,
-  },
-  actionIcon: {
-    width: 60,
-    height: 60,
-    borderRadius: 16,
+  profileIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 8,
   },
-  actionText: {
-    fontSize: 12,
-    fontWeight: '600',
-    textAlign: 'center',
+  lottieAnimation: {
+    width: 50,
+    height: 50,
   },
+  scrollView: { flex: 1, paddingTop: 10 },
   toggleContainer: {
     margin: 16,
     borderRadius: 16,
@@ -921,9 +736,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 2,
   },
-  toggleSubtitle: {
-    fontSize: 14,
-  },
+  toggleSubtitle: { fontSize: 14 },
   appInfo: {
     alignItems: 'center',
     padding: 24,
@@ -959,22 +772,15 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700',
   },
-  modalScrollView: {
-    flex: 1,
-  },
+  modalScrollView: { flex: 1 },
   themeOption: {
     padding: 16,
     borderRadius: 12,
     marginBottom: 8,
     borderWidth: 2,
-    borderColor: 'transparent',
   },
-  themeOptionSelected: {
-    borderColor: '#6366F1',
-  },
-  themeOptionContent: {
-    flex: 1,
-  },
+  themeOptionSelected: {},
+  themeOptionContent: { flex: 1 },
   themeOptionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -983,6 +789,7 @@ const styles = StyleSheet.create({
   themeText: {
     flex: 1,
     fontSize: 16,
+    fontWeight: '600',
     marginLeft: 12,
   },
   themeDescription: {

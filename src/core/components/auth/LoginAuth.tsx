@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
-  Alert,
   Dimensions,
   ActivityIndicator,
   Keyboard,
@@ -19,13 +18,16 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import Icon from 'react-native-vector-icons/Ionicons';
 import MaterialIcon from 'react-native-vector-icons/MaterialIcons';
-import FontAwesome from 'react-native-vector-icons/FontAwesome';
-import LottieView from 'lottie-react-native';
-import { login, verifyLogin } from '../../services/AuthService';
+import { AuthService } from '../../services/auth/authLoginService';
 import { RootStackParamList } from '../../types/NavigationTypes';
+import {
+  clearErrors,
+  setupKeyboardListeners,
+  createLoginAnimations,
+  scrollToInput,
+} from '../../utils/auth/authLoginUtils';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -43,7 +45,6 @@ export default function LoginScreen() {
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
 
   const scrollViewRef = useRef<ScrollView>(null);
-  const lottieRef = useRef<LottieView>(null);
 
   // Animation values
   const headerOpacity = useRef(new Animated.Value(0)).current;
@@ -58,97 +59,41 @@ export default function LoginScreen() {
 
   // Keyboard listeners
   useEffect(() => {
-    const keyboardDidShowListener = Keyboard.addListener(
-      'keyboardDidShow',
-      () => {
-        setIsKeyboardVisible(true);
-        Animated.timing(lottieOpacity, {
-          toValue: 0,
-          duration: 200,
-          useNativeDriver: true,
-        }).start();
-      },
-    );
-    const keyboardDidHideListener = Keyboard.addListener(
-      'keyboardDidHide',
-      () => {
-        setIsKeyboardVisible(false);
-        Animated.timing(lottieOpacity, {
-          toValue: 1,
-          duration: 200,
-          useNativeDriver: true,
-        }).start();
-      },
-    );
-
-    return () => {
-      keyboardDidShowListener.remove();
-      keyboardDidHideListener.remove();
-    };
+    const cleanup = setupKeyboardListeners(setIsKeyboardVisible, lottieOpacity);
+    return cleanup;
   }, []);
 
   // Initial animations
   useEffect(() => {
+    const animations = createLoginAnimations();
+
     // Header animation
     Animated.parallel([
-      Animated.timing(headerOpacity, {
-        toValue: 1,
-        duration: 800,
-        useNativeDriver: true,
-      }),
-      Animated.timing(headerTranslateY, {
-        toValue: 0,
-        duration: 800,
-        useNativeDriver: true,
-      }),
+      Animated.timing(headerOpacity, animations.header.opacity),
+      Animated.timing(headerTranslateY, animations.header.translateY),
     ]).start();
 
     // Form animation
     setTimeout(() => {
       Animated.parallel([
-        Animated.timing(formOpacity, {
-          toValue: 1,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
-        Animated.spring(formScale, {
-          toValue: 1,
-          friction: 8,
-          tension: 40,
-          useNativeDriver: true,
-        }),
+        Animated.timing(formOpacity, animations.form.opacity),
+        Animated.spring(formScale, animations.form.scale),
       ]).start();
     }, 200);
 
     // Input animations
     setTimeout(() => {
       Animated.parallel([
-        Animated.timing(identifierInputOpacity, {
-          toValue: 1,
-          duration: 500,
-          useNativeDriver: true,
-        }),
-        Animated.timing(identifierInputTranslateX, {
-          toValue: 0,
-          duration: 500,
-          useNativeDriver: true,
-        }),
+        Animated.timing(identifierInputOpacity, animations.input.opacity),
+        Animated.timing(identifierInputTranslateX, animations.input.translateX),
       ]).start();
     }, 400);
 
     // Button animation
     setTimeout(() => {
       Animated.parallel([
-        Animated.timing(buttonOpacity, {
-          toValue: 1,
-          duration: 500,
-          useNativeDriver: true,
-        }),
-        Animated.timing(buttonTranslateY, {
-          toValue: 0,
-          duration: 500,
-          useNativeDriver: true,
-        }),
+        Animated.timing(buttonOpacity, animations.button.opacity),
+        Animated.timing(buttonTranslateY, animations.button.translateY),
       ]).start();
     }, 600);
   }, []);
@@ -162,112 +107,66 @@ export default function LoginScreen() {
   }, [waitTime]);
 
   const handleIdentifierFocus = () => {
-    setTimeout(() => {
-      scrollViewRef.current?.scrollTo({ y: 150, animated: true });
-    }, 100);
+    scrollToInput(scrollViewRef);
   };
 
-  const clearErrors = () => {
-    setError('');
-    setMsg('');
+  const handleClearErrors = () => {
+    clearErrors(setError, setMsg);
   };
 
   const handleLogin = async () => {
-    clearErrors();
-
-    if (!identifier.trim()) {
-      setError('Please enter your email or phone number');
-      return;
-    }
-
-    // Simple validation for both email and phone
-    const isEmail = identifier.includes('@');
-    const isPhone = /^\d+$/.test(identifier.replace(/\D/g, ''));
-
-    if (isEmail) {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(identifier.trim())) {
-        setError('Please enter a valid email address');
-        return;
-      }
-    } else if (isPhone) {
-      const cleanPhone = identifier.replace(/\D/g, '');
-      if (cleanPhone.length !== 10) {
-        setError('Please enter a valid 10-digit phone number');
-        return;
-      }
-    } else {
-      setError('Please enter a valid email or phone number');
-      return;
-    }
-
+    handleClearErrors();
     setIsLoading(true);
-    try {
-      let formattedIdentifier = identifier.trim();
-      if (!identifier.includes('@')) {
-        formattedIdentifier = identifier.replace(/\D/g, '');
-      }
 
-      const res = await login({ identifier: formattedIdentifier });
+    const result = await AuthService.sendOTP(identifier);
 
-      if (res.msg?.toLowerCase().includes('otp sent')) {
-        setMsg(`OTP sent to ${identifier}`);
-        setStep('otp');
-        setWaitTime(30);
-      } else {
-        setError(res.msg || 'User not found. Please sign up first.');
-      }
-    } catch (err: any) {
-      setError(err.message || 'Login failed. Please try again.');
-    } finally {
-      setIsLoading(false);
+    if (result.success) {
+      setMsg(result.msg || 'OTP sent successfully');
+      setStep('otp');
+      setWaitTime(30);
+    } else {
+      setError(result.msg || 'Login failed. Please try again.');
     }
+
+    setIsLoading(false);
   };
 
   const handleVerify = async () => {
-    clearErrors();
-
-    if (!otp) {
-      setError('Please enter the OTP');
-      return;
-    }
-
+    handleClearErrors();
     setIsLoading(true);
-    try {
-      const res = await verifyLogin({ identifier, otp });
 
-      if (res.token && res.user && res.user._id) {
-        await AsyncStorage.setItem('authToken', res.token);
-        await AsyncStorage.setItem('userId', res.user._id);
-        navigation.navigate('Home');
-      } else {
-        setError('Invalid OTP. Please try again.');
-      }
-    } catch (err: any) {
-      setError(err.message || 'OTP verification failed');
-    } finally {
-      setIsLoading(false);
+    const result = await AuthService.verifyOTPAndLogin(identifier, otp);
+
+    if (result.success) {
+      navigation.navigate('Home');
+    } else {
+      setError(result.msg || 'OTP verification failed');
     }
+
+    setIsLoading(false);
   };
 
   const handleResendOTP = async () => {
     if (waitTime > 0) return;
 
     setIsLoading(true);
-    clearErrors();
-    try {
-      const res = await login({ identifier });
-      if (res.msg?.toLowerCase().includes('otp sent')) {
-        setMsg(`OTP resent to ${identifier}`);
-        setWaitTime(30);
-      } else {
-        setError(res.msg || 'Failed to resend OTP');
-      }
-    } catch (err: any) {
-      setError(err.message || 'Something went wrong while resending OTP');
-    } finally {
-      setIsLoading(false);
+    handleClearErrors();
+
+    const result = await AuthService.resendOTP(identifier);
+
+    if (result.success) {
+      setMsg(result.msg || 'OTP resent successfully');
+      setWaitTime(30);
+    } else {
+      setError(result.msg || 'Failed to resend OTP');
     }
+
+    setIsLoading(false);
+  };
+
+  const handleBackToLogin = () => {
+    setStep('input');
+    handleClearErrors();
   };
 
   // Animated styles
@@ -334,7 +233,7 @@ export default function LoginScreen() {
               </Animated.View>
             )}
 
-            {/* Solid Switch Tabs - Now with real vector icons */}
+            {/* Tabs */}
             <View style={styles.tabsContainer}>
               <TouchableOpacity
                 style={styles.tab}
@@ -359,7 +258,7 @@ export default function LoginScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Solid Form Container - Removed glass effect */}
+            {/* Form Container */}
             <Animated.View style={[styles.formContainer, formAnimatedStyle]}>
               {step === 'input' ? (
                 <View style={styles.formContent}>
@@ -386,7 +285,7 @@ export default function LoginScreen() {
                         value={identifier}
                         onChangeText={text => {
                           setIdentifier(text);
-                          clearErrors();
+                          handleClearErrors();
                         }}
                         keyboardType="default"
                         autoCapitalize="none"
@@ -394,13 +293,18 @@ export default function LoginScreen() {
                         onFocus={handleIdentifierFocus}
                       />
                     </View>
-                    {error ? <Text style={styles.errorText}>{error}</Text> : null}
+                    {error ? (
+                      <Text style={styles.errorText}>{error}</Text>
+                    ) : null}
                   </Animated.View>
 
                   {/* Login Button */}
                   <Animated.View style={buttonAnimatedStyle}>
                     <TouchableOpacity
-                      style={[styles.button, isLoading && styles.buttonDisabled]}
+                      style={[
+                        styles.button,
+                        isLoading && styles.buttonDisabled,
+                      ]}
                       onPress={handleLogin}
                       disabled={isLoading}
                       activeOpacity={0.9}
@@ -449,7 +353,11 @@ export default function LoginScreen() {
                 <View style={styles.otpContent}>
                   {/* OTP Message */}
                   <View style={styles.otpMessage}>
-                    <MaterialIcon name="mail-outline" size={32} color="#3b82f6" />
+                    <MaterialIcon
+                      name="mail-outline"
+                      size={32}
+                      color="#3b82f6"
+                    />
                     <Text style={styles.otpMessageText}>{msg}</Text>
                     <Text style={styles.otpMessageSubtext}>
                       Check your messages for the OTP
@@ -473,14 +381,16 @@ export default function LoginScreen() {
                         value={otp}
                         onChangeText={text => {
                           setOtp(text);
-                          clearErrors();
+                          handleClearErrors();
                         }}
                         keyboardType="number-pad"
                         maxLength={6}
                         onFocus={handleIdentifierFocus}
                       />
                     </View>
-                    {error ? <Text style={styles.errorText}>{error}</Text> : null}
+                    {error ? (
+                      <Text style={styles.errorText}>{error}</Text>
+                    ) : null}
                   </View>
 
                   {/* Verify Button */}
@@ -511,7 +421,8 @@ export default function LoginScreen() {
                   <TouchableOpacity
                     style={[
                       styles.resendButton,
-                      (waitTime > 0 || isLoading) && styles.resendButtonDisabled,
+                      (waitTime > 0 || isLoading) &&
+                        styles.resendButtonDisabled,
                     ]}
                     onPress={handleResendOTP}
                     disabled={waitTime > 0 || isLoading}
@@ -531,10 +442,7 @@ export default function LoginScreen() {
                   {/* Back to Login */}
                   <TouchableOpacity
                     style={styles.backButton}
-                    onPress={() => {
-                      setStep('input');
-                      clearErrors();
-                    }}
+                    onPress={handleBackToLogin}
                     disabled={isLoading}
                     activeOpacity={0.7}
                   >
@@ -556,6 +464,7 @@ export default function LoginScreen() {
   );
 }
 
+// Styles remain the same as your original styles
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -566,10 +475,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8fafc',
   },
   background: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   gradientLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   gradientStart: {
     backgroundColor: '#eff6ff',
@@ -615,7 +524,6 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     textAlign: 'center',
   },
-  // Solid Tabs - Removed glass effect
   tabsContainer: {
     flexDirection: 'row',
     backgroundColor: '#ffffff',
@@ -655,7 +563,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#ffffff',
   },
-  // Solid Form Container - Removed glass effect
   formContainer: {
     backgroundColor: '#ffffff',
     borderRadius: 24,

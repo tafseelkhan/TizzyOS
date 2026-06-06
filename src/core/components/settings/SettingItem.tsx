@@ -11,46 +11,42 @@ interface SettingsItemProps {
   isDark?: boolean;
 }
 
-export const SettingsItem: React.FC<SettingsItemProps> = ({
-  item,
-  onItemPress,
+export const SettingsItem: React.FC<SettingsItemProps> = ({ 
+  item, 
+  onItemPress, 
   level = 0,
-  isDark = false,
+  isDark = false
 }) => {
+  // Custom Divider component to replace react-native-paper Divider
+  const Divider = () => (
+    <View style={[styles.divider, { backgroundColor: isDark ? '#334155' : '#E2E8F0' }]} />
+  );
+
   if (item.kind === 'divider') {
-    return (
-      <View
-        style={[
-          styles.divider,
-          { backgroundColor: isDark ? '#334155' : '#E2E8F0' },
-        ]}
-      />
-    );
+    return <Divider />;
   }
 
   if (item.kind === 'header') {
     return (
       <View style={styles.headerContainer}>
-        <Text
-          style={[styles.headerText, { color: isDark ? '#94A3B8' : '#475569' }]}
-        >
+        <Text style={[styles.headerText, { color: isDark ? '#94A3B8' : '#475569' }]}>
           {item.title}
         </Text>
       </View>
     );
   }
 
-  const paddingLeft = 20 + level * 20;
+  const paddingLeft = 20 + (level * 20);
 
   return (
     <View>
       <TouchableOpacity
         style={[
-          styles.itemContainer,
-          {
+          styles.itemContainer, 
+          { 
             paddingLeft,
             backgroundColor: isDark ? '#1E293B' : 'white',
-          },
+          }
         ]}
         onPress={() => {
           if (item.onPress) {
@@ -61,46 +57,47 @@ export const SettingsItem: React.FC<SettingsItemProps> = ({
         }}
         disabled={!item.segment && !item.onPress}
       >
-        <View
-          style={[
-            styles.iconContainer,
-            { backgroundColor: isDark ? '#334155' : '#F1F5F9' },
-          ]}
-        >
+        <View style={[
+          styles.iconContainer, 
+          { backgroundColor: isDark ? '#334155' : '#F1F5F9' }
+        ]}>
           {item.icon}
         </View>
-
+        
         <View style={styles.textContainer}>
-          <Text
-            style={[styles.title, { color: isDark ? '#F1F5F9' : '#1E293B' }]}
-          >
+          <Text style={[
+            styles.title, 
+            { color: isDark ? '#F1F5F9' : '#1E293B' }
+          ]}>
             {item.title}
           </Text>
           {item.value && (
-            <Text
-              style={[styles.value, { color: isDark ? '#94A3B8' : '#64748B' }]}
-            >
+            <Text style={[
+              styles.value, 
+              { color: isDark ? '#94A3B8' : '#64748B' }
+            ]}>
               {item.value}
             </Text>
           )}
         </View>
 
-        {item.rightElement
-          ? item.rightElement
-          : item.children &&
-            item.children.length > 0 && (
-              <Icon
-                name="keyboard-arrow-right"
-                size={24}
-                color={isDark ? '#94A3B8' : '#666'}
-              />
-            )}
+        {item.rightElement ? (
+          item.rightElement
+        ) : (
+          item.children && item.children.length > 0 && (
+            <Icon 
+              name="keyboard-arrow-right" 
+              size={24} 
+              color={isDark ? '#94A3B8' : '#666'} 
+            />
+          )
+        )}
       </TouchableOpacity>
-
+      
       {item.children?.map((child, index) => (
-        <SettingsItem
-          key={index}
-          item={child}
+        <SettingsItem 
+          key={index} 
+          item={child} 
           onItemPress={onItemPress}
           level={level + 1}
           isDark={isDark}

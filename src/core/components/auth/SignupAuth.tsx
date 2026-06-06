@@ -1,4 +1,4 @@
-// SignupScreen.tsx
+// SignupScreen.tsx (updated version)
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -23,8 +23,14 @@ import Icon from 'react-native-vector-icons/Ionicons';
 import MaterialIcon from 'react-native-vector-icons/MaterialIcons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import LottieView from 'lottie-react-native';
-import { signup, verifySignup } from '../../services/AuthService';
+import { signup, verifySignup, resendOtp } from '../../services/AuthService';
 import { RootStackParamList } from '../../types/NavigationTypes';
+import {
+  validateSignupForm,
+  isPhoneNumber,
+  isEmail,
+  validateOTP,
+} from '../../utils/auth/validationUtils';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -61,8 +67,8 @@ export default function SignupScreen() {
   const buttonTranslateY = useRef(new Animated.Value(20)).current;
   const lottieOpacity = useRef(new Animated.Value(1)).current;
 
-  const isPhone = /^\d{4}/.test(emailOrPhone);
-  const isEmail = emailOrPhone.includes('@');
+  const isPhone = isPhoneNumber(emailOrPhone);
+  const isEmailAddress = isEmail(emailOrPhone);
 
   // Keyboard listeners
   useEffect(() => {
@@ -206,17 +212,17 @@ export default function SignupScreen() {
     }, 100);
   };
 
-  const validateForm = () => {
-    const newErrors = {
-      name: !name ? 'Please enter your name' : '',
-      emailOrPhone: !emailOrPhone ? 'Please enter your email or phone' : '',
-    };
-    setErrors(newErrors);
-    return !newErrors.name && !newErrors.emailOrPhone;
-  };
-
   const handleSignup = async () => {
-    if (!validateForm()) return;
+    const validationErrors = validateSignupForm(name, emailOrPhone);
+
+    if (Object.keys(validationErrors).length > 0) {
+      setErrors({
+        name: validationErrors.name || '',
+        emailOrPhone: validationErrors.emailOrPhone || '',
+      });
+      return;
+    }
+
     if (!agreeTerms) {
       Alert.alert(
         'Terms Required',
@@ -228,7 +234,7 @@ export default function SignupScreen() {
     setIsLoading(true);
     const res = await signup({ identifier: emailOrPhone });
 
-    if (res.identifier) {
+    if (res.success && res.identifier) {
       setMsg(`OTP sent to ${res.identifier}`);
       setStep('otp');
       setWaitTime(30);
@@ -239,8 +245,8 @@ export default function SignupScreen() {
   };
 
   const handleVerify = async () => {
-    if (!otp) {
-      Alert.alert('OTP Required', 'Please enter the OTP');
+    if (!validateOTP(otp)) {
+      Alert.alert('OTP Required', 'Please enter a valid 6-digit OTP');
       return;
     }
 
@@ -251,9 +257,7 @@ export default function SignupScreen() {
       name,
     });
 
-    if (res.token && res.user && res.user._id) {
-      await AsyncStorage.setItem('authToken', res.token);
-      await AsyncStorage.setItem('userId', res.user._id);
+    if (res.success && res.token && res.user) {
       navigation.navigate('Home');
     } else {
       Alert.alert('Error', res.msg || 'Invalid OTP');
@@ -264,8 +268,9 @@ export default function SignupScreen() {
   const handleResendOTP = async () => {
     if (waitTime > 0) return;
     setIsLoading(true);
-    const res = await signup({ identifier: emailOrPhone });
-    if (res.identifier) {
+    const res = await resendOtp({ identifier: emailOrPhone });
+
+    if (res.success && res.identifier) {
       setMsg(`OTP resent to ${res.identifier}`);
       setWaitTime(30);
     } else {
@@ -274,7 +279,7 @@ export default function SignupScreen() {
     setIsLoading(false);
   };
 
-  // Animated styles
+  // Animated styles (same as before)
   const headerAnimatedStyle = {
     opacity: headerOpacity,
     transform: [{ translateY: headerTranslateY }],
@@ -442,7 +447,9 @@ export default function SignupScreen() {
                       />
                     </View>
                     {errors.emailOrPhone ? (
-                      <Text style={styles.errorText}>{errors.emailOrPhone}</Text>
+                      <Text style={styles.errorText}>
+                        {errors.emailOrPhone}
+                      </Text>
                     ) : null}
                   </Animated.View>
 
@@ -473,7 +480,10 @@ export default function SignupScreen() {
                   {/* Signup Button */}
                   <Animated.View style={buttonAnimatedStyle}>
                     <TouchableOpacity
-                      style={[styles.button, isLoading && styles.buttonDisabled]}
+                      style={[
+                        styles.button,
+                        isLoading && styles.buttonDisabled,
+                      ]}
                       onPress={handleSignup}
                       disabled={isLoading}
                       activeOpacity={0.9}
@@ -489,7 +499,9 @@ export default function SignupScreen() {
                               color="#ffffff"
                               style={styles.buttonIcon}
                             />
-                            <Text style={styles.buttonText}>Create Account</Text>
+                            <Text style={styles.buttonText}>
+                              Create Account
+                            </Text>
                           </>
                         )}
                       </View>
@@ -500,7 +512,11 @@ export default function SignupScreen() {
                 <View style={styles.otpContent}>
                   {/* OTP Message */}
                   <View style={styles.otpMessage}>
-                    <MaterialIcon name="mail-outline" size={32} color="#3b82f6" />
+                    <MaterialIcon
+                      name="mail-outline"
+                      size={32}
+                      color="#3b82f6"
+                    />
                     <Text style={styles.otpMessageText}>{msg}</Text>
                     <Text style={styles.otpMessageSubtext}>
                       Check your messages for the OTP
@@ -548,7 +564,9 @@ export default function SignupScreen() {
                             color="#ffffff"
                             style={styles.buttonIcon}
                           />
-                          <Text style={styles.buttonText}>Verify & Continue</Text>
+                          <Text style={styles.buttonText}>
+                            Verify & Continue
+                          </Text>
                         </>
                       )}
                     </View>
@@ -558,7 +576,8 @@ export default function SignupScreen() {
                   <TouchableOpacity
                     style={[
                       styles.resendButton,
-                      (waitTime > 0 || isLoading) && styles.resendButtonDisabled,
+                      (waitTime > 0 || isLoading) &&
+                        styles.resendButtonDisabled,
                     ]}
                     onPress={handleResendOTP}
                     disabled={waitTime > 0 || isLoading}
@@ -610,10 +629,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8fafc',
   },
   background: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   gradientLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   gradientStart: {
     backgroundColor: '#eff6ff',

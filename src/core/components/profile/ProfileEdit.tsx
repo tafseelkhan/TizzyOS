@@ -1,5 +1,5 @@
-// screens/EditProfileScreen.tsx
-import React, { useEffect, useState, useRef } from 'react';
+// EditProfileScreen.tsx (Final Working Version with Refresh)
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -16,18 +16,19 @@ import {
   StatusBar,
   SafeAreaView,
   Dimensions,
-  PermissionsAndroid,
-  Linking,
+  Modal,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native'; // ✅ useFocusEffect import karo
 import LinearGradient from 'react-native-linear-gradient';
 import LottieView from 'lottie-react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import FA5Icon from 'react-native-vector-icons/FontAwesome5';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../contexts/theme/ThemeContext';
-import ImagePicker from 'react-native-image-crop-picker';
-import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
+import { profileService } from '../../services/profile/profileService';
+import { imagePickerService } from '../../services/profile/imagePickerService';
+import { profileApi } from '../../../api/features/private/profilePrivateSlice';
+import { validateProfileForm } from '../../utils/profile/profileUtils';
+import { showImageSourceDialog } from '../../utils/profile/permissionUtils';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -38,14 +39,8 @@ interface FormData {
   image?: string;
 }
 
-const getImageUrl = (image?: string): string => {
-  if (!image) return '';
-  if (image.startsWith('http')) return image;
-  return '';
-};
-
 export default function EditProfileScreen() {
-  const { isDark, resolvedTheme } = useTheme();
+  const { isDark } = useTheme();
   const navigation = useNavigation();
 
   const [formData, setFormData] = useState<FormData>({
@@ -60,9 +55,13 @@ export default function EditProfileScreen() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [userId, setUserId] = useState<string | null>(null);
+  const [showImageModal, setShowImageModal] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
-  // Dynamic colors based on theme
+  const scrollViewRef = useRef<ScrollView>(null);
+  const phoneInputRef = useRef<TextInput>(null);
+
+  // Dynamic colors
   const backgroundColor = isDark ? '#1E293B' : '#f9fafb';
   const textColor = isDark ? '#F1F5F9' : '#1f2937';
   const subtitleColor = isDark ? '#94A3B8' : '#6b7280';
@@ -70,310 +69,132 @@ export default function EditProfileScreen() {
   const cardBorder = isDark ? '#374151' : '#e5e7eb';
   const inputBackground = isDark ? '#374151' : '#f9fafb';
   const inputBorder = isDark ? '#475569' : '#d1d5db';
-
-  // Fixed gradient colors
   const gradientColors: string[] = isDark
     ? ['#1E293B', '#1E293B', '#1E293B']
     : ['#f9fafb', '#f9fafb', '#f9fafb'];
-
   const buttonGradient: string[] = isDark
     ? ['#7C3AED', '#6D28D9']
     : ['#8b5cf6', '#3b82f6'];
-
   const infoCardBackground = isDark ? '#374151' : '#f3f4f6';
   const infoCardBorder = isDark ? '#475569' : '#e5e7eb';
   const errorBackground = isDark ? '#7f1d1d' : '#fef2f2';
   const errorBorder = isDark ? '#991b1b' : '#fecaca';
   const successBackground = isDark ? '#14532d' : '#f0fdf4';
   const successBorder = isDark ? '#166534' : '#bbf7d0';
+  const modalBackground = isDark ? '#1E293B' : '#ffffff';
+  const modalBorder = isDark ? '#374151' : '#e5e7eb';
 
-  // Refs
-  const scrollViewRef = useRef<ScrollView>(null);
-  const phoneInputRef = useRef<TextInput>(null);
-
-  // Permission checking for Android
-  const checkAndroidPermissions = async (): Promise<boolean> => {
-    if (Platform.OS === 'android') {
-      try {
-        const cameraPermission = await PermissionsAndroid.check(
-          PermissionsAndroid.PERMISSIONS.CAMERA,
-        );
-        const storagePermission = await PermissionsAndroid.check(
-          PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
-        );
-
-        // Get Android version safely
-        const androidVersion =
-          typeof Platform.Version === 'string'
-            ? parseInt(Platform.Version, 10)
-            : Platform.Version;
-
-        if (androidVersion >= 33) {
-          // Android 13+ uses READ_MEDIA_IMAGES
-          const mediaPermission = await PermissionsAndroid.check(
-            PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
-          );
-          if (!cameraPermission || !mediaPermission) {
-            return await requestAndroidPermissions();
-          }
-        } else {
-          if (!cameraPermission || !storagePermission) {
-            return await requestAndroidPermissions();
-          }
-        }
-        return true;
-      } catch (err) {
-        console.warn('Permission check error:', err);
-        return false;
-      }
-    }
-    return true;
-  };
-
-  const requestAndroidPermissions = async (): Promise<boolean> => {
+  // ✅ Fetch profile function - reusable
+  const fetchProfile = async () => {
+    setLoading(true);
     try {
-      const permissionsToRequest = [PermissionsAndroid.PERMISSIONS.CAMERA];
+      const result = await profileService.fetchProfile();
 
-      // Get Android version safely
-      const androidVersion =
-        typeof Platform.Version === 'string'
-          ? parseInt(Platform.Version, 10)
-          : Platform.Version;
-
-      if (androidVersion >= 33) {
-        permissionsToRequest.push(
-          PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
-        );
-      } else {
-        permissionsToRequest.push(
-          PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
-        );
-      }
-
-      const granted = await PermissionsAndroid.requestMultiple(
-        permissionsToRequest,
-      );
-
-      const allGranted = Object.values(granted).every(
-        status => status === PermissionsAndroid.RESULTS.GRANTED,
-      );
-
-      if (!allGranted) {
-        Alert.alert(
-          'Permission Required',
-          'Camera and storage permissions are needed to upload photos. Please grant them in settings.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Open Settings', onPress: () => Linking.openSettings() },
-          ],
-        );
-        return false;
-      }
-      return true;
-    } catch (err) {
-      console.warn('Permission request error:', err);
-      return false;
-    }
-  };
-
-  // Show image source selection dialog
-  const showImageSourceDialog = () => {
-    Alert.alert(
-      'Select Image Source',
-      'Choose where to get your profile photo from',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Camera',
-          onPress: () => handleCameraClick(),
-          style: 'default',
-        },
-        {
-          text: 'Gallery',
-          onPress: () => handleGalleryClick(),
-          style: 'default',
-        },
-      ],
-      { cancelable: true },
-    );
-  };
-
-  // Handle camera click with permission check
-  const handleCameraClick = async () => {
-    try {
-      // Check permissions
-      const hasPermission = await checkAndroidPermissions();
-      if (!hasPermission) return;
-
-      // Launch camera
-      const result = await launchCamera({
-        mediaType: 'photo',
-        quality: 0.8,
-        includeBase64: true,
-        saveToPhotos: true,
-      });
-
-      if (result.didCancel) {
-        console.log('User cancelled camera');
-        return;
-      }
-
-      if (result.errorCode) {
-        console.error('Camera error:', result.errorMessage);
-        Alert.alert('Error', 'Failed to open camera. Please try again.');
-        return;
-      }
-
-      if (result.assets && result.assets[0]) {
-        const asset = result.assets[0];
-        const imageUri = asset.uri || '';
-        const base64Data = asset.base64 || '';
-
-        if (base64Data) {
-          const imageData = `data:${
-            asset.type || 'image/jpeg'
-          };base64,${base64Data}`;
-          setFormData(prev => ({ ...prev, image: imageData }));
-          setPreviewImage(imageUri);
-          setHasImage(true);
-        } else if (imageUri) {
-          setFormData(prev => ({ ...prev, image: imageUri }));
-          setPreviewImage(imageUri);
-          setHasImage(true);
-        }
-      }
-    } catch (error) {
-      console.error('Camera error:', error);
-      Alert.alert('Error', 'Failed to open camera. Please try again.');
-    }
-  };
-
-  // Handle gallery click with permission check
-  const handleGalleryClick = async () => {
-    try {
-      // Check permissions
-      const hasPermission = await checkAndroidPermissions();
-      if (!hasPermission) return;
-
-      // Launch image library
-      const result = await launchImageLibrary({
-        mediaType: 'photo',
-        quality: 0.8,
-        includeBase64: true,
-        selectionLimit: 1,
-      });
-
-      if (result.didCancel) {
-        console.log('User cancelled gallery');
-        return;
-      }
-
-      if (result.errorCode) {
-        console.error('Gallery error:', result.errorMessage);
-        Alert.alert('Error', 'Failed to open gallery. Please try again.');
-        return;
-      }
-
-      if (result.assets && result.assets[0]) {
-        const asset = result.assets[0];
-        const imageUri = asset.uri || '';
-        const base64Data = asset.base64 || '';
-
-        // Check file size (max 5MB)
-        if (asset.fileSize && asset.fileSize > 5 * 1024 * 1024) {
-          Alert.alert(
-            'Image Too Large',
-            'Please select an image smaller than 5MB for faster upload.',
-            [{ text: 'OK' }],
-          );
-          return;
-        }
-
-        if (base64Data) {
-          const imageData = `data:${
-            asset.type || 'image/jpeg'
-          };base64,${base64Data}`;
-          setFormData(prev => ({ ...prev, image: imageData }));
-          setPreviewImage(imageUri);
-          setHasImage(true);
-        } else if (imageUri) {
-          setFormData(prev => ({ ...prev, image: imageUri }));
-          setPreviewImage(imageUri);
-          setHasImage(true);
-        }
-      }
-    } catch (error) {
-      console.error('Gallery error:', error);
-      Alert.alert('Error', 'Failed to open gallery. Please try again.');
-    }
-  };
-
-  // Image picker function with permission handling
-  const handleImageChange = async () => {
-    showImageSourceDialog();
-  };
-
-  useEffect(() => {
-    const fetchUserAndProfile = async () => {
-      try {
-        setLoading(true);
-
-        const token = await AsyncStorage.getItem('authToken');
-        const userData = await AsyncStorage.getItem('userData');
-
-        if (userData) {
-          const user = JSON.parse(userData);
-          setUserId(user._id);
-        }
-
-        if (!token) {
-          setError('Please login again');
-          setLoading(false);
-          return;
-        }
-
-        const res = await fetch('http://172.20.10.12:5000/api/profile/me', {
-          headers: { Authorization: `Bearer ${token}` },
+      if (result.success && result.data) {
+        setFormData({
+          name: result.data.name || '',
+          email: result.data.email || '',
+          phone: result.data.phone || '',
+          image: result.data.image || '',
         });
-
-        const data = await res.json();
-
-        if (res.ok) {
-          let hasValidImage = false;
-          let imageUrl = '';
-
-          if (
-            data.image &&
-            data.image !== '' &&
-            data.image !== 'null' &&
-            data.image !== 'undefined'
-          ) {
-            imageUrl = getImageUrl(data.image);
-            hasValidImage = imageUrl.startsWith('http') && imageUrl.length > 10;
-          }
-
-          setFormData({
-            name: data.name || '',
-            email: data.email || '',
-            phone: data.phone || '',
-            image: hasValidImage ? imageUrl : '',
-          });
-
-          setHasImage(hasValidImage);
-          setPreviewImage(hasValidImage ? imageUrl : '');
-        } else {
-          setError(data.msg || 'Failed to load profile');
-        }
-      } catch (err) {
-        console.error('Profile fetch error:', err);
-        setError('Failed to load profile data');
-      } finally {
-        setLoading(false);
+        setHasImage(result.data.hasImage || false);
+        setPreviewImage(result.data.image || '');
+      } else {
+        setError(result.message || 'Failed to load profile');
       }
-    };
+    } catch (error: any) {
+      setError('Network error. Please try again.');
+      console.error('Fetch profile error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    fetchUserAndProfile();
+  // ✅ Initial load
+  useEffect(() => {
+    fetchProfile();
   }, []);
+
+  // ✅ Refresh when screen comes into focus (after returning from ProfileScreen)
+  useFocusEffect(
+    useCallback(() => {
+      fetchProfile();
+      return () => {};
+    }, []),
+  );
+
+  // Image picker handlers
+  const handleCameraClick = async () => {
+    setShowImageModal(false);
+    try {
+      const result = await imagePickerService.pickFromCamera();
+
+      if (result) {
+        setFormData(prev => ({ ...prev, image: result.base64 || result.uri }));
+        setPreviewImage(result.uri);
+        setHasImage(true);
+        Alert.alert('Success', 'Photo captured successfully!');
+      }
+    } catch (error: any) {
+      Alert.alert(
+        'Error',
+        error.message ||
+          'Failed to open camera. Please check camera permissions in settings.',
+      );
+    }
+  };
+
+  const handleGalleryClick = async () => {
+    setShowImageModal(false);
+    try {
+      const result = await imagePickerService.pickFromGallery();
+
+      if (result) {
+        setFormData(prev => ({ ...prev, image: result.base64 || result.uri }));
+        setPreviewImage(result.uri);
+        setHasImage(true);
+        Alert.alert('Success', 'Photo selected successfully!');
+      }
+    } catch (error: any) {
+      Alert.alert(
+        'Error',
+        error.message ||
+          'Failed to open gallery. Please check storage permissions in settings.',
+      );
+    }
+  };
+
+  // Delete image handler
+  const handleDeleteImage = async () => {
+    setIsDeleting(true);
+    try {
+      const result = await profileApi.deleteProfileImage();
+
+      if (result.success) {
+        setFormData(prev => ({ ...prev, image: '' }));
+        setPreviewImage('');
+        setHasImage(false);
+        setShowImageModal(false);
+        Alert.alert('Success', 'Profile image deleted successfully!');
+      } else {
+        Alert.alert('Error', result.message);
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to delete profile image');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  // Open image options modal
+  const handleImagePress = () => {
+    setShowImageModal(true);
+  };
+
+  // New image change handler (camera/gallery options)
+  const handleAddNewPhoto = () => {
+    showImageSourceDialog(handleCameraClick, handleGalleryClick);
+  };
 
   const handlePhoneFocus = () => {
     setTimeout(() => {
@@ -381,113 +202,38 @@ export default function EditProfileScreen() {
     }, 300);
   };
 
-  // Function to convert image path to base64 if needed
-  const getImageBase64 = async (imagePath: string): Promise<string | null> => {
-    try {
-      if (imagePath.startsWith('data:image')) {
-        return imagePath;
-      }
-      if (imagePath.startsWith('http')) {
-        return null;
-      }
-      return imagePath;
-    } catch (error) {
-      console.error('Error converting image to base64:', error);
-      return null;
-    }
-  };
-
-  // Optimized submit function
   const handleSubmit = async () => {
-    // Keyboard close
     Keyboard.dismiss();
-
     setIsSubmitting(true);
     setError('');
     setSuccess('');
 
+    const validationErrors = validateProfileForm(formData);
+    if (validationErrors.length > 0) {
+      setError(validationErrors[0]);
+      setIsSubmitting(false);
+      return;
+    }
+
     try {
-      const token = await AsyncStorage.getItem('authToken');
-      if (!token) {
-        setError('Please login again');
-        setIsSubmitting(false);
-        return;
-      }
+      const result = await profileService.updateProfile(formData);
 
-      const startTime = Date.now();
-
-      const bodyToSend: any = {
-        name: formData.name.trim(),
-        email: formData.email.trim(),
-        phone: formData.phone.trim(),
-      };
-
-      // Only send image if it's new and not a URL
-      if (formData.image && !formData.image.startsWith('http')) {
-        // Check if it's a base64 string or a file path
-        if (formData.image.startsWith('data:image')) {
-          const base64Size = (formData.image.length * 3) / (4 * 1024 * 1024); // Approx MB
-          console.log(`📤 Image size: ${base64Size.toFixed(2)} MB`);
-
-          if (base64Size > 3) {
-            setError('Image is too large. Please select a smaller image.');
-            setIsSubmitting(false);
-            return;
-          }
-
-          bodyToSend.image = formData.image;
-          bodyToSend.fileName = `profile_${Date.now()}.jpg`;
-        } else {
-          // If it's a file path, we need to convert to base64
-          console.log('⚠️ Image path detected, skipping upload for now');
-        }
-      }
-
-      console.log('🚀 Sending update request...');
-
-      const res = await fetch('http://172.20.10.12:5000/api/profile/update', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(bodyToSend),
-      });
-
-      const data = await res.json();
-      const endTime = Date.now();
-
-      console.log(
-        `⏱️ Request completed in: ${(endTime - startTime) / 1000} seconds`,
-      );
-
-      if (res.ok) {
-        setSuccess('Profile updated successfully! 🎉');
-
-        // Update local storage
-        if (data.user) {
-          await AsyncStorage.setItem('userData', JSON.stringify(data.user));
-          if (data.user.image) {
-            await AsyncStorage.setItem('profileImage', data.user.image);
-          }
-        }
-
-        // Auto navigate back after success
+      if (result.success) {
+        setSuccess(result.message || 'Profile updated successfully!');
         setTimeout(() => {
           navigation.goBack();
         }, 2000);
       } else {
-        setError(data.message || 'Update failed. Please try again.');
+        setError(result.message || 'Failed to update profile');
       }
-    } catch (err) {
-      console.error('🔥 Update error:', err);
-      setError('Network error - Please check your connection');
+    } catch (error: any) {
+      setError('Network error. Please try again.');
+      console.error('Update profile error:', error);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // Loading component
   if (loading) {
     return (
       <SafeAreaView style={[styles.safeArea, { backgroundColor }]}>
@@ -499,10 +245,7 @@ export default function EditProfileScreen() {
           <View
             style={[
               styles.loadingCard,
-              {
-                backgroundColor: cardBackground,
-                borderColor: cardBorder,
-              },
+              { backgroundColor: cardBackground, borderColor: cardBorder },
             ]}
           >
             <ActivityIndicator
@@ -542,7 +285,6 @@ export default function EditProfileScreen() {
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Top Space for Camera */}
           <View style={styles.cameraSpace} />
 
           {/* Header */}
@@ -550,33 +292,28 @@ export default function EditProfileScreen() {
             <TouchableOpacity
               onPress={() => navigation.goBack()}
               style={styles.backButton}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
               <Icon
                 name="arrow-back"
                 size={24}
                 color={isDark ? '#94A3B8' : '#6b7280'}
               />
-              <Text style={[styles.backText, { color: subtitleColor }]}></Text>
             </TouchableOpacity>
-
             <View style={styles.titleContainer}>
               <Text style={[styles.headerTitle, { color: textColor }]}>
                 Edit Profile
               </Text>
             </View>
-
             <View style={styles.headerSpacer} />
           </View>
 
-          {/* Success/Error Messages */}
+          {/* Messages */}
           {error ? (
             <View
               style={[
                 styles.errorMessage,
-                {
-                  backgroundColor: errorBackground,
-                  borderColor: errorBorder,
-                },
+                { backgroundColor: errorBackground, borderColor: errorBorder },
               ]}
             >
               <Text
@@ -615,17 +352,15 @@ export default function EditProfileScreen() {
           <View
             style={[
               styles.profileCard,
-              {
-                backgroundColor: cardBackground,
-                borderColor: cardBorder,
-              },
+              { backgroundColor: cardBackground, borderColor: cardBorder },
             ]}
           >
             {/* Profile Image Upload */}
             <View style={styles.imageSection}>
               <TouchableOpacity
                 style={styles.imageContainer}
-                onPress={handleImageChange}
+                onPress={handleImagePress}
+                activeOpacity={0.8}
               >
                 <View
                   style={[
@@ -636,17 +371,11 @@ export default function EditProfileScreen() {
                     },
                   ]}
                 >
-                  {/* Conditional rendering: Show user image if available, otherwise show Lottie animation */}
                   {hasImage && previewImage && previewImage !== '' ? (
                     <Image
                       source={{ uri: previewImage }}
                       style={styles.profileImage}
                       resizeMode="cover"
-                      onError={() => {
-                        console.log('Image load error, falling back to Lottie');
-                        setHasImage(false);
-                        setPreviewImage('');
-                      }}
                     />
                   ) : (
                     <LottieView
@@ -658,14 +387,11 @@ export default function EditProfileScreen() {
                     />
                   )}
                 </View>
-
-                {/* Camera Icon Overlay */}
                 <View style={styles.cameraButton}>
                   <Icon name="camera-alt" size={20} color="white" />
                 </View>
               </TouchableOpacity>
-
-              <TouchableOpacity onPress={handleImageChange}>
+              <TouchableOpacity onPress={handleImagePress}>
                 <Text
                   style={[styles.changePhotoText, { color: subtitleColor }]}
                 >
@@ -682,9 +408,7 @@ export default function EditProfileScreen() {
                   <View
                     style={[
                       styles.labelIcon,
-                      {
-                        backgroundColor: isDark ? '#7C3AED' : '#8b5cf6',
-                      },
+                      { backgroundColor: isDark ? '#7C3AED' : '#8b5cf6' },
                     ]}
                   >
                     <FA5Icon name="user" size={14} color="white" />
@@ -718,9 +442,7 @@ export default function EditProfileScreen() {
                   <View
                     style={[
                       styles.labelIcon,
-                      {
-                        backgroundColor: isDark ? '#DC2626' : '#ef4444',
-                      },
+                      { backgroundColor: isDark ? '#DC2626' : '#ef4444' },
                     ]}
                   >
                     <Icon name="email" size={14} color="white" />
@@ -756,9 +478,7 @@ export default function EditProfileScreen() {
                   <View
                     style={[
                       styles.labelIcon,
-                      {
-                        backgroundColor: isDark ? '#059669' : '#10b981',
-                      },
+                      { backgroundColor: isDark ? '#059669' : '#10b981' },
                     ]}
                   >
                     <FA5Icon name="phone" size={12} color="white" />
@@ -798,6 +518,7 @@ export default function EditProfileScreen() {
                   styles.submitButton,
                   isSubmitting && styles.submitButtonDisabled,
                 ]}
+                activeOpacity={0.8}
               >
                 <LinearGradient
                   colors={buttonGradient}
@@ -836,6 +557,88 @@ export default function EditProfileScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Image Options Modal */}
+      <Modal
+        visible={showImageModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowImageModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowImageModal(false)}
+        >
+          <View
+            style={[
+              styles.optionsModal,
+              { backgroundColor: modalBackground, borderColor: modalBorder },
+            ]}
+          >
+            <Text style={[styles.modalTitle, { color: textColor }]}>
+              Profile Photo
+            </Text>
+
+            {/* Add New Photo Option */}
+            <TouchableOpacity
+              style={styles.optionItem}
+              onPress={handleAddNewPhoto}
+            >
+              <View style={[styles.optionIcon, { backgroundColor: '#10b981' }]}>
+                <Icon name="add-a-photo" size={22} color="white" />
+              </View>
+              <View style={styles.optionTextContainer}>
+                <Text style={[styles.optionTitle, { color: textColor }]}>
+                  Add New Photo
+                </Text>
+                <Text style={[styles.optionSubtitle, { color: subtitleColor }]}>
+                  Take a photo or choose from gallery
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* Delete Photo Option - Only show if image exists */}
+            {hasImage && (
+              <TouchableOpacity
+                style={styles.optionItem}
+                onPress={handleDeleteImage}
+                disabled={isDeleting}
+              >
+                <View
+                  style={[styles.optionIcon, { backgroundColor: '#ef4444' }]}
+                >
+                  {isDeleting ? (
+                    <ActivityIndicator size="small" color="white" />
+                  ) : (
+                    <Icon name="delete" size={22} color="white" />
+                  )}
+                </View>
+                <View style={styles.optionTextContainer}>
+                  <Text style={[styles.optionTitle, { color: textColor }]}>
+                    Delete Photo
+                  </Text>
+                  <Text
+                    style={[styles.optionSubtitle, { color: subtitleColor }]}
+                  >
+                    Remove your profile photo
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            )}
+
+            {/* Cancel Button */}
+            <TouchableOpacity
+              style={[styles.cancelButton]}
+              onPress={() => setShowImageModal(false)}
+            >
+              <Text style={[styles.cancelButtonText, { color: '#ef4444' }]}>
+                Cancel
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -873,6 +676,7 @@ const styles = StyleSheet.create({
   backButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    padding: 8,
   },
   backText: {
     fontSize: 16,
@@ -888,7 +692,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   headerSpacer: {
-    width: 30,
+    width: 40,
   },
   errorMessage: {
     borderRadius: 16,
@@ -943,14 +747,6 @@ const styles = StyleSheet.create({
     borderRadius: 70,
     borderWidth: 4,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 6,
   },
   profileImage: {
     width: '100%',
@@ -973,9 +769,9 @@ const styles = StyleSheet.create({
       width: 0,
       height: 2,
     },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 4,
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
   changePhotoText: {
     fontSize: 14,
@@ -1067,6 +863,65 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     marginTop: 16,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  optionsModal: {
+    width: screenWidth - 48,
+    borderRadius: 24,
+    padding: 20,
+    borderWidth: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  optionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  optionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  optionTextContainer: {
+    flex: 1,
+  },
+  optionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  optionSubtitle: {
+    fontSize: 13,
+  },
+  cancelButton: {
+    marginTop: 16,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  cancelButtonText: {
     fontSize: 16,
     fontWeight: '600',
   },
