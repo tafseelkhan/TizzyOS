@@ -18,12 +18,15 @@ import {
   PermissionsAndroid,
   AppState,
   AppStateStatus,
+  LogBox,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+// ✅ CORRECT IMPORT FOR FONTSITO
+import Fontisto from 'react-native-vector-icons/Fontisto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   launchImageLibrary,
@@ -33,8 +36,12 @@ import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 import DeviceInfo from 'react-native-device-info';
 import { vehicleOptions } from '../../shipping/Apply/vehicleCategory';
 
-// NEW: Import react-native-get-location instead of react-native-geolocation-service
+// Import location and background packages
 import GetLocation from 'react-native-get-location';
+import BackgroundService from 'react-native-background-actions';
+
+// Ignore specific warnings
+LogBox.ignoreLogs(['new NativeEventEmitter']);
 
 const hapticOptions = {
   enableVibrateFallback: true,
@@ -58,28 +65,178 @@ type IdentityType = 'Aadhaar' | 'VoterID' | 'Passport' | 'PAN';
 
 const API_BASE_URL = 'http://172.20.10.12:5000';
 
-const ONLINE_STATUS_KEY = 'rider_online_status';
-const TRACKING_STATUS_KEY = 'rider_tracking_status';
-const LAST_ONLINE_KEY = 'rider_last_online';
-const LAST_OFFLINE_KEY = 'rider_last_offline';
-const PERMISSION_GRANTED_KEY = 'location_permission_granted';
-
 // ============================================================
-// PRODUCTION-GRADE LOCATION TRACKER with react-native-get-location
+// BATTERY BASED TIMEOUT CALCULATOR
 // ============================================================
 
-interface PermissionState {
-  fineLocation: boolean;
-  backgroundLocation: boolean;
-  lastChecked: number | null;
+class BatteryTimeoutCalculator {
+  private static readonly MIN_TIMEOUT_MS = 3000;
+  private static readonly MAX_TIMEOUT_MS = 25000;
+  private static readonly BASE_FOREGROUND_TIMEOUT_MS = 15000;
+  private static readonly BASE_BACKGROUND_TIMEOUT_MS = 20000;
+
+  static getForegroundTimeout(batteryLevel: number): number {
+    const battery = Math.max(0, Math.min(100, batteryLevel));
+    // Linear interpolation: lower battery = lower timeout
+    const timeout =
+      this.BASE_FOREGROUND_TIMEOUT_MS * (battery / 100) +
+      this.MIN_TIMEOUT_MS * ((100 - battery) / 100);
+    return Math.floor(
+      Math.max(this.MIN_TIMEOUT_MS, Math.min(this.MAX_TIMEOUT_MS, timeout)),
+    );
+  }
+
+  static getBackgroundTimeout(batteryLevel: number): number {
+    const battery = Math.max(0, Math.min(100, batteryLevel));
+    const timeout =
+      this.BASE_BACKGROUND_TIMEOUT_MS * (battery / 100) +
+      this.MIN_TIMEOUT_MS * ((100 - battery) / 100);
+    return Math.floor(
+      Math.max(this.MIN_TIMEOUT_MS, Math.min(this.MAX_TIMEOUT_MS, timeout)),
+    );
+  }
+
+  static getPollingInterval(
+    batteryLevel: number,
+    isBackground: boolean,
+  ): number {
+    const battery = Math.max(0, Math.min(100, batteryLevel));
+    if (isBackground) {
+      // Background: 5s to 20s
+      return Math.floor(5000 + 15000 * (battery / 100));
+    } else {
+      // Foreground: 3s to 12s
+      return Math.floor(3000 + 9000 * (battery / 100));
+    }
+  }
+
+  static getAccuracyMode(batteryLevel: number): 'high' | 'balanced' | 'low' {
+    if (batteryLevel > 50) return 'high';
+    if (batteryLevel > 20) return 'balanced';
+    return 'low';
+  }
+
+  // 🔥 FONTOSTO BATTERY ICONS 🔥
+  static getBatteryIconName(batteryLevel: number): string {
+    // Fontisto battery icons
+    if (batteryLevel > 90) return 'battery-full';
+    if (batteryLevel > 70) return 'battery-three-quarters';
+    if (batteryLevel > 50) return 'battery-half';
+    if (batteryLevel > 30) return 'battery-quarter';
+    if (batteryLevel > 15) return 'battery-empty';
+    return 'battery-warning';
+  }
+
+  static getBatteryColor(batteryLevel: number): string {
+    if (batteryLevel > 50) return '#10B981';
+    if (batteryLevel > 20) return '#F59E0B';
+    return '#EF4444';
+  }
+
+  static getAccuracyIconName(mode: string): string {
+    if (mode === 'high') return 'gps-fixed';
+    if (mode === 'balanced') return 'gps-not-fixed';
+    return 'gps-off';
+  }
+
+  static getAccuracyColor(mode: string): string {
+    if (mode === 'high') return '#10B981';
+    if (mode === 'balanced') return '#F59E0B';
+    return '#EF4444';
+  }
 }
+
+// ============================================================
+// LOGGING UTILITY
+// ============================================================
+
+const Logger = {
+  FOREGROUND: '🟢',
+  BACKGROUND: '🔵',
+  GPS: '📍',
+  API: '🌐',
+  PERMISSION: '🔐',
+  TRACKER: '🎯',
+  BATTERY: '🔋',
+  ERROR: '❌',
+  SUCCESS: '✅',
+  WARNING: '⚠️',
+  INFO: '📘',
+
+  log: (tag: string, message: string, data?: any) => {
+    console.log(
+      `${tag} [${new Date().toLocaleTimeString()}] ${message}`,
+      data ? data : '',
+    );
+  },
+  logForeground: (message: string, data?: any) =>
+    Logger.log(Logger.FOREGROUND, message, data),
+  logBackground: (message: string, data?: any) =>
+    Logger.log(Logger.BACKGROUND, message, data),
+  logGPS: (message: string, coords?: any) => {
+    if (coords?.lat) {
+      Logger.log(
+        Logger.GPS,
+        `${message} | Lat:${coords.lat.toFixed(6)} Lng:${coords.lng.toFixed(
+          6,
+        )} Acc:${(coords.acc || 0).toFixed(1)}m`,
+      );
+    } else {
+      Logger.log(Logger.GPS, message);
+    }
+  },
+  logAPI: (message: string, data?: any) =>
+    Logger.log(Logger.API, message, data),
+  logPermission: (message: string, granted?: boolean) =>
+    Logger.log(
+      Logger.PERMISSION,
+      message,
+      granted !== undefined ? `Granted: ${granted}` : '',
+    ),
+  logTracker: (message: string, data?: any) =>
+    Logger.log(Logger.TRACKER, message, data),
+  logBattery: (
+    level: number,
+    fgTimeout?: number,
+    bgTimeout?: number,
+    interval?: number,
+  ) => {
+    let msg = `Level: ${level.toFixed(0)}%`;
+    if (fgTimeout) msg += ` | FG:${(fgTimeout / 1000).toFixed(0)}s`;
+    if (bgTimeout) msg += ` | BG:${(bgTimeout / 1000).toFixed(0)}s`;
+    if (interval) msg += ` | Interval:${(interval / 1000).toFixed(0)}s`;
+    Logger.log(Logger.BATTERY, msg);
+  },
+  logError: (message: string, error?: any) =>
+    console.error(`${Logger.ERROR} ${message}`, error || ''),
+  logSuccess: (message: string, data?: any) =>
+    Logger.log(Logger.SUCCESS, message, data),
+  logWarning: (message: string, data?: any) =>
+    Logger.log(Logger.WARNING, message, data),
+  logInfo: (message: string, data?: any) =>
+    Logger.log(Logger.INFO, message, data),
+};
+
+// ============================================================
+// LOCATION TRACKER WITH BATTERY-BASED TIMEOUTS
+// ============================================================
 
 interface LocationData {
   latitude: number;
   longitude: number;
   accuracy: number;
   timestamp: number;
+  isBackground?: boolean;
+  speed?: number;
 }
+
+type BatteryUpdateCallback = (info: {
+  level: number;
+  fgTimeout: number;
+  bgTimeout: number;
+  interval: number;
+  accuracyMode: string;
+}) => void;
 
 class LocationTracker {
   private static instance: LocationTracker;
@@ -90,7 +247,6 @@ class LocationTracker {
   private lastLocation: LocationData | null = null;
   private appStateSubscription: any = null;
   private backgroundMode = false;
-  private abortController: AbortController | null = null;
   private batteryLevel = 100;
   private batteryInterval: ReturnType<typeof setInterval> | null = null;
   private isPollingInProgress = false;
@@ -98,302 +254,349 @@ class LocationTracker {
   private appState: AppStateStatus = 'active';
   private isStarting = false;
   private isStopping = false;
-
-  private permissionState: PermissionState = {
-    fineLocation: false,
-    backgroundLocation: false,
-    lastChecked: null,
-  };
-
-  private permissionsRequestedByUser = false;
-
-  private readonly HIGH_BATTERY_THRESHOLD = 30;
-  private readonly LOW_BATTERY_THRESHOLD = 15;
-  private highBatteryIntervalForeground = 8000;
-  private balancedIntervalForeground = 15000;
-  private lowBatteryIntervalForeground = 60000;
+  private isBackgroundTaskRunning = false;
+  private pollCount = 0;
+  private successCount = 0;
+  private failCount = 0;
+  private isLocationRequestInProgress = false;
+  private lastRequestTime = 0;
+  private readonly MIN_REQUEST_INTERVAL = 2000;
+  private batteryUpdateCallback: BatteryUpdateCallback | null = null;
 
   private constructor() {
-    console.log('[Tracker] Constructor - Initializing');
+    Logger.logTracker('Initializing LocationTracker');
     try {
       this.appStateSubscription = AppState.addEventListener(
         'change',
         this.onAppStateChange.bind(this),
       );
       this.startBatteryMonitoring();
-      this.loadStoredPermissionState();
+      Logger.logSuccess('LocationTracker initialized');
     } catch (error) {
-      console.error('[Tracker] Constructor error:', error);
+      Logger.logError('Constructor error:', error);
     }
   }
 
   static getInstance(): LocationTracker {
-    if (!LocationTracker.instance) {
+    if (!LocationTracker.instance)
       LocationTracker.instance = new LocationTracker();
-    }
     return LocationTracker.instance;
   }
 
-  private async loadStoredPermissionState() {
-    try {
-      const stored = await AsyncStorage.getItem(PERMISSION_GRANTED_KEY);
-      if (stored === 'true') {
-        console.log('[Permission] Loaded stored granted state');
-        this.permissionState.fineLocation = true;
-        this.permissionState.backgroundLocation = true;
-        this.permissionState.lastChecked = Date.now();
-        this.permissionsRequestedByUser = true;
+  setBatteryUpdateCallback(callback: BatteryUpdateCallback | null) {
+    this.batteryUpdateCallback = callback;
+    if (callback && this.batteryLevel) {
+      callback(this.getBatteryInfo());
+    }
+  }
+
+  getBatteryInfo() {
+    return {
+      level: this.batteryLevel,
+      fgTimeout: BatteryTimeoutCalculator.getForegroundTimeout(
+        this.batteryLevel,
+      ),
+      bgTimeout: BatteryTimeoutCalculator.getBackgroundTimeout(
+        this.batteryLevel,
+      ),
+      interval: BatteryTimeoutCalculator.getPollingInterval(
+        this.batteryLevel,
+        this.backgroundMode,
+      ),
+      accuracyMode: BatteryTimeoutCalculator.getAccuracyMode(this.batteryLevel),
+    };
+  }
+
+  private backgroundTask = async (taskData: any) => {
+    const { delay, riderId, authToken } = taskData;
+    if (riderId && authToken) {
+      this.riderId = riderId;
+      this.authToken = authToken;
+    }
+    let bgPollCount = 0;
+
+    while (BackgroundService.isRunning()) {
+      if (!this.isTracking) {
+        await this.sleep(delay);
+        continue;
       }
-    } catch (error) {
-      console.warn('[Permission] Failed to load stored state:', error);
+      bgPollCount++;
+      Logger.logBackground(`Poll #${bgPollCount}`);
+      try {
+        const startTime = Date.now();
+        const location = await this.getCurrentLocationWithRetry(true);
+        const elapsed = Date.now() - startTime;
+        Logger.logBackground(`Location fetch: ${elapsed}ms`);
+        if (location) {
+          location.isBackground = true;
+          Logger.logGPS(`BACKGROUND SUCCESS`, {
+            lat: location.latitude,
+            lng: location.longitude,
+            acc: location.accuracy,
+          });
+          await this.sendLocationToBackend(
+            location.latitude,
+            location.longitude,
+            location.accuracy,
+            true,
+          );
+        }
+      } catch (error) {
+        Logger.logError('Background error:', error);
+      }
+      await this.sleep(delay);
     }
-  }
+    Logger.logBackground('Task ended');
+  };
 
-  private async savePermissionState(granted: boolean) {
-    try {
-      await AsyncStorage.setItem(
-        PERMISSION_GRANTED_KEY,
-        granted ? 'true' : 'false',
-      );
-      console.log(`[Permission] Saved state: ${granted}`);
-    } catch (error) {
-      console.warn('[Permission] Failed to save state:', error);
-    }
-  }
+  private sleep = (ms: number) =>
+    new Promise(resolve => setTimeout(() => resolve(undefined), ms));
 
-  async requestPermissionsFromScreen(): Promise<boolean> {
-    console.log('[Permission] requestPermissionsFromScreen called');
-    console.log(
-      '[Permission] ⚠️ This MUST be called from a mounted screen with Activity',
+  async startBackgroundTask(): Promise<boolean> {
+    if (this.isBackgroundTaskRunning) return true;
+    if (!this.riderId || !this.authToken) return false;
+    const interval = BatteryTimeoutCalculator.getPollingInterval(
+      this.batteryLevel,
+      true,
     );
-    console.log(`[Permission] AppState: ${this.appState}`);
+    const options = {
+      taskName: 'RiderLocationTracking',
+      taskTitle: 'TizzyGo',
+      taskDesc: `Tracking | Battery:${this.batteryLevel.toFixed(0)}%`,
+      taskIcon: { name: 'ic_launcher', type: 'mipmap' },
+      color: '#4F46E5',
+      linkingURI: 'yourapp://home',
+      parameters: {
+        delay: interval,
+        riderId: this.riderId,
+        authToken: this.authToken,
+      },
+    };
+    try {
+      await BackgroundService.start(this.backgroundTask, options);
+      this.isBackgroundTaskRunning = true;
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
 
-    this.permissionsRequestedByUser = true;
-    const result = await this.requestPermissionsWithActivityCheck();
+  async stopBackgroundTask(): Promise<boolean> {
+    if (!this.isBackgroundTaskRunning) return true;
+    try {
+      await BackgroundService.stop();
+      this.isBackgroundTaskRunning = false;
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
 
-    if (result) {
-      await this.savePermissionState(true);
+  private async getCurrentLocationWithRetry(
+    isBackground: boolean = false,
+  ): Promise<LocationData | null> {
+    const mode = isBackground ? 'BACKGROUND' : 'FOREGROUND';
+    if (this.isLocationRequestInProgress) {
+      Logger.logWarning(`${mode} request in progress, skipping`);
+      return null;
     }
 
-    return result;
-  }
-
-  hasPermissions(): boolean {
-    const hasFine = this.permissionState.fineLocation;
-    const hasBg =
-      Platform.OS === 'android' && Platform.Version >= 29
-        ? this.permissionState.backgroundLocation
-        : true;
-    console.log(
-      `[Permission] hasPermissions check: fine=${hasFine}, bg=${hasBg}`,
-    );
-    return hasFine && hasBg;
-  }
-
-  private async requestPermissionsWithActivityCheck(): Promise<boolean> {
-    console.log('[Permission] requestPermissionsWithActivityCheck - START');
-    console.log(`[Permission] AppState: ${this.appState}`);
-
-    try {
-      if (Platform.OS !== 'android') {
-        console.log('[Permission] iOS - using different flow');
-        return this.requestIOSPermissions();
-      }
-
-      if (this.appState !== 'active') {
-        console.log(
-          '[Permission] SKIPPED - AppState is not active:',
-          this.appState,
-        );
-        return false;
-      }
-
-      console.log(
-        '[Permission] Attempting to check current permission state...',
+    const now = Date.now();
+    if (now - this.lastRequestTime < this.MIN_REQUEST_INTERVAL)
+      await this.sleep(
+        this.MIN_REQUEST_INTERVAL - (now - this.lastRequestTime),
       );
+    this.isLocationRequestInProgress = true;
+    this.lastRequestTime = Date.now();
 
-      let fineGranted = false;
-      let bgGranted = false;
+    let attempt = 0;
+    const maxRetries = 2;
+    try {
+      while (attempt <= maxRetries) {
+        try {
+          const startTime = Date.now();
+          const location = await this.getCurrentLocationPromise(isBackground);
+          if (location && this.isValidLocation(location)) {
+            Logger.logGPS(`${mode} FOUND in ${Date.now() - startTime}ms`, {
+              lat: location.latitude,
+              lng: location.longitude,
+              acc: location.accuracy,
+            });
+            return location;
+          }
+        } catch (error: any) {
+          if (!error?.message?.includes('CANCELLED'))
+            Logger.logError(
+              `${mode} attempt ${attempt + 1} failed:`,
+              error?.message,
+            );
+        }
+        attempt++;
+        if (attempt <= maxRetries) await this.sleep(2000);
+      }
+      Logger.logError(`${mode} all attempts failed`);
+      return null;
+    } finally {
+      this.isLocationRequestInProgress = false;
+    }
+  }
+
+  private getCurrentLocationPromise(
+    isBackground: boolean = false,
+  ): Promise<LocationData> {
+    return new Promise((resolve, reject) => {
+      let timeoutId: any = null;
+      let resolved = false;
+      const mode = isBackground ? 'BACKGROUND' : 'FOREGROUND';
+      const timeoutMs = isBackground
+        ? BatteryTimeoutCalculator.getBackgroundTimeout(this.batteryLevel)
+        : BatteryTimeoutCalculator.getForegroundTimeout(this.batteryLevel);
+
+      timeoutId = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          reject(new Error('Location timeout'));
+        }
+      }, timeoutMs);
+
+      const accuracyMode = BatteryTimeoutCalculator.getAccuracyMode(
+        this.batteryLevel,
+      );
+      const useHighAccuracy = !isBackground && accuracyMode === 'high';
+      const options = {
+        enableHighAccuracy: useHighAccuracy,
+        timeout: Math.min(timeoutMs - 1000, 10000),
+        maxAge: 0,
+      };
 
       try {
-        const fineCheck = await PermissionsAndroid.check(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        );
-        fineGranted = fineCheck;
-        console.log(`[Permission] Fine location check result: ${fineGranted}`);
-      } catch (checkError: any) {
-        console.error(
-          '[Permission] FAILED to check fine location - Activity unavailable',
-        );
-        return false;
+        GetLocation.getCurrentPosition(options)
+          .then((loc: any) => {
+            if (!resolved) {
+              resolved = true;
+              clearTimeout(timeoutId);
+              resolve({
+                latitude: loc.latitude,
+                longitude: loc.longitude,
+                accuracy: loc.accuracy || 0,
+                timestamp: Date.now(),
+                speed: loc.speed,
+              });
+            }
+          })
+          .catch((err: any) => {
+            if (!resolved) {
+              resolved = true;
+              clearTimeout(timeoutId);
+              reject(err);
+            }
+          });
+      } catch (err) {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timeoutId);
+          reject(err);
+        }
       }
+    });
+  }
+
+  private isValidLocation(loc: LocationData): boolean {
+    return (
+      !(loc.latitude === 0 && loc.longitude === 0) &&
+      loc.latitude >= -90 &&
+      loc.latitude <= 90 &&
+      loc.longitude >= -180 &&
+      loc.longitude <= 180
+    );
+  }
+
+  async checkRealPermissions(): Promise<boolean> {
+    if (Platform.OS !== 'android') return true;
+    try {
+      const fine = await PermissionsAndroid.check(
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+      );
+      let bg = true;
+      if (Platform.Version >= 29)
+        bg = await PermissionsAndroid.check(
+          PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
+        );
+      return fine && bg;
+    } catch {
+      return false;
+    }
+  }
+
+  async requestRealPermissions(): Promise<boolean> {
+    if (this.appState !== 'active') return false;
+    if (Platform.OS !== 'android') return this.requestIOSPermissions();
+    try {
+      let fine = await PermissionsAndroid.check(
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+      );
+      let bg = true;
+      if (Platform.Version >= 29)
+        bg = await PermissionsAndroid.check(
+          PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
+        );
+      if (fine && bg) return true;
+
+      const fineResult = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        {
+          title: 'Location Permission',
+          message: 'App needs location access to track deliveries',
+          buttonPositive: 'Allow',
+          buttonNegative: 'Deny',
+        },
+      );
+      if (fineResult !== PermissionsAndroid.RESULTS.GRANTED) return false;
 
       if (Platform.Version >= 29) {
-        try {
-          const bgCheck = await PermissionsAndroid.check(
-            PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
-          );
-          bgGranted = bgCheck;
-          console.log(
-            `[Permission] Background location check result: ${bgGranted}`,
-          );
-        } catch (checkError: any) {
-          console.error('[Permission] FAILED to check background location');
-          return false;
-        }
-      } else {
-        bgGranted = true;
-      }
-
-      if (fineGranted && bgGranted) {
-        console.log('[Permission] Permissions already granted, updating state');
-        this.permissionState.fineLocation = fineGranted;
-        this.permissionState.backgroundLocation = bgGranted;
-        this.permissionState.lastChecked = Date.now();
-        return true;
-      }
-
-      console.log(
-        '[Permission] Permissions not granted, need to request dialog',
-      );
-
-      let fineResult: string;
-      try {
-        console.log('[Permission] Requesting ACCESS_FINE_LOCATION...');
-        fineResult = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        const bgResult = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
           {
-            title: 'Location Permission Required',
-            message: 'TizzyGo needs location access to track your deliveries.',
+            title: 'Background Location',
+            message: 'App needs background location even when screen is locked',
             buttonPositive: 'Allow',
             buttonNegative: 'Deny',
           },
         );
-        console.log(`[Permission] Fine location request result: ${fineResult}`);
-      } catch (reqError: any) {
-        console.error('[Permission] FAILED to request fine location');
-        return false;
+        bg = bgResult === PermissionsAndroid.RESULTS.GRANTED;
       }
-
-      const fineGrantedNow = fineResult === PermissionsAndroid.RESULTS.GRANTED;
-      if (!fineGrantedNow) {
-        console.log('[Permission] Fine location denied by user');
-        this.permissionState.fineLocation = false;
-        return false;
-      }
-
-      if (Platform.Version >= 29) {
-        let bgResult: string;
-        try {
-          console.log('[Permission] Requesting ACCESS_BACKGROUND_LOCATION...');
-          bgResult = await PermissionsAndroid.request(
-            PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
-            {
-              title: 'Background Location Permission',
-              message: 'App needs background location for delivery tracking.',
-              buttonPositive: 'Allow',
-              buttonNegative: 'Deny',
-            },
-          );
-          console.log(
-            `[Permission] Background location request result: ${bgResult}`,
-          );
-          bgGranted = bgResult === PermissionsAndroid.RESULTS.GRANTED;
-        } catch (reqError: any) {
-          console.error('[Permission] FAILED to request background location');
-          bgGranted = false;
-        }
-      } else {
-        bgGranted = true;
-      }
-
-      this.permissionState.fineLocation = fineGrantedNow;
-      this.permissionState.backgroundLocation = bgGranted;
-      this.permissionState.lastChecked = Date.now();
-
-      const success = fineGrantedNow && bgGranted;
-      console.log(`[Permission] Request complete - SUCCESS: ${success}`);
-      return success;
-    } catch (outerError: any) {
-      console.error('[Permission] UNEXPECTED error:', outerError);
+      return true;
+    } catch {
       return false;
     }
   }
 
   private async requestIOSPermissions(): Promise<boolean> {
-    console.log('[Permission iOS] Starting permission flow');
-    return new Promise<boolean>(resolve => {
-      try {
-        GetLocation.getCurrentPosition({
-          enableHighAccuracy: true,
-          timeout: 5000,
-        })
-          .then(() => {
-            console.log('[Permission iOS] Success');
-            resolve(true);
-          })
-          .catch(error => {
-            console.warn('[Permission iOS] Denied:', error);
-            resolve(false);
-          });
-      } catch (error) {
-        console.error('[Permission iOS] Request error:', error);
-        resolve(false);
-      }
+    return new Promise(resolve => {
+      GetLocation.getCurrentPosition({
+        enableHighAccuracy: true,
+        timeout: 5000,
+      })
+        .then(() => resolve(true))
+        .catch(() => resolve(false));
     });
   }
 
   async startTracking(riderId: string, authToken: string): Promise<boolean> {
-    console.log('[Tracker] ========== startTracking CALLED ==========');
-    console.log(`[Tracker] hasPermissions(): ${this.hasPermissions()}`);
-
-    if (!this.hasPermissions()) {
-      console.error(
-        '[Tracker] Cannot start tracking - permissions not granted',
-      );
-      return false;
-    }
-
-    if (this.isStarting || this.isTracking) {
-      console.log('[Tracker] Already starting or tracking');
-      return false;
-    }
-
+    if (!(await this.checkRealPermissions())) return false;
+    if (this.isStarting || this.isTracking) return false;
     this.isStarting = true;
     try {
-      if (this.isTracking) {
-        console.log('[Tracker] Already tracking');
-        return false;
-      }
-
-      console.log('[Tracker] Stopping any existing polling loop');
       this.stopPollingLoop();
-
-      if (!this.hasPermissions()) {
-        console.error('[Tracker] No permissions - aborting start');
-        return false;
-      }
-
       this.isTracking = true;
       this.riderId = riderId;
       this.authToken = authToken;
-      this.backgroundMode = false;
-      this.isPollingInProgress = false;
-
-      console.log('[Tracker] Updating battery level...');
-      try {
-        await this.updateBatteryLevel();
-      } catch (batteryError) {
-        console.warn('[Tracker] Battery update failed:', batteryError);
-      }
-
-      console.log('[Tracker] Starting polling loop...');
+      this.pollCount = this.successCount = this.failCount = 0;
+      await this.updateBatteryLevel();
       this.startPollingLoop();
-
-      console.log('[Tracker] Tracking started successfully');
+      await this.startBackgroundTask();
       return true;
     } catch (error) {
-      console.error('[Tracker] startTracking error:', error);
       return false;
     } finally {
       this.isStarting = false;
@@ -401,328 +604,83 @@ class LocationTracker {
   }
 
   async stopTracking(): Promise<void> {
-    console.log('[Tracker] stopTracking called');
     if (this.isStopping) return;
     this.isStopping = true;
     try {
       this.isTracking = false;
       this.stopPollingLoop();
-      if (this.abortController) {
-        try {
-          this.abortController.abort();
-        } catch (abortError) {
-          console.warn('[Tracker] Abort error:', abortError);
-        }
-        this.abortController = null;
-      }
+      await this.stopBackgroundTask();
       this.riderId = null;
       this.authToken = null;
       this.lastLocation = null;
-      this.isPollingInProgress = false;
-      console.log('[Tracker] Tracking stopped');
-    } catch (error) {
-      console.error('[Tracker] stopTracking error:', error);
     } finally {
       this.isStopping = false;
     }
   }
 
-  isTrackingActive(): boolean {
-    return this.isTracking;
-  }
-
-  async updatePermissionState(granted: boolean) {
-    console.log(`[Permission] updatePermissionState called with: ${granted}`);
-    if (granted) {
-      this.permissionState.fineLocation = true;
-      this.permissionState.backgroundLocation = true;
-      this.permissionState.lastChecked = Date.now();
-      this.permissionsRequestedByUser = true;
-      await this.savePermissionState(true);
-    } else {
-      this.permissionState.fineLocation = false;
-      this.permissionState.backgroundLocation = false;
-      await this.savePermissionState(false);
-    }
-  }
-
-  destroy() {
-    console.log('[Tracker] destroy called');
-    try {
-      this.stopTracking();
-    } catch (error) {
-      console.warn('[Tracker] destroy - stopTracking error:', error);
-    }
-    if (this.appStateSubscription) {
-      try {
-        this.appStateSubscription.remove();
-      } catch (subError) {
-        console.warn('[Tracker] Subscription removal error:', subError);
-      }
-    }
-    if (this.batteryInterval) {
-      try {
-        clearInterval(this.batteryInterval);
-      } catch (intervalError) {
-        console.warn('[Tracker] Battery interval clear error:', intervalError);
-      }
-    }
-    if (this.pollingIntervalId) {
-      try {
-        clearInterval(this.pollingIntervalId);
-      } catch (pollError) {
-        console.warn('[Tracker] Polling interval clear error:', pollError);
-      }
-    }
-  }
-
-  private onAppStateChange(nextAppState: AppStateStatus) {
-    console.log(
-      `[Tracker] AppState changed: ${this.appState} -> ${nextAppState}`,
-    );
-    try {
-      this.appState = nextAppState;
-      this.backgroundMode = nextAppState === 'background';
-      if (this.isTracking) {
-        this.restartPollingWithNewInterval();
-      }
-    } catch (error) {
-      console.error('[Tracker] onAppStateChange error:', error);
-    }
+  private onAppStateChange(nextState: AppStateStatus) {
+    this.appState = nextState;
+    this.backgroundMode = nextState === 'background';
+    if (this.isTracking) this.restartPollingWithNewInterval();
   }
 
   private restartPollingWithNewInterval() {
-    console.log('[Tracker] restartPollingWithNewInterval');
-    if (!this.isTracking) return;
-    try {
+    if (this.isTracking) {
       this.stopPollingLoop();
       this.startPollingLoop();
-    } catch (error) {
-      console.error('[Tracker] restartPollingWithNewInterval error:', error);
     }
   }
 
   private startPollingLoop() {
-    console.log('[Tracker] ========== startPollingLoop ==========');
-    if (this.pollingIntervalId) {
-      console.log('[Tracker] Clearing existing interval');
-      this.stopPollingLoop();
-    }
-
-    try {
-      const interval = this.getCurrentInterval();
-      this.currentIntervalMs = interval;
-      console.log(
-        `[Tracker] Starting polling loop: interval=${interval}ms, bg=${this.backgroundMode}, battery=${this.batteryLevel}%`,
-      );
-
-      console.log('[Tracker] Executing initial location poll...');
-      this.executeLocationPoll();
-
-      console.log('[Tracker] Setting up interval timer');
-      this.pollingIntervalId = setInterval(() => {
-        console.log('[Tracker] Interval callback triggered');
-        this.executeLocationPoll();
-      }, interval);
-
-      console.log('[Tracker] Polling loop started successfully');
-    } catch (error) {
-      console.error('[Tracker] startPollingLoop error:', error);
-    }
+    if (this.pollingIntervalId) this.stopPollingLoop();
+    const interval = BatteryTimeoutCalculator.getPollingInterval(
+      this.batteryLevel,
+      this.backgroundMode,
+    );
+    this.currentIntervalMs = interval;
+    if (this.batteryUpdateCallback)
+      this.batteryUpdateCallback(this.getBatteryInfo());
+    this.executeLocationPoll();
+    this.pollingIntervalId = setInterval(
+      () => this.executeLocationPoll(),
+      interval,
+    );
   }
 
   private stopPollingLoop() {
-    console.log('[Tracker] stopPollingLoop called');
     if (this.pollingIntervalId) {
-      try {
-        clearInterval(this.pollingIntervalId);
-        this.pollingIntervalId = null;
-        console.log('[Tracker] Polling loop stopped');
-      } catch (error) {
-        console.error('[Tracker] stopPollingLoop clear error:', error);
-      }
+      clearInterval(this.pollingIntervalId);
+      this.pollingIntervalId = null;
     }
   }
 
   private async executeLocationPoll() {
-    console.log('[GPS] ========== executeLocationPoll START ==========');
-    console.log(`[GPS] isTracking: ${this.isTracking}`);
-    console.log(`[GPS] isPollingInProgress: ${this.isPollingInProgress}`);
-
-    if (!this.isTracking) {
-      console.log('[GPS] Not tracking, skipping poll');
-      return;
-    }
-
-    if (this.isPollingInProgress) {
-      console.log('[GPS] Poll already in progress, skipping');
-      return;
-    }
-
+    if (!this.isTracking || this.isPollingInProgress) return;
+    this.pollCount++;
     this.isPollingInProgress = true;
     try {
-      const { highAccuracy } = this.getAccuracyConfig();
-      console.log(`[GPS] Getting position with highAccuracy=${highAccuracy}`);
-
-      let location: LocationData;
-      try {
-        console.log('[GPS] BEFORE GetLocation.getCurrentPosition call');
-        location = await this.getCurrentLocationPromise(highAccuracy);
-        console.log('[GPS] AFTER GetLocation.getCurrentPosition - SUCCESS!');
-        console.log(
-          `[GPS] Coordinates: lat=${location.latitude}, lng=${location.longitude}, accuracy=${location.accuracy}`,
-        );
-      } catch (locationError: any) {
-        console.error(
-          '[GPS] Location error caught:',
-          locationError.code,
-          locationError.message,
-        );
-        console.log('[GPS] Error details:', JSON.stringify(locationError));
-        return;
+      const location = await this.getCurrentLocationWithRetry(false);
+      if (location) {
+        this.successCount++;
+        await this.handleLocationUpdate(location);
+      } else {
+        this.failCount++;
       }
-
-      await this.handleLocationUpdate(location);
-      console.log('[GPS] Location update handled successfully');
-    } catch (err: any) {
-      console.error(
-        '[GPS] executeLocationPoll unexpected error:',
-        err?.message || err,
-      );
     } finally {
       this.isPollingInProgress = false;
-      console.log('[GPS] executeLocationPoll END');
     }
-  }
-
-  private getCurrentInterval(): number {
-    try {
-      if (this.batteryLevel > this.HIGH_BATTERY_THRESHOLD) {
-        return this.highBatteryIntervalForeground;
-      } else if (this.batteryLevel > this.LOW_BATTERY_THRESHOLD) {
-        return this.balancedIntervalForeground;
-      } else {
-        return this.lowBatteryIntervalForeground;
-      }
-    } catch (error) {
-      console.error('[Tracker] getCurrentInterval error:', error);
-      return 15000;
-    }
-  }
-
-  private getAccuracyConfig(): { highAccuracy: boolean } {
-    try {
-      return {
-        highAccuracy: this.batteryLevel > this.LOW_BATTERY_THRESHOLD,
-      };
-    } catch (error) {
-      console.error('[Tracker] getAccuracyConfig error:', error);
-      return { highAccuracy: false };
-    }
-  }
-
-  // NEW: Complete rewrite using react-native-get-location with proper timeout
-  private getCurrentLocationPromise(
-    highAccuracy: boolean,
-  ): Promise<LocationData> {
-    return new Promise((resolve, reject) => {
-      console.log('[GPS] Promise started, setting timeout...');
-
-      let isResolved = false;
-      let timeoutId: ReturnType<typeof setTimeout> | null = null;
-
-      // Cleanup function to prevent memory leaks
-      const cleanup = () => {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-          timeoutId = null;
-        }
-      };
-
-      // Set timeout to prevent hanging
-      timeoutId = setTimeout(() => {
-        if (!isResolved) {
-          isResolved = true;
-          console.log(
-            '[GPS] ⚠️ TIMEOUT FIRED - 15 seconds elapsed without response',
-          );
-          cleanup();
-          reject(new Error('Location timeout - no response from GPS'));
-        }
-      }, 15000);
-
-      const options = {
-        enableHighAccuracy: highAccuracy,
-        timeout: 10000, // milliseconds
-        maxAge: 0, // no cached location
-      };
-
-      console.log(
-        `[GPS] Calling GetLocation.getCurrentPosition with options:`,
-        options,
-      );
-
-      try {
-        GetLocation.getCurrentPosition(options)
-          .then(location => {
-            if (!isResolved) {
-              isResolved = true;
-              const timestamp = Date.now();
-              console.log('[GPS] ✅ SUCCESS CALLBACK FIRED');
-              console.log(
-                `[GPS] Location: lat=${location.latitude}, lng=${location.longitude}, accuracy=${location.accuracy}, timestamp=${timestamp}`,
-              );
-              cleanup();
-              resolve({
-                latitude: location.latitude,
-                longitude: location.longitude,
-                accuracy: location.accuracy || 0,
-                timestamp,
-              });
-            }
-          })
-          .catch(error => {
-            if (!isResolved) {
-              isResolved = true;
-              console.log('[GPS] ❌ ERROR CALLBACK FIRED');
-              console.log(
-                `[GPS] Error code: ${error.code}, message: ${error.message}`,
-              );
-              cleanup();
-              reject(error);
-            }
-          });
-        console.log(
-          '[GPS] GetLocation.getCurrentPosition call completed (async)',
-        );
-      } catch (error) {
-        if (!isResolved) {
-          isResolved = true;
-          console.error(
-            '[GPS] 🔥 EXCEPTION in GetLocation.getCurrentPosition:',
-            error,
-          );
-          cleanup();
-          reject(error);
-        }
-      }
-    });
   }
 
   private startBatteryMonitoring() {
-    console.log('[Tracker] startBatteryMonitoring');
     this.batteryInterval = setInterval(async () => {
-      try {
-        await this.updateBatteryLevel();
-        if (this.isTracking) {
-          console.log(`[Tracker] Battery updated: ${this.batteryLevel}%`);
-          const newInterval = this.getCurrentInterval();
-          if (newInterval !== this.currentIntervalMs) {
-            this.restartPollingWithNewInterval();
-          }
-        }
-      } catch (error) {
-        console.warn('[Tracker] Battery monitoring interval error:', error);
+      await this.updateBatteryLevel();
+      if (this.isTracking) {
+        const newInterval = BatteryTimeoutCalculator.getPollingInterval(
+          this.batteryLevel,
+          this.backgroundMode,
+        );
+        if (newInterval !== this.currentIntervalMs)
+          this.restartPollingWithNewInterval();
       }
     }, 60000);
     this.updateBatteryLevel();
@@ -732,193 +690,99 @@ class LocationTracker {
     try {
       const level = await DeviceInfo.getBatteryLevel();
       this.batteryLevel = level * 100;
-    } catch (e) {
-      console.warn('[Tracker] Could not get battery level', e);
+    } catch {
       this.batteryLevel = 50;
     }
+    if (this.batteryUpdateCallback)
+      this.batteryUpdateCallback(this.getBatteryInfo());
   }
 
   private async handleLocationUpdate(location: LocationData) {
-    console.log('[Tracker] handleLocationUpdate called');
-    if (!this.isTracking || !this.riderId || !this.authToken) {
-      console.log('[Tracker] handleLocationUpdate - missing data, skipping');
-      return;
-    }
-
-    try {
-      const { latitude, longitude, accuracy } = location;
-      console.log(
-        `[Tracker] Processing location: (${latitude}, ${longitude}) accuracy=${accuracy}`,
+    if (!this.isTracking || !this.riderId || !this.authToken) return;
+    const { latitude, longitude, accuracy } = location;
+    if (latitude === 0 && longitude === 0) return;
+    if (this.lastLocation) {
+      const distance = Math.hypot(
+        (latitude - this.lastLocation.latitude) * 111000,
+        (longitude - this.lastLocation.longitude) * 111000,
       );
-
-      if (latitude === 0 && longitude === 0) {
-        console.log('[Tracker] Invalid coordinates (0,0), skipping');
+      if (distance < 10 && Math.abs(accuracy - this.lastLocation.accuracy) < 5)
         return;
-      }
-
-      if (this.lastLocation) {
-        const latDiff =
-          Math.abs(latitude - this.lastLocation.latitude) * 111000;
-        const lngDiff =
-          Math.abs(longitude - this.lastLocation.longitude) * 111000;
-        const distance = Math.sqrt(latDiff * latDiff + lngDiff * lngDiff);
-        console.log(
-          `[Tracker] Movement distance: ${distance.toFixed(2)} meters`,
-        );
-
-        if (
-          distance < 10 &&
-          Math.abs(accuracy - this.lastLocation.accuracy) < 5
-        ) {
-          console.log('[Tracker] Insufficient movement, skipping send');
-          return;
-        }
-      }
-
-      this.lastLocation = {
-        latitude,
-        longitude,
-        accuracy,
-        timestamp: Date.now(),
-      };
-      console.log('[Tracker] Sending location to backend...');
-      await this.sendLocationToBackend(latitude, longitude, accuracy);
-    } catch (error) {
-      console.error('[Tracker] handleLocationUpdate error:', error);
     }
+    this.lastLocation = {
+      latitude,
+      longitude,
+      accuracy,
+      timestamp: Date.now(),
+    };
+    await this.sendLocationToBackend(latitude, longitude, accuracy, false);
   }
 
   private async sendLocationToBackend(
     lat: number,
     lng: number,
-    accuracy: number,
+    acc: number,
+    isBg: boolean = false,
   ) {
     if (!this.riderId || !this.authToken) return;
-
-    if (this.abortController) {
-      try {
-        this.abortController.abort();
-      } catch (abortError) {}
-    }
-
-    this.abortController = new AbortController();
-    const controller = this.abortController;
-
     try {
-      const timeoutId = setTimeout(() => {
-        try {
-          controller.abort();
-        } catch (e) {}
-      }, 10000);
-
-      const response = await fetch(
-        `${API_BASE_URL}/api/shipping/rider/location`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${this.authToken}`,
-          },
-          body: JSON.stringify({
-            riderId: this.riderId,
-            action: 'update',
-            latitude: lat,
-            longitude: lng,
-            accuracy,
-            timestamp: new Date().toISOString(),
-            updateType: 'tracking',
-            batteryLevel: this.batteryLevel,
-            isBackground: this.backgroundMode,
-          }),
-          signal: controller.signal,
+      await fetch(`${API_BASE_URL}/api/shipping/rider/location`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.authToken}`,
         },
-      );
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        console.error(`[API] Server error: ${response.status}`);
-        return;
-      }
-
-      console.log('[API] Location sent successfully');
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
-        console.log('[API] Request aborted');
-      } else {
-        console.error('[API] Send failed', error?.message || error);
-      }
-    } finally {
-      if (this.abortController === controller) {
-        this.abortController = null;
-      }
+        body: JSON.stringify({
+          riderId: this.riderId,
+          action: 'update',
+          latitude: lat,
+          longitude: lng,
+          accuracy: acc,
+          timestamp: new Date().toISOString(),
+          updateType: 'tracking',
+          batteryLevel: this.batteryLevel,
+          isBackground: isBg,
+        }),
+      });
+    } catch (error) {
+      Logger.logError('Send failed:', error);
     }
+  }
+
+  destroy() {
+    this.stopTracking();
+    if (this.appStateSubscription) this.appStateSubscription.remove();
+    if (this.batteryInterval) clearInterval(this.batteryInterval);
+    if (this.pollingIntervalId) clearInterval(this.pollingIntervalId);
   }
 }
 
-// Helper: one-time location for going online using new library
-const getLocationOnce = (): Promise<{ lat: number; lng: number }> => {
-  return new Promise((resolve, reject) => {
-    console.log('[getLocationOnce] Starting one-time location request');
-    try {
-      GetLocation.getCurrentPosition({
-        enableHighAccuracy: false,
-        timeout: 15000,
-      })
-        .then(location => {
-          console.log(
-            '[getLocationOnce] Success:',
-            location.latitude,
-            location.longitude,
-          );
-          resolve({ lat: location.latitude, lng: location.longitude });
-        })
-        .catch(error => {
-          console.error('[getLocationOnce] Error:', error.code, error.message);
-          reject(error);
-        });
-    } catch (error) {
-      console.error('[getLocationOnce] Exception:', error);
-      reject(error);
-    }
+const getLocationOnce = (): Promise<{ lat: number; lng: number }> =>
+  new Promise((res, rej) => {
+    GetLocation.getCurrentPosition({
+      enableHighAccuracy: false,
+      timeout: 15000,
+    })
+      .then(loc => res({ lat: loc.latitude, lng: loc.longitude }))
+      .catch(rej);
   });
-};
 
-// ======================= DEBOUNCE HOOK =======================
 function useDebounce<T extends (...args: any[]) => any>(
   fn: T,
   delay: number,
 ): T {
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const debouncedFn = useCallback(
-    (...args: Parameters<T>) => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => {
-        fn(...args);
-        timerRef.current = null;
-      }, delay);
+  const timer = useRef<any>(null);
+  return useCallback(
+    (...args: any[]) => {
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => fn(...args), delay);
     },
     [fn, delay],
   ) as T;
-  return debouncedFn;
 }
 
-// ======================= PERMISSION HELPERS =======================
 export async function requestLocationPermission(): Promise<boolean> {
-  console.log('[Permission] requestLocationPermission called from screen');
-
-  const tracker = LocationTracker.getInstance();
-  const result = await tracker.requestPermissionsFromScreen();
-
-  if (result) {
-    console.log('[Permission] Granted successfully');
-    await tracker.updatePermissionState(true);
-  } else {
-    console.log('[Permission] Denied or failed');
-    await tracker.updatePermissionState(false);
-  }
-
-  return result;
+  return await LocationTracker.getInstance().requestRealPermissions();
 }
 
 async function requestStoragePermission(): Promise<boolean> {
@@ -928,28 +792,158 @@ async function requestStoragePermission(): Promise<boolean> {
         PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
         {
           title: 'Storage Permission',
-          message: 'App needs access to your storage to upload images',
+          message: 'App needs storage to upload images',
           buttonPositive: 'OK',
         },
       );
       return granted === PermissionsAndroid.RESULTS.GRANTED;
-    } catch (error) {
-      console.error('[Storage] Permission error:', error);
+    } catch {
       return false;
     }
   }
   return true;
 }
 
-const { width } = Dimensions.get('window');
+// ============================================================
+// BATTERY INFO CARD COMPONENT
+// ============================================================
+
+const BatteryInfoCard: React.FC<{
+  batteryLevel: number;
+  fgTimeout: number;
+  bgTimeout: number;
+  interval: number;
+  accuracyMode: string;
+}> = ({ batteryLevel, fgTimeout, bgTimeout, interval, accuracyMode }) => {
+  return (
+    <View style={styles.batteryCard}>
+      <View style={styles.batteryCardHeader}>
+        <Icon name="battery-charging-full" size={20} color="#4F46E5" />
+        <Text style={styles.batteryCardTitle}>Battery & Performance</Text>
+      </View>
+
+      <View style={styles.batteryStatsRow}>
+        <View style={styles.batteryStatItem}>
+          <Fontisto
+            name={BatteryTimeoutCalculator.getBatteryIconName(batteryLevel)}
+            size={28}
+            color={BatteryTimeoutCalculator.getBatteryColor(batteryLevel)}
+          />
+          <Text
+            style={[
+              styles.batteryStatValue,
+              { color: BatteryTimeoutCalculator.getBatteryColor(batteryLevel) },
+            ]}
+          >
+            {batteryLevel.toFixed(0)}%
+          </Text>
+          <Text style={styles.batteryStatLabel}>Battery Level</Text>
+        </View>
+
+        <View style={styles.batteryStatItem}>
+          <Icon
+            name={BatteryTimeoutCalculator.getAccuracyIconName(accuracyMode)}
+            size={28}
+            color={BatteryTimeoutCalculator.getAccuracyColor(accuracyMode)}
+          />
+          <Text
+            style={[
+              styles.batteryStatValue,
+              {
+                color: BatteryTimeoutCalculator.getAccuracyColor(accuracyMode),
+              },
+            ]}
+          >
+            {accuracyMode.toUpperCase()}
+          </Text>
+          <Text style={styles.batteryStatLabel}>Accuracy Mode</Text>
+        </View>
+      </View>
+
+      <View style={styles.batteryProgressBar}>
+        <View
+          style={[
+            styles.batteryProgressFill,
+            {
+              width: `${batteryLevel}%`,
+              backgroundColor:
+                BatteryTimeoutCalculator.getBatteryColor(batteryLevel),
+            },
+          ]}
+        />
+      </View>
+
+      <View style={styles.timeoutRow}>
+        <View style={styles.timeoutItem}>
+          <Icon name="gps-fixed" size={18} color="#6B7280" />
+          <Text style={styles.timeoutLabel}>FG Timeout</Text>
+          <Text style={styles.timeoutValue}>
+            {(fgTimeout / 1000).toFixed(0)}s
+          </Text>
+        </View>
+        <View style={styles.timeoutItem}>
+          <Icon name="nightlight-round" size={18} color="#6B7280" />
+          <Text style={styles.timeoutLabel}>BG Timeout</Text>
+          <Text style={styles.timeoutValue}>
+            {(bgTimeout / 1000).toFixed(0)}s
+          </Text>
+        </View>
+        <View style={styles.timeoutItem}>
+          <Icon name="update" size={18} color="#6B7280" />
+          <Text style={styles.timeoutLabel}>Interval</Text>
+          <Text style={styles.timeoutValue}>
+            {(interval / 1000).toFixed(0)}s
+          </Text>
+        </View>
+      </View>
+
+      <View
+        style={[
+          styles.batteryModeBadge,
+          {
+            backgroundColor:
+              BatteryTimeoutCalculator.getBatteryColor(batteryLevel) + '20',
+          },
+        ]}
+      >
+        <Icon
+          name={
+            batteryLevel > 50
+              ? 'speed'
+              : batteryLevel > 20
+              ? 'balance'
+              : 'battery-saver'
+          }
+          size={16}
+          color={BatteryTimeoutCalculator.getBatteryColor(batteryLevel)}
+        />
+        <Text
+          style={[
+            styles.batteryModeText,
+            { color: BatteryTimeoutCalculator.getBatteryColor(batteryLevel) },
+          ]}
+        >
+          {batteryLevel > 50
+            ? 'High Performance Mode'
+            : batteryLevel > 20
+            ? 'Balanced Mode'
+            : 'Battery Saver Mode'}
+        </Text>
+      </View>
+    </View>
+  );
+};
+
+// ============================================================
+// MAIN SCREEN COMPONENT
+// ============================================================
 
 interface ModelItem {
   label: string;
   value: string;
   originalIndex?: number;
 }
-
-interface ExistingRegistration {
+interface ShippingData {
   _id: string;
   status: string;
   name: string;
@@ -969,7 +963,6 @@ interface ExistingRegistration {
   };
   kycVerified?: boolean;
 }
-
 interface ItemType<T> {
   label: string;
   value: T;
@@ -978,10 +971,17 @@ interface ItemType<T> {
 const RiderRegistrationScreen: React.FC = () => {
   const navigation = useNavigation<RiderRegistrationScreenNavigationProp>();
   const isMounted = useRef(true);
-
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(50)).current;
 
+  // Battery state
+  const [batteryLevel, setBatteryLevel] = useState<number>(100);
+  const [fgTimeout, setFgTimeout] = useState<number>(15000);
+  const [bgTimeout, setBgTimeout] = useState<number>(20000);
+  const [pollingInterval, setPollingInterval] = useState<number>(10000);
+  const [accuracyMode, setAccuracyMode] = useState<string>('high');
+
+  // Form state
   const [name, setName] = useState<string>('');
   const [vehicleCategory, setVehicleCategory] =
     useState<VehicleCategory | null>(null);
@@ -989,17 +989,14 @@ const RiderRegistrationScreen: React.FC = () => {
   const [vehicleModel, setVehicleModel] = useState<string | null>(null);
   const [vehicleNumber, setVehicleNumber] = useState<string>('');
   const [maxOrdersPerDay, setMaxOrdersPerDay] = useState<string>('25');
-
   const [drivingLicenseNumber, setDrivingLicenseNumber] = useState<string>('');
   const [identityType, setIdentityType] = useState<IdentityType | null>(null);
   const [identityNumber, setIdentityNumber] = useState<string>('');
-
   const [vehicleImage, setVehicleImage] = useState<string | null>(null);
   const [drivingLicenseImage, setDrivingLicenseImage] = useState<string | null>(
     null,
   );
   const [identityImage, setIdentityImage] = useState<string | null>(null);
-
   const [agreedToTerms, setAgreedToTerms] = useState<boolean>(false);
   const [isOnline, setIsOnline] = useState<boolean>(false);
   const [isTrackingOn, setIsTrackingOn] = useState<boolean>(false);
@@ -1011,50 +1008,45 @@ const RiderRegistrationScreen: React.FC = () => {
   const [lastOfflineAt, setLastOfflineAt] = useState<string | null>(null);
   const [hasLocationPermission, setHasLocationPermission] =
     useState<boolean>(false);
-
   const [showCategoryModal, setShowCategoryModal] = useState<boolean>(false);
   const [showBrandModal, setShowBrandModal] = useState<boolean>(false);
   const [showModelModal, setShowModelModal] = useState<boolean>(false);
   const [showIdentityModal, setShowIdentityModal] = useState<boolean>(false);
-
   const [allModels, setAllModels] = useState<ModelItem[]>([]);
   const [allBrands, setAllBrands] = useState<ItemType<string>[]>([]);
-
   const [loading, setLoading] = useState<boolean>(false);
   const [uploadingImage, setUploadingImage] = useState<string | null>(null);
   const [checkingExisting, setCheckingExisting] = useState<boolean>(true);
-  const [existingRegistration, setExistingRegistration] =
-    useState<ExistingRegistration | null>(null);
+  const [shippingData, setShippingData] = useState<ShippingData | null>(null);
+  const [shippingId, setShippingId] = useState<string | null>(null);
 
-  const [vehicleCategories] = useState<ItemType<VehicleCategory>[]>([
+  const vehicleCategories: ItemType<VehicleCategory>[] = [
     { label: 'Car', value: 'Car' },
     { label: 'Bike', value: 'Bike' },
     { label: 'Scooter', value: 'Scooter' },
     { label: 'Auto', value: 'Auto' },
     { label: 'Tempo', value: 'Tempo' },
-  ]);
-
-  const [identityTypes] = useState<ItemType<IdentityType>[]>([
+  ];
+  const identityTypes: ItemType<IdentityType>[] = [
     { label: 'Aadhaar Card', value: 'Aadhaar' },
     { label: 'Voter ID', value: 'VoterID' },
     { label: 'Passport', value: 'Passport' },
     { label: 'PAN Card', value: 'PAN' },
-  ]);
+  ];
 
-  const checkPermissionStatus = useCallback(() => {
+  const checkPermissionStatus = useCallback(async () => {
     const tracker = LocationTracker.getInstance();
-    const hasPerm = tracker.hasPermissions();
-    setHasLocationPermission(hasPerm);
-    console.log(`[Screen] Permission status: ${hasPerm}`);
+    setHasLocationPermission(await tracker.checkRealPermissions());
   }, []);
 
   const loadVehicleBrands = useCallback((category: VehicleCategory) => {
     if (vehicleOptions[category]) {
-      const brands = Object.keys(vehicleOptions[category]).map(brand => ({
-        label: brand,
-        value: brand,
-      }));
-      setAllBrands(brands);
+      setAllBrands(
+        Object.keys(vehicleOptions[category]).map(b => ({
+          label: b,
+          value: b,
+        })),
+      );
     } else {
       setAllBrands([]);
     }
@@ -1065,15 +1057,14 @@ const RiderRegistrationScreen: React.FC = () => {
 
   const loadVehicleModels = useCallback(
     (category: VehicleCategory, brand: string) => {
-      if (vehicleOptions[category] && vehicleOptions[category][brand]) {
-        const models = vehicleOptions[category][brand].map(
-          (model: string, index: number) => ({
-            label: model,
-            value: model,
-            originalIndex: index,
-          }),
+      if (vehicleOptions[category]?.[brand]) {
+        setAllModels(
+          vehicleOptions[category][brand].map((m: string, i: number) => ({
+            label: m,
+            value: m,
+            originalIndex: i,
+          })),
         );
-        setAllModels(models);
       } else {
         setAllModels([]);
       }
@@ -1093,55 +1084,6 @@ const RiderRegistrationScreen: React.FC = () => {
     else setAllModels([]);
   }, [vehicleCategory, vehicleBrand, loadVehicleModels]);
 
-  const saveOnlineStatus = async (status: boolean) => {
-    try {
-      await AsyncStorage.setItem(ONLINE_STATUS_KEY, JSON.stringify(status));
-    } catch {}
-  };
-
-  const saveTrackingStatus = async (status: boolean) => {
-    try {
-      await AsyncStorage.setItem(TRACKING_STATUS_KEY, JSON.stringify(status));
-    } catch {}
-  };
-
-  const saveLastOnlineTime = async (time: string) => {
-    try {
-      await AsyncStorage.setItem(LAST_ONLINE_KEY, time);
-    } catch {}
-  };
-
-  const saveLastOfflineTime = async (time: string) => {
-    try {
-      await AsyncStorage.setItem(LAST_OFFLINE_KEY, time);
-    } catch {}
-  };
-
-  const loadPersistedStatus = async () => {
-    if (!isMounted.current) return;
-    try {
-      const [
-        savedOnlineStatus,
-        savedTrackingStatus,
-        savedLastOnline,
-        savedLastOffline,
-      ] = await Promise.all([
-        AsyncStorage.getItem(ONLINE_STATUS_KEY),
-        AsyncStorage.getItem(TRACKING_STATUS_KEY),
-        AsyncStorage.getItem(LAST_ONLINE_KEY),
-        AsyncStorage.getItem(LAST_OFFLINE_KEY),
-      ]);
-      if (savedOnlineStatus !== null && isMounted.current)
-        setIsOnline(JSON.parse(savedOnlineStatus));
-      if (savedTrackingStatus !== null && isMounted.current)
-        setIsTrackingOn(JSON.parse(savedTrackingStatus));
-      if (savedLastOnline !== null && isMounted.current)
-        setLastOnlineAt(savedLastOnline);
-      if (savedLastOffline !== null && isMounted.current)
-        setLastOfflineAt(savedLastOffline);
-    } catch {}
-  };
-
   useEffect(() => {
     isMounted.current = true;
     Animated.parallel([
@@ -1156,33 +1098,31 @@ const RiderRegistrationScreen: React.FC = () => {
         useNativeDriver: true,
       }),
     ]).start();
-
     checkPermissionStatus();
-    loadPersistedStatus();
+
+    const tracker = LocationTracker.getInstance();
+    tracker.setBatteryUpdateCallback(info => {
+      setBatteryLevel(info.level);
+      setFgTimeout(info.fgTimeout);
+      setBgTimeout(info.bgTimeout);
+      setPollingInterval(info.interval);
+      setAccuracyMode(info.accuracyMode);
+    });
 
     return () => {
       isMounted.current = false;
-      LocationTracker.getInstance().stopTracking();
+      tracker.destroy();
     };
-  }, [fadeAnim, slideAnim, checkPermissionStatus]);
+  }, []);
 
   const handleRequestPermissions = async () => {
-    console.log('[Screen] User requested permissions via button');
     const granted = await requestLocationPermission();
     setHasLocationPermission(granted);
-    if (granted) {
-      Toast.show({
-        type: 'success',
-        text1: 'Permission Granted',
-        text2: 'Location access enabled',
-      });
-    } else {
-      Toast.show({
-        type: 'error',
-        text1: 'Permission Required',
-        text2: 'Location access is needed for delivery tracking',
-      });
-    }
+    Toast.show({
+      type: granted ? 'success' : 'error',
+      text1: granted ? 'Permission Granted' : 'Permission Required',
+      text2: granted ? 'Location access enabled' : 'Location access is needed',
+    });
   };
 
   const goOnlineWithLocation = async (
@@ -1204,15 +1144,12 @@ const RiderRegistrationScreen: React.FC = () => {
           longitude: lng,
         }),
       });
-    } catch (error) {
-      console.warn('Could not get initial location for online status', error);
-    }
-    const tracker = LocationTracker.getInstance();
-    const success = await tracker.startTracking(riderId, authToken);
-    if (isMounted.current && success) {
-      setIsTrackingOn(true);
-      await saveTrackingStatus(true);
-    }
+    } catch (error) {}
+    const success = await LocationTracker.getInstance().startTracking(
+      riderId,
+      authToken,
+    );
+    if (isMounted.current && success) setIsTrackingOn(true);
     return success;
   };
 
@@ -1220,59 +1157,39 @@ const RiderRegistrationScreen: React.FC = () => {
     riderId: string,
     authToken: string,
   ): Promise<boolean> => {
-    try {
-      const tracker = LocationTracker.getInstance();
-      if (!tracker.hasPermissions()) {
-        Toast.show({
-          type: 'error',
-          text1: 'Permission Required',
-          text2: 'Please grant location permission first',
-        });
-        return false;
-      }
-      const success = await tracker.startTracking(riderId, authToken);
-      if (success && isMounted.current) {
-        setIsTrackingOn(true);
-        await saveTrackingStatus(true);
-        Toast.show({
-          type: 'success',
-          text1: 'Location Tracking Started',
-          text2: 'Continuous tracking active',
-        });
-        return true;
-      }
-      throw new Error('Failed to start tracking');
-    } catch (error) {
+    const tracker = LocationTracker.getInstance();
+    if (!(await tracker.checkRealPermissions())) {
       Toast.show({
         type: 'error',
-        text1: 'Tracking Failed',
-        text2: String(error),
+        text1: 'Permission Required',
+        text2: 'Please grant location permission first',
       });
       return false;
     }
+    const success = await tracker.startTracking(riderId, authToken);
+    if (success && isMounted.current) {
+      setIsTrackingOn(true);
+      Toast.show({
+        type: 'success',
+        text1: 'Location Tracking Started',
+        text2: 'Continuous tracking active',
+      });
+      return true;
+    }
+    return false;
   };
 
   const stopLiveTracking = async (): Promise<boolean> => {
-    try {
-      const tracker = LocationTracker.getInstance();
-      await tracker.stopTracking();
-      if (isMounted.current) {
-        setIsTrackingOn(false);
-        await saveTrackingStatus(false);
-      }
-      return true;
-    } catch (error) {
-      console.error('Stop tracking error:', error);
-      return false;
-    }
+    await LocationTracker.getInstance().stopTracking();
+    if (isMounted.current) setIsTrackingOn(false);
+    return true;
   };
 
   useFocusEffect(
     useCallback(() => {
-      checkExistingRegistration();
-      loadPersistedStatus();
+      fetchShippingData();
       checkPermissionStatus();
-    }, [checkPermissionStatus]),
+    }, []),
   );
 
   const getAuthToken = async (): Promise<string | null> => {
@@ -1283,115 +1200,76 @@ const RiderRegistrationScreen: React.FC = () => {
     }
   };
 
-  const checkExistingRegistration = async () => {
+  const fetchShippingData = async () => {
     if (!isMounted.current) return;
     try {
       setCheckingExisting(true);
-      const authToken = await getAuthToken();
-      if (!authToken) {
+      const token = await getAuthToken();
+      if (!token) {
         setCheckingExisting(false);
         return;
       }
-      const response = await fetch(`${API_BASE_URL}/api/shipping/form/check`, {
+      const res = await fetch(`${API_BASE_URL}/api/shipping/form/check`, {
         method: 'GET',
         headers: {
           Accept: 'application/json',
-          Authorization: `Bearer ${authToken}`,
+          Authorization: `Bearer ${token}`,
         },
       });
-      if (response.ok) {
-        const data = await response.json();
+      if (res.ok) {
+        const data = await res.json();
         if (data.exists && data.shippingData) {
-          const registrationData = data.shippingData;
-          if (isMounted.current) setExistingRegistration(registrationData);
-          await loadPersistedStatus();
-          if (registrationData.kyc && isMounted.current) {
-            setDrivingLicenseNumber(
-              registrationData.kyc.drivingLicenseNumber || '',
-            );
-            setIdentityType(
-              (registrationData.kyc.identityType as IdentityType) || null,
-            );
-            setIdentityNumber(registrationData.kyc.identityNumber || '');
-            if (registrationData.kyc.drivingLicenseImage)
-              setDrivingLicenseImage(registrationData.kyc.drivingLicenseImage);
-            if (registrationData.kyc.identityImage)
-              setIdentityImage(registrationData.kyc.identityImage);
+          const reg = data.shippingData;
+          setShippingId(reg._id);
+          setShippingData(reg);
+          setIsOnline(reg.isOnline || false);
+          setLastOnlineAt(reg.lastOnlineAt || null);
+          setLastOfflineAt(reg.lastOfflineAt || null);
+          if (reg.kyc && isMounted.current) {
+            setDrivingLicenseNumber(reg.kyc.drivingLicenseNumber || '');
+            setIdentityType((reg.kyc.identityType as IdentityType) || null);
+            setIdentityNumber(reg.kyc.identityNumber || '');
+            if (reg.kyc.drivingLicenseImage)
+              setDrivingLicenseImage(reg.kyc.drivingLicenseImage);
+            if (reg.kyc.identityImage) setIdentityImage(reg.kyc.identityImage);
           }
-          const isApproved = registrationData.status === 'approved';
-          const isKYCVerified =
-            registrationData.kyc?.status === 'verified' ||
-            registrationData.kyc?.verified === true ||
-            registrationData.kycVerified === true;
-          if (isApproved && isKYCVerified) {
-            const savedTracking = await AsyncStorage.getItem(
-              TRACKING_STATUS_KEY,
-            );
-            if (savedTracking === null)
-              await fetchLocationStatus(registrationData._id, authToken);
-          } else if (isMounted.current) {
-            setIsTrackingOn(false);
-            await saveTrackingStatus(false);
+          const approved = reg.status === 'approved';
+          const kycVerified =
+            reg.kyc?.status === 'verified' ||
+            reg.kyc?.verified === true ||
+            reg.kycVerified === true;
+          if (approved && kycVerified && reg.isOnline) {
+            await LocationTracker.getInstance().startTracking(reg._id, token);
+            if (isMounted.current) setIsTrackingOn(true);
           }
         }
-      } else if (response.status === 404) {
-        if (isMounted.current) setExistingRegistration(null);
-        await AsyncStorage.multiRemove([
-          ONLINE_STATUS_KEY,
-          TRACKING_STATUS_KEY,
-          LAST_ONLINE_KEY,
-          LAST_OFFLINE_KEY,
-        ]);
+      } else if (res.status === 404) {
+        if (isMounted.current) setShippingData(null);
       }
-    } catch {
     } finally {
       if (isMounted.current) setCheckingExisting(false);
     }
   };
 
-  const fetchLocationStatus = async (shippingId: string, authToken: string) => {
-    try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/shipping/rider/location`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authToken}`,
-          },
-          body: JSON.stringify({ riderId: shippingId, action: 'get' }),
-        },
-      );
-      if (response.ok) {
-        const data = await response.json();
-        const trackingStatus = data.data?.isTrackingOn || false;
-        if (isMounted.current) {
-          setIsTrackingOn(trackingStatus);
-          await saveTrackingStatus(trackingStatus);
-        }
-      }
-    } catch {}
-  };
-
   const toggleOnlineStatusCore = async () => {
-    if (!existingRegistration) {
+    if (!shippingData) {
       Toast.show({
         type: 'error',
         text1: 'No Registration',
-        text2: 'You need to register first',
+        text2: 'Register first',
       });
       return;
     }
-    const isApproved = existingRegistration.status === 'approved';
-    const isKYCVerified =
-      existingRegistration.kyc?.status === 'verified' ||
-      existingRegistration.kyc?.verified === true ||
-      existingRegistration.kycVerified === true;
-    if (!isApproved || !isKYCVerified) {
+    const approved = shippingData.status === 'approved';
+    const kycVerified =
+      shippingData.kyc?.status === 'verified' ||
+      shippingData.kyc?.verified === true ||
+      shippingData.kycVerified === true;
+    if (!approved || !kycVerified) {
       Toast.show({
         type: 'error',
         text1: 'Verification Pending',
-        text2: 'You need to be approved and KYC verified to go online',
+        text2: 'Need approval & KYC verification',
       });
       ReactNativeHapticFeedback.trigger('notificationError', hapticOptions);
       return;
@@ -1399,76 +1277,59 @@ const RiderRegistrationScreen: React.FC = () => {
     if (isUpdatingOnlineStatus) return;
     setIsUpdatingOnlineStatus(true);
     try {
-      const authToken = await getAuthToken();
-      if (!authToken) {
+      const token = await getAuthToken();
+      if (!token) {
         navigation.navigate('Login');
         return;
       }
       const newStatus = !isOnline;
       setIsOnline(newStatus);
-      await saveOnlineStatus(newStatus);
-      const response = await fetch(
-        `${API_BASE_URL}/api/shipper/online-status`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authToken}`,
-          },
-          body: JSON.stringify({ isOnline: newStatus }),
+      const res = await fetch(`${API_BASE_URL}/api/shipper/online-status`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
         },
-      );
-      const responseData = await response.json();
-      if (response.ok && responseData.success) {
-        const currentTime = new Date().toISOString();
-        if (responseData.data) {
-          if (isMounted.current) {
-            setLastOnlineAt(responseData.data.lastOnlineAt || currentTime);
-            setLastOfflineAt(responseData.data.lastOfflineAt || currentTime);
-          }
-          if (responseData.data.lastOnlineAt)
-            await saveLastOnlineTime(responseData.data.lastOnlineAt);
-          if (responseData.data.lastOfflineAt)
-            await saveLastOfflineTime(responseData.data.lastOfflineAt);
+        body: JSON.stringify({ isOnline: newStatus }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        const now = new Date().toISOString();
+        if (data.data) {
+          setLastOnlineAt(data.data.lastOnlineAt || now);
+          setLastOfflineAt(data.data.lastOfflineAt || now);
         } else {
-          if (newStatus) {
-            await saveLastOnlineTime(currentTime);
-            if (isMounted.current) setLastOnlineAt(currentTime);
-          } else {
-            await saveLastOfflineTime(currentTime);
-            if (isMounted.current) setLastOfflineAt(currentTime);
-          }
+          if (newStatus) setLastOnlineAt(now);
+          else setLastOfflineAt(now);
         }
         ReactNativeHapticFeedback.trigger(
           newStatus ? 'notificationSuccess' : 'notificationWarning',
           hapticOptions,
         );
         if (newStatus) {
-          await goOnlineWithLocation(existingRegistration._id, authToken);
+          await goOnlineWithLocation(shippingData._id, token);
           Toast.show({
             type: 'success',
             text1: 'You are now Online',
-            text2: 'Location tracking enabled ✅',
+            text2: 'Location tracking enabled',
           });
         } else {
           await stopLiveTracking();
           Toast.show({
             type: 'info',
             text1: 'You are now Offline',
-            text2: 'Location tracking stopped',
+            text2: 'Tracking stopped',
           });
         }
       } else {
-        const revertStatus = !newStatus;
-        if (isMounted.current) setIsOnline(revertStatus);
-        await saveOnlineStatus(revertStatus);
-        throw new Error(responseData.message || 'Failed to update status');
+        setIsOnline(!newStatus);
+        throw new Error(data.message || 'Failed to update');
       }
     } catch (error: any) {
       Toast.show({
         type: 'error',
         text1: 'Update Failed',
-        text2: error.message || 'Failed to update online status',
+        text2: error.message,
       });
     } finally {
       if (isMounted.current) setIsUpdatingOnlineStatus(false);
@@ -1478,11 +1339,11 @@ const RiderRegistrationScreen: React.FC = () => {
   const toggleOnlineStatus = useDebounce(toggleOnlineStatusCore, 1500);
 
   const toggleLocationTrackingCore = async () => {
-    if (!existingRegistration) {
+    if (!shippingData) {
       Toast.show({
         type: 'error',
         text1: 'No Registration',
-        text2: 'You need to register first',
+        text2: 'Register first',
       });
       return;
     }
@@ -1490,23 +1351,20 @@ const RiderRegistrationScreen: React.FC = () => {
       Toast.show({
         type: 'error',
         text1: 'Go Online First',
-        text2: 'You need to be online to enable location tracking',
+        text2: 'Need to be online',
       });
       return;
     }
     if (isUpdatingTrackingStatus) return;
     setIsUpdatingTrackingStatus(true);
     try {
-      const authToken = await getAuthToken();
-      if (!authToken) {
+      const token = await getAuthToken();
+      if (!token) {
         navigation.navigate('Login');
         return;
       }
       if (!isTrackingOn) {
-        const success = await startLiveTracking(
-          existingRegistration._id,
-          authToken,
-        );
+        const success = await startLiveTracking(shippingData._id, token);
         if (success && isMounted.current) {
           ReactNativeHapticFeedback.trigger(
             'notificationSuccess',
@@ -1515,12 +1373,8 @@ const RiderRegistrationScreen: React.FC = () => {
           Toast.show({
             type: 'success',
             text1: 'Location Tracking ON',
-            text2: 'Your location is now being shared',
+            text2: 'Location being shared',
           });
-        } else if (isMounted.current) {
-          setIsTrackingOn(false);
-          await saveTrackingStatus(false);
-          throw new Error('Failed to start location tracking');
         }
       } else {
         const success = await stopLiveTracking();
@@ -1532,17 +1386,15 @@ const RiderRegistrationScreen: React.FC = () => {
           Toast.show({
             type: 'info',
             text1: 'Location Tracking OFF',
-            text2: 'Location sharing stopped',
+            text2: 'Sharing stopped',
           });
-        } else {
-          throw new Error('Failed to stop location tracking');
         }
       }
     } catch (error: any) {
       Toast.show({
         type: 'error',
         text1: 'Update Failed',
-        text2: error.message || 'Failed to update location tracking',
+        text2: error.message,
       });
     } finally {
       if (isMounted.current) setIsUpdatingTrackingStatus(false);
@@ -1551,10 +1403,10 @@ const RiderRegistrationScreen: React.FC = () => {
 
   const toggleLocationTracking = useDebounce(toggleLocationTrackingCore, 2000);
 
-  const formatDate = (dateString: string | null) => {
-    if (!dateString) return 'Never';
+  const formatDate = (d: string | null) => {
+    if (!d) return 'Never';
     try {
-      return new Date(dateString).toLocaleString('en-IN', {
+      return new Date(d).toLocaleString('en-IN', {
         day: '2-digit',
         month: 'short',
         year: 'numeric',
@@ -1566,19 +1418,16 @@ const RiderRegistrationScreen: React.FC = () => {
     }
   };
 
-  const pickImage = async (
-    type: 'vehicle' | 'license' | 'identity',
-  ): Promise<void> => {
+  const pickImage = async (type: 'vehicle' | 'license' | 'identity') => {
     try {
       ReactNativeHapticFeedback.trigger('impactLight', hapticOptions);
       setUploadingImage(type);
       await requestStoragePermission();
-      const options: ImageLibraryOptions = {
+      const result = await launchImageLibrary({
         mediaType: 'photo',
         includeBase64: true,
         quality: 0.8,
-      };
-      const result = await launchImageLibrary(options);
+      });
       if (result.didCancel) {
         setUploadingImage(null);
         return;
@@ -1587,36 +1436,24 @@ const RiderRegistrationScreen: React.FC = () => {
         Toast.show({
           type: 'error',
           text1: 'Error',
-          text2: result.errorMessage || 'Failed to select image',
+          text2: result.errorMessage || 'Failed',
         });
         setUploadingImage(null);
         return;
       }
-      if (result.assets && result.assets[0] && result.assets[0].base64) {
+      if (result.assets?.[0]?.base64) {
         const base64 = `data:image/jpeg;base64,${result.assets[0].base64}`;
         if (type === 'vehicle') setVehicleImage(base64);
         else if (type === 'license') setDrivingLicenseImage(base64);
         else setIdentityImage(base64);
-        ReactNativeHapticFeedback.trigger('notificationSuccess', hapticOptions);
         Toast.show({
           type: 'success',
           text1: 'Image Selected',
-          text2: `${
-            type === 'vehicle'
-              ? 'Vehicle'
-              : type === 'license'
-              ? 'Driving License'
-              : 'Identity'
-          } image uploaded`,
+          text2: 'Uploaded',
         });
       }
     } catch {
-      ReactNativeHapticFeedback.trigger('notificationError', hapticOptions);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Failed to select image',
-      });
+      Toast.show({ type: 'error', text1: 'Error', text2: 'Failed' });
     } finally {
       setUploadingImage(null);
     }
@@ -1624,66 +1461,48 @@ const RiderRegistrationScreen: React.FC = () => {
 
   const validateForm = (): boolean => {
     const checks: [boolean, string][] = [
-      [!name.trim(), 'Please enter your name'],
-      [!vehicleCategory, 'Please select vehicle category'],
-      [!vehicleBrand, 'Please select vehicle brand'],
-      [!vehicleModel, 'Please select vehicle model'],
-      [!vehicleNumber.trim(), 'Please enter vehicle number'],
-      [!vehicleImage, 'Please upload vehicle image'],
-      [!drivingLicenseNumber.trim(), 'Please enter driving license number'],
-      [!drivingLicenseImage, 'Please upload driving license image'],
-      [
-        !!identityType && !identityNumber.trim(),
-        'Please enter identity number',
-      ],
-      [
-        !!identityNumber && !identityImage,
-        'Please upload identity document image',
-      ],
-      [!agreedToTerms, 'Please agree to terms and conditions'],
+      [!name.trim(), 'Enter name'],
+      [!vehicleCategory, 'Select vehicle category'],
+      [!vehicleBrand, 'Select brand'],
+      [!vehicleModel, 'Select model'],
+      [!vehicleNumber.trim(), 'Enter vehicle number'],
+      [!vehicleImage, 'Upload vehicle image'],
+      [!drivingLicenseNumber.trim(), 'Enter license number'],
+      [!drivingLicenseImage, 'Upload license image'],
+      [!!identityType && !identityNumber.trim(), 'Enter identity number'],
+      [!!identityNumber && !identityImage, 'Upload identity image'],
+      [!agreedToTerms, 'Agree to terms'],
     ];
-    for (const [invalid, msg] of checks) {
+    for (const [invalid, msg] of checks)
       if (invalid) {
         Toast.show({ type: 'error', text1: 'Required', text2: msg });
         return false;
       }
-    }
     return true;
   };
 
   const submitRegistration = async (formData: any) => {
-    const authToken = await getAuthToken();
-    if (!authToken)
-      throw new Error('Authentication token not found. Please login again.');
-    const response = await fetch(`${API_BASE_URL}/api/shipping/register`, {
+    const token = await getAuthToken();
+    if (!token) throw new Error('Auth token missing');
+    const res = await fetch(`${API_BASE_URL}/api/shipping/register`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-        Authorization: `Bearer ${authToken}`,
+        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(formData),
     });
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorMessage = 'Registration failed';
-      try {
-        const errorData = JSON.parse(errorText);
-        errorMessage = errorData.message || errorMessage;
-      } catch {
-        errorMessage = errorText || errorMessage;
-      }
-      if (response.status === 409)
-        throw new Error(
-          'You already have a registration. Please contact support to update.',
-        );
-      if (response.status === 401) {
+    if (!res.ok) {
+      const err = await res.text();
+      if (res.status === 409) throw new Error('Already registered');
+      if (res.status === 401) {
         await AsyncStorage.removeItem('authToken');
-        throw new Error('Session expired. Please login again.');
+        throw new Error('Session expired');
       }
-      throw new Error(errorMessage);
+      throw new Error(err);
     }
-    return await response.json();
+    return await res.json();
   };
 
   const proceedWithRegistration = async () => {
@@ -1693,80 +1512,52 @@ const RiderRegistrationScreen: React.FC = () => {
       vehicleBrand,
       vehicleModel,
       vehicleNumber: vehicleNumber.toUpperCase().replace(/\s/g, ''),
-      vehicleImage: vehicleImage ? vehicleImage.split(',')[1] : '',
+      vehicleImage: vehicleImage?.split(',')[1] || '',
       maxOrdersPerDay: parseInt(maxOrdersPerDay) || 25,
       kyc: {
         drivingLicenseNumber: drivingLicenseNumber.toUpperCase(),
-        drivingLicenseImage: drivingLicenseImage
-          ? drivingLicenseImage.split(',')[1]
-          : '',
+        drivingLicenseImage: drivingLicenseImage?.split(',')[1] || '',
         identityType: identityType || null,
         identityNumber: identityNumber || null,
-        identityImage: identityImage ? identityImage.split(',')[1] : null,
+        identityImage: identityImage?.split(',')[1] || null,
       },
       agreedToTerms: true,
       agreedAt: new Date().toISOString(),
     };
-    const response = await submitRegistration(formData);
-    ReactNativeHapticFeedback.trigger('notificationSuccess', hapticOptions);
-    Toast.show({
-      type: 'success',
-      text1: 'Registration Successful',
-      text2: 'Your application has been submitted!',
-    });
-    const shippingId =
-      response.shipping?._id ||
-      response._id ||
-      response.id ||
-      response.data?._id ||
-      response.data?.id;
-    if (!shippingId)
-      throw new Error('Registration successful but no ID received from server');
-    navigation.navigate('RegistrationSuccess', { shippingId });
+    const res = await submitRegistration(formData);
+    const newId = res.shipping?._id || res._id || res.id;
+    if (!newId) throw new Error('No ID received');
+    navigation.navigate('RegistrationSuccess', { shippingId: newId });
   };
 
-  const handleSubmit = async (): Promise<void> => {
+  const handleSubmit = async () => {
     if (!validateForm()) return;
     setLoading(true);
-    ReactNativeHapticFeedback.trigger('impactMedium', hapticOptions);
     try {
       await proceedWithRegistration();
     } catch (error: any) {
-      if (error.message.includes('already have a registration')) {
-        Alert.alert('Duplicate Registration', error.message, [
-          { text: 'OK', style: 'default' },
-        ]);
-      } else if (
-        error.message === 'Session expired. Please login again.' ||
-        error.message === 'Authentication token not found. Please login again.'
-      ) {
+      if (error.message.includes('already'))
+        Alert.alert('Duplicate', error.message);
+      else if (error.message.includes('expired')) {
         Toast.show({
           type: 'error',
           text1: 'Session Expired',
-          text2: 'Please login again to continue',
+          text2: 'Login again',
         });
         setTimeout(() => navigation.navigate('Login'), 1500);
-      } else {
-        Toast.show({
-          type: 'error',
-          text1: 'Registration Failed',
-          text2: error.message || 'Please try again',
-        });
-      }
+      } else
+        Toast.show({ type: 'error', text1: 'Failed', text2: error.message });
     } finally {
       setLoading(false);
     }
   };
 
   const handleViewStatus = () => {
-    if (existingRegistration)
-      navigation.navigate('RegistrationSuccess', {
-        shippingId: existingRegistration._id,
-      });
+    if (shippingId) navigation.navigate('RegistrationSuccess', { shippingId });
   };
-
   const handleNewRegistration = () => {
-    setExistingRegistration(null);
+    setShippingData(null);
+    setShippingId(null);
     setName('');
     setVehicleCategory(null);
     setVehicleBrand(null);
@@ -1780,12 +1571,6 @@ const RiderRegistrationScreen: React.FC = () => {
     setIdentityNumber('');
     setIdentityImage(null);
     setAgreedToTerms(false);
-    AsyncStorage.multiRemove([
-      ONLINE_STATUS_KEY,
-      TRACKING_STATUS_KEY,
-      LAST_ONLINE_KEY,
-      LAST_OFFLINE_KEY,
-    ]);
     setIsOnline(false);
     setIsTrackingOn(false);
     setLastOnlineAt(null);
@@ -1796,20 +1581,18 @@ const RiderRegistrationScreen: React.FC = () => {
     return (
       <SafeAreaView style={[styles.safeArea, styles.centerContent]}>
         <ActivityIndicator size="large" color="#4F46E5" />
-        <Text style={styles.checkingText}>
-          Checking your registration status...
-        </Text>
+        <Text style={styles.checkingText}>Checking registration status...</Text>
       </SafeAreaView>
     );
   }
 
-  if (existingRegistration) {
-    const isApproved = existingRegistration.status === 'approved';
-    const isKYCVerified =
-      existingRegistration.kyc?.status === 'verified' ||
-      existingRegistration.kyc?.verified === true ||
-      existingRegistration.kycVerified === true;
-    const showSwiper = isApproved && isKYCVerified;
+  if (shippingData) {
+    const isApproved = shippingData.status === 'approved';
+    const isKycVerified =
+      shippingData.kyc?.status === 'verified' ||
+      shippingData.kyc?.verified === true ||
+      shippingData.kycVerified === true;
+    const showSwiper = isApproved && isKycVerified;
 
     return (
       <SafeAreaView style={styles.safeArea}>
@@ -1817,73 +1600,78 @@ const RiderRegistrationScreen: React.FC = () => {
           contentContainerStyle={styles.scrollContainer}
           showsVerticalScrollIndicator={false}
         >
+          {/* Status Header */}
           <View style={styles.statusHeader}>
-            <View style={styles.statusHeaderIconContainer}>
+            <View style={styles.statusHeaderIcon}>
               <Icon
                 name={showSwiper ? 'verified' : 'pending'}
                 size={28}
-                color="#FFFFFF"
+                color="#FFF"
               />
             </View>
-            <View style={styles.statusHeaderTextContainer}>
+            <View>
               <Text style={styles.statusHeaderTitle}>
                 Delivery Partner Dashboard
               </Text>
-              <Text style={styles.statusHeaderSubtitle}>
-                {showSwiper
-                  ? 'Your account is fully activated'
-                  : 'Complete verification to start deliveries'}
+              <Text style={styles.statusHeaderSub}>
+                {showSwiper ? 'Account activated' : 'Complete verification'}
               </Text>
             </View>
           </View>
+
+          {/* Battery Info Card */}
+          <BatteryInfoCard
+            batteryLevel={batteryLevel}
+            fgTimeout={fgTimeout}
+            bgTimeout={bgTimeout}
+            interval={pollingInterval}
+            accuracyMode={accuracyMode}
+          />
 
           <View style={styles.statusCard}>
             <View style={styles.profileSection}>
               <Icon name="person" size={24} color="#4F46E5" />
               <View style={styles.profileInfo}>
-                <Text style={styles.profileName}>
-                  {existingRegistration.name}
-                </Text>
+                <Text style={styles.profileName}>{shippingData.name}</Text>
                 <Text style={styles.profileVehicle}>
-                  {existingRegistration.vehicleBrand} •{' '}
-                  {existingRegistration.vehicleModel}
+                  {shippingData.vehicleBrand} • {shippingData.vehicleModel}
                 </Text>
               </View>
               <View
                 style={[
                   styles.statusBadge,
-                  existingRegistration.status === 'approved'
+                  shippingData.status === 'approved'
                     ? styles.statusApproved
-                    : existingRegistration.status === 'pending'
+                    : shippingData.status === 'pending'
                     ? styles.statusPending
                     : styles.statusDeclined,
                 ]}
               >
                 <Text style={styles.statusBadgeText}>
-                  {existingRegistration.status.toUpperCase()}
+                  {shippingData.status.toUpperCase()}
                 </Text>
               </View>
             </View>
 
-            {existingRegistration.kyc && (
+            {shippingData.kyc && (
               <View style={styles.kycCard}>
                 <View style={styles.kycHeader}>
                   <Icon
-                    name={isKYCVerified ? 'verified-user' : 'pending-actions'}
+                    name={isKycVerified ? 'verified-user' : 'pending-actions'}
                     size={22}
-                    color={isKYCVerified ? '#10B981' : '#F59E0B'}
+                    color={isKycVerified ? '#10B981' : '#F59E0B'}
                   />
                   <Text style={styles.kycTitle}>KYC Status</Text>
                   <View
                     style={[
                       styles.kycStatusBadge,
-                      isKYCVerified
+                      isKycVerified
                         ? styles.kycStatusVerified
                         : styles.kycStatusPending,
                     ]}
                   >
                     <Text style={styles.kycStatusText}>
-                      {isKYCVerified ? 'VERIFIED' : 'PENDING'}
+                      {isKycVerified ? 'VERIFIED' : 'PENDING'}
                     </Text>
                   </View>
                 </View>
@@ -1891,40 +1679,25 @@ const RiderRegistrationScreen: React.FC = () => {
                   <View style={styles.kycDetailRow}>
                     <Text style={styles.kycDetailLabel}>Driving License:</Text>
                     <Text style={styles.kycDetailValue}>
-                      {existingRegistration.kyc.drivingLicenseNumber}
+                      {shippingData.kyc.drivingLicenseNumber}
                     </Text>
                   </View>
-                  {existingRegistration.kyc.identityType && (
+                  {shippingData.kyc.identityType && (
                     <View style={styles.kycDetailRow}>
                       <Text style={styles.kycDetailLabel}>ID Type:</Text>
                       <Text style={styles.kycDetailValue}>
-                        {existingRegistration.kyc.identityType}
+                        {shippingData.kyc.identityType}
                       </Text>
                     </View>
                   )}
-                  {existingRegistration.kyc.identityNumber && (
+                  {shippingData.kyc.identityNumber && (
                     <View style={styles.kycDetailRow}>
                       <Text style={styles.kycDetailLabel}>ID Number:</Text>
                       <Text style={styles.kycDetailValue}>
-                        {existingRegistration.kyc.identityNumber}
+                        {shippingData.kyc.identityNumber}
                       </Text>
                     </View>
                   )}
-                  <View style={styles.kycDetailRow}>
-                    <Text style={styles.kycDetailLabel}>
-                      Verification Status:
-                    </Text>
-                    <Text
-                      style={[
-                        styles.kycDetailValue,
-                        isKYCVerified
-                          ? styles.kycStatusVerifiedText
-                          : styles.kycStatusPendingText,
-                      ]}
-                    >
-                      {isKYCVerified ? 'Verified' : 'Pending Verification'}
-                    </Text>
-                  </View>
                 </View>
               </View>
             )}
@@ -1936,18 +1709,25 @@ const RiderRegistrationScreen: React.FC = () => {
                   Location Permission Required
                 </Text>
                 <Text style={styles.permissionWarningText}>
-                  To track your deliveries and show nearby orders, we need
-                  location access.
+                  To track deliveries, we need location access.
                 </Text>
                 <TouchableOpacity
                   style={styles.permissionWarningButton}
                   onPress={handleRequestPermissions}
-                  activeOpacity={0.8}
                 >
                   <Text style={styles.permissionWarningButtonText}>
                     Grant Location Access
                   </Text>
                 </TouchableOpacity>
+              </View>
+            )}
+
+            {hasLocationPermission && (
+              <View style={styles.permissionGrantedCard}>
+                <Icon name="location-on" size={24} color="#10B981" />
+                <Text style={styles.permissionGrantedText}>
+                  ✓ Location access granted
+                </Text>
               </View>
             )}
 
@@ -1977,8 +1757,8 @@ const RiderRegistrationScreen: React.FC = () => {
                   <View style={styles.swiperBody}>
                     <Text style={styles.swiperDescription}>
                       {isOnline
-                        ? 'You are currently online and ready to accept orders'
-                        : 'You are offline and will not receive new orders'}
+                        ? 'Online & ready to accept orders'
+                        : 'Offline - will not receive orders'}
                     </Text>
                     <View style={styles.swiperContainer}>
                       <Text style={styles.swiperLabel}>
@@ -1986,20 +1766,12 @@ const RiderRegistrationScreen: React.FC = () => {
                       </Text>
                       <Switch
                         value={isOnline}
-                        onValueChange={() => toggleOnlineStatus()}
+                        onValueChange={toggleOnlineStatus}
                         disabled={isUpdatingOnlineStatus}
                         trackColor={{ false: '#E5E7EB', true: '#10B981' }}
-                        thumbColor="#FFFFFF"
-                        style={styles.swiperSwitch}
+                        thumbColor="#FFF"
                       />
                     </View>
-                    {isUpdatingOnlineStatus && (
-                      <ActivityIndicator
-                        size="small"
-                        color="#4F46E5"
-                        style={styles.swiperLoading}
-                      />
-                    )}
                     <View style={styles.lastStatusContainer}>
                       <Icon name="access-time" size={16} color="#6B7280" />
                       <Text style={styles.lastStatusText}>
@@ -2036,8 +1808,8 @@ const RiderRegistrationScreen: React.FC = () => {
                     <View style={styles.swiperBody}>
                       <Text style={styles.swiperDescription}>
                         {isTrackingOn
-                          ? 'Your location is being tracked continuously (adaptive battery)'
-                          : 'Location tracking is currently turned off'}
+                          ? 'Tracking continuously (even when screen locked)'
+                          : 'Tracking turned off'}
                       </Text>
                       <View style={styles.swiperContainer}>
                         <Text style={styles.swiperLabel}>
@@ -2045,20 +1817,12 @@ const RiderRegistrationScreen: React.FC = () => {
                         </Text>
                         <Switch
                           value={isTrackingOn}
-                          onValueChange={() => toggleLocationTracking()}
+                          onValueChange={toggleLocationTracking}
                           disabled={isUpdatingTrackingStatus || !isOnline}
                           trackColor={{ false: '#E5E7EB', true: '#3B82F6' }}
-                          thumbColor="#FFFFFF"
-                          style={styles.swiperSwitch}
+                          thumbColor="#FFF"
                         />
                       </View>
-                      {isUpdatingTrackingStatus && (
-                        <ActivityIndicator
-                          size="small"
-                          color="#4F46E5"
-                          style={styles.swiperLoading}
-                        />
-                      )}
                       {isTrackingOn && (
                         <View style={styles.lastStatusContainer}>
                           <Icon name="info" size={16} color="#3B82F6" />
@@ -2068,25 +1832,10 @@ const RiderRegistrationScreen: React.FC = () => {
                               { color: '#3B82F6' },
                             ]}
                           >
-                            Adaptive intervals based on battery
+                            Tracking works in background & lock screen
                           </Text>
                         </View>
                       )}
-                    </View>
-                  </View>
-                )}
-
-                {isOnline && !hasLocationPermission && (
-                  <View style={styles.swiperCard}>
-                    <View style={styles.swiperBody}>
-                      <Text
-                        style={[
-                          styles.swiperDescription,
-                          { color: '#EF4444', textAlign: 'center' },
-                        ]}
-                      >
-                        ⚠️ Location permission required to enable tracking
-                      </Text>
                     </View>
                   </View>
                 )}
@@ -2102,156 +1851,28 @@ const RiderRegistrationScreen: React.FC = () => {
                 </View>
                 <Text style={styles.verificationTitle}>
                   {!isApproved
-                    ? 'Registration Pending Approval'
+                    ? 'Registration Pending'
                     : 'KYC Verification Pending'}
                 </Text>
                 <Text style={styles.verificationText}>
-                  {!isApproved
-                    ? 'Your registration is under review. You will be able to go online once approved.'
-                    : 'Your KYC verification is pending. Please complete KYC to start accepting orders.'}
+                  {!isApproved ? 'Under review' : 'KYC verification pending'}
                 </Text>
-                <View style={styles.verificationStatusContainer}>
-                  <View style={styles.verificationStatusRow}>
-                    <Icon
-                      name={
-                        isApproved ? 'check-circle' : 'radio-button-unchecked'
-                      }
-                      size={20}
-                      color={isApproved ? '#10B981' : '#9CA3AF'}
-                    />
-                    <Text
-                      style={[
-                        styles.verificationStatusText,
-                        isApproved && styles.verificationStatusCompleted,
-                      ]}
-                    >
-                      Registration {isApproved ? 'Approved' : 'Pending'}
-                    </Text>
-                  </View>
-                  <View style={styles.verificationStatusRow}>
-                    <Icon
-                      name={
-                        isKYCVerified
-                          ? 'check-circle'
-                          : 'radio-button-unchecked'
-                      }
-                      size={20}
-                      color={isKYCVerified ? '#10B981' : '#9CA3AF'}
-                    />
-                    <Text
-                      style={[
-                        styles.verificationStatusText,
-                        isKYCVerified && styles.verificationStatusCompleted,
-                      ]}
-                    >
-                      KYC {isKYCVerified ? 'Verified' : 'Pending'}
-                    </Text>
-                  </View>
-                </View>
               </View>
             )}
 
             <TouchableOpacity
               style={styles.viewStatusButton}
               onPress={handleViewStatus}
-              activeOpacity={0.8}
             >
               <View style={styles.buttonIconContainer}>
-                <Icon name="visibility" size={22} color="#FFFFFF" />
+                <Icon name="visibility" size={22} color="#FFF" />
               </View>
-              <Text style={styles.viewStatusButtonText}>
-                View Current Status
-              </Text>
-              <Icon name="chevron-right" size={22} color="#FFFFFF" />
+              <Text style={styles.viewStatusButtonText}>View Status</Text>
+              <Icon name="chevron-right" size={22} color="#FFF" />
             </TouchableOpacity>
-
-            <View style={styles.infoCard}>
-              <View style={styles.infoHeader}>
-                <Icon name="info" size={20} color="#3B82F6" />
-                <Text style={styles.infoTitle}>Registration Information</Text>
-              </View>
-              {[
-                {
-                  label: 'Registration ID:',
-                  value: existingRegistration._id,
-                  style: styles.infoValue,
-                  extra: { numberOfLines: 1, ellipsizeMode: 'middle' as const },
-                },
-              ].map(row => (
-                <View key={row.label} style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>{row.label}</Text>
-                  <Text style={row.style} {...row.extra}>
-                    {row.value}
-                  </Text>
-                </View>
-              ))}
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Status:</Text>
-                <Text
-                  style={[
-                    styles.infoValue,
-                    existingRegistration.status === 'approved'
-                      ? styles.infoValueApproved
-                      : existingRegistration.status === 'pending'
-                      ? styles.infoValuePending
-                      : styles.infoValueDeclined,
-                  ]}
-                >
-                  {existingRegistration.status}
-                </Text>
-              </View>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>KYC Status:</Text>
-                <Text
-                  style={[
-                    styles.infoValue,
-                    isKYCVerified
-                      ? styles.infoValueApproved
-                      : styles.infoValuePending,
-                  ]}
-                >
-                  {isKYCVerified ? 'Verified' : 'Pending'}
-                </Text>
-              </View>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Vehicle:</Text>
-                <Text style={styles.infoValue}>
-                  {existingRegistration.vehicleBrand}{' '}
-                  {existingRegistration.vehicleModel}
-                </Text>
-              </View>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Online Status:</Text>
-                <Text
-                  style={[
-                    styles.infoValue,
-                    isOnline
-                      ? styles.infoValueApproved
-                      : styles.infoValueDeclined,
-                  ]}
-                >
-                  {isOnline ? 'Online' : 'Offline'}
-                </Text>
-              </View>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Location Tracking:</Text>
-                <Text
-                  style={[
-                    styles.infoValue,
-                    isTrackingOn
-                      ? styles.infoValueApproved
-                      : styles.infoValueDeclined,
-                  ]}
-                >
-                  {isTrackingOn ? 'Active (battery adaptive)' : 'Inactive'}
-                </Text>
-              </View>
-            </View>
-
             <TouchableOpacity
               style={styles.newRegistrationButton}
               onPress={handleNewRegistration}
-              activeOpacity={0.8}
             >
               <Icon name="add-circle-outline" size={20} color="#4F46E5" />
               <Text style={styles.newRegistrationButtonText}>
@@ -2264,7 +1885,7 @@ const RiderRegistrationScreen: React.FC = () => {
     );
   }
 
-  // Registration Form - Keep original UI
+  // Registration Form
   return (
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
@@ -2274,7 +1895,6 @@ const RiderRegistrationScreen: React.FC = () => {
         <ScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.formContainer}
-          keyboardShouldPersistTaps="handled"
         >
           <Animated.View
             style={[
@@ -2284,19 +1904,11 @@ const RiderRegistrationScreen: React.FC = () => {
           >
             <View style={styles.headerContent}>
               <View style={styles.headerIconContainer}>
-                <Icon name="directions-bike" size={28} color="#FFFFFF" />
+                <Icon name="directions-bike" size={28} color="#FFF" />
               </View>
-              <View style={styles.headerTextContainer}>
+              <View>
                 <Text style={styles.title}>Become a Delivery Partner</Text>
-                <Text style={styles.subtitle}>
-                  Register your vehicle and start earning
-                </Text>
-              </View>
-            </View>
-            <View style={styles.progressContainer}>
-              <Text style={styles.progressText}>Registration Form</Text>
-              <View style={styles.progressBar}>
-                <View style={styles.progressFill} />
+                <Text style={styles.subtitle}>Register your vehicle</Text>
               </View>
             </View>
           </Animated.View>
@@ -2305,14 +1917,10 @@ const RiderRegistrationScreen: React.FC = () => {
             <Icon name="verified-user" size={20} color="#3b82f6" />
             <View style={styles.checkInfoContent}>
               <Text style={styles.checkInfoTitle}>New Registration</Text>
-              <Text style={styles.checkInfoText}>
-                Please fill in all the details below to register as a delivery
-                partner.
-              </Text>
+              <Text style={styles.checkInfoText}>Fill details to register</Text>
             </View>
           </View>
 
-          {/* Personal Details */}
           <View style={styles.sectionHeader}>
             <Icon
               name="person"
@@ -2339,7 +1947,7 @@ const RiderRegistrationScreen: React.FC = () => {
                 />
                 <TextInput
                   style={styles.input}
-                  placeholder="Enter your full name"
+                  placeholder="Enter full name"
                   placeholderTextColor="#9CA3AF"
                   value={name}
                   onChangeText={setName}
@@ -2349,7 +1957,6 @@ const RiderRegistrationScreen: React.FC = () => {
             </View>
           </Animated.View>
 
-          {/* KYC Documents */}
           <View style={styles.sectionHeader}>
             <Icon
               name="verified-user"
@@ -2357,9 +1964,7 @@ const RiderRegistrationScreen: React.FC = () => {
               color="#2563EB"
               style={styles.sectionIcon}
             />
-            <Text style={styles.sectionHeaderText}>
-              KYC Documents (Required)
-            </Text>
+            <Text style={styles.sectionHeaderText}>KYC Documents</Text>
           </View>
           <Animated.View
             style={[
@@ -2378,7 +1983,7 @@ const RiderRegistrationScreen: React.FC = () => {
                 />
                 <TextInput
                   style={styles.input}
-                  placeholder="Enter license number"
+                  placeholder="License number"
                   placeholderTextColor="#9CA3AF"
                   value={drivingLicenseNumber}
                   onChangeText={setDrivingLicenseNumber}
@@ -2396,39 +2001,23 @@ const RiderRegistrationScreen: React.FC = () => {
                 ]}
                 onPress={() => pickImage('license')}
                 disabled={uploadingImage === 'license'}
-                activeOpacity={0.8}
               >
                 {uploadingImage === 'license' ? (
-                  <ActivityIndicator color="white" size="small" />
+                  <ActivityIndicator color="#fff" size="small" />
                 ) : (
                   <>
                     <Icon
                       name={drivingLicenseImage ? 'check-circle' : 'badge'}
                       size={22}
-                      color="white"
+                      color="#fff"
                       style={styles.uploadIcon}
                     />
                     <Text style={styles.uploadText}>
-                      {drivingLicenseImage
-                        ? 'License Uploaded ✓'
-                        : 'Upload License Image'}
+                      {drivingLicenseImage ? 'Uploaded ✓' : 'Upload License'}
                     </Text>
-                    {!drivingLicenseImage && (
-                      <Icon
-                        name="chevron-right"
-                        size={20}
-                        color="white"
-                        style={styles.uploadArrow}
-                      />
-                    )}
                   </>
                 )}
               </TouchableOpacity>
-              {drivingLicenseImage && (
-                <Text style={styles.uploadHint}>
-                  ✓ License image uploaded successfully
-                </Text>
-              )}
             </View>
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Identity Document Type</Text>
@@ -2438,7 +2027,6 @@ const RiderRegistrationScreen: React.FC = () => {
                   identityType && styles.dropdownButtonSelected,
                 ]}
                 onPress={() => setShowIdentityModal(true)}
-                activeOpacity={0.7}
               >
                 <View style={styles.dropdownButtonContent}>
                   <Icon
@@ -2492,45 +2080,30 @@ const RiderRegistrationScreen: React.FC = () => {
                     ]}
                     onPress={() => pickImage('identity')}
                     disabled={uploadingImage === 'identity'}
-                    activeOpacity={0.8}
                   >
                     {uploadingImage === 'identity' ? (
-                      <ActivityIndicator color="white" size="small" />
+                      <ActivityIndicator color="#fff" size="small" />
                     ) : (
                       <>
                         <Icon
                           name={identityImage ? 'check-circle' : 'description'}
                           size={22}
-                          color="white"
+                          color="#fff"
                           style={styles.uploadIcon}
                         />
                         <Text style={styles.uploadText}>
                           {identityImage
-                            ? 'Document Uploaded ✓'
+                            ? 'Uploaded ✓'
                             : `Upload ${identityType}`}
                         </Text>
-                        {!identityImage && (
-                          <Icon
-                            name="chevron-right"
-                            size={20}
-                            color="white"
-                            style={styles.uploadArrow}
-                          />
-                        )}
                       </>
                     )}
                   </TouchableOpacity>
-                  {identityImage && (
-                    <Text style={styles.uploadHint}>
-                      ✓ {identityType} document uploaded
-                    </Text>
-                  )}
                 </View>
               </>
             )}
           </Animated.View>
 
-          {/* Vehicle Information */}
           <View style={styles.sectionHeader}>
             <Icon
               name="directions-car"
@@ -2574,7 +2147,6 @@ const RiderRegistrationScreen: React.FC = () => {
                   vehicleCategory && styles.dropdownButtonSelected,
                 ]}
                 onPress={() => setShowCategoryModal(true)}
-                activeOpacity={0.7}
               >
                 <View style={styles.dropdownButtonContent}>
                   <Icon
@@ -2590,7 +2162,7 @@ const RiderRegistrationScreen: React.FC = () => {
                         : styles.dropdownButtonTextPlaceholder,
                     ]}
                   >
-                    {vehicleCategory || 'Select vehicle type'}
+                    {vehicleCategory || 'Select type'}
                   </Text>
                   <Icon name="keyboard-arrow-down" size={22} color="#4F46E5" />
                 </View>
@@ -2605,7 +2177,6 @@ const RiderRegistrationScreen: React.FC = () => {
                     vehicleBrand && styles.dropdownButtonSelected,
                   ]}
                   onPress={() => setShowBrandModal(true)}
-                  activeOpacity={0.7}
                 >
                   <View style={styles.dropdownButtonContent}>
                     <Icon
@@ -2621,7 +2192,7 @@ const RiderRegistrationScreen: React.FC = () => {
                           : styles.dropdownButtonTextPlaceholder,
                       ]}
                     >
-                      {vehicleBrand || 'Select vehicle brand'}
+                      {vehicleBrand || 'Select brand'}
                     </Text>
                     <Icon
                       name="keyboard-arrow-down"
@@ -2641,7 +2212,6 @@ const RiderRegistrationScreen: React.FC = () => {
                     vehicleModel && styles.dropdownButtonSelected,
                   ]}
                   onPress={() => setShowModelModal(true)}
-                  activeOpacity={0.7}
                 >
                   <View style={styles.dropdownButtonContent}>
                     <Icon
@@ -2657,7 +2227,7 @@ const RiderRegistrationScreen: React.FC = () => {
                           : styles.dropdownButtonTextPlaceholder,
                       ]}
                     >
-                      {vehicleModel || 'Select vehicle model'}
+                      {vehicleModel || 'Select model'}
                     </Text>
                     <Icon
                       name="keyboard-arrow-down"
@@ -2677,65 +2247,26 @@ const RiderRegistrationScreen: React.FC = () => {
                 ]}
                 onPress={() => pickImage('vehicle')}
                 disabled={uploadingImage === 'vehicle'}
-                activeOpacity={0.8}
               >
                 {uploadingImage === 'vehicle' ? (
-                  <ActivityIndicator color="white" size="small" />
+                  <ActivityIndicator color="#fff" size="small" />
                 ) : (
                   <>
                     <Icon
                       name={vehicleImage ? 'check-circle' : 'add-a-photo'}
                       size={22}
-                      color="white"
+                      color="#fff"
                       style={styles.uploadIcon}
                     />
                     <Text style={styles.uploadText}>
-                      {vehicleImage
-                        ? 'Image Uploaded ✓'
-                        : 'Upload Vehicle Image'}
+                      {vehicleImage ? 'Uploaded ✓' : 'Upload Vehicle'}
                     </Text>
-                    {!vehicleImage && (
-                      <Icon
-                        name="chevron-right"
-                        size={20}
-                        color="white"
-                        style={styles.uploadArrow}
-                      />
-                    )}
                   </>
                 )}
               </TouchableOpacity>
-              {vehicleImage && (
-                <Text style={styles.uploadHint}>
-                  ✓ Vehicle image selected successfully
-                </Text>
-              )}
-            </View>
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Daily Order Capacity</Text>
-              <View style={styles.inputWrapper}>
-                <Icon
-                  name="local-shipping"
-                  size={20}
-                  color="#6B7280"
-                  style={styles.inputIcon}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Default: 25 orders"
-                  placeholderTextColor="#9CA3AF"
-                  value={maxOrdersPerDay}
-                  onChangeText={text =>
-                    setMaxOrdersPerDay(text.replace(/[^0-9]/g, ''))
-                  }
-                  keyboardType="number-pad"
-                  maxLength={2}
-                />
-              </View>
             </View>
           </Animated.View>
 
-          {/* Terms and Conditions */}
           <Animated.View
             style={[
               styles.termsCard,
@@ -2746,36 +2277,12 @@ const RiderRegistrationScreen: React.FC = () => {
               <Icon name="gavel" size={24} color="#7C3AED" />
               <Text style={styles.termsTitle}>Terms & Conditions</Text>
             </View>
-            <ScrollView
-              style={styles.termsScroll}
-              showsVerticalScrollIndicator={false}
-              nestedScrollEnabled
-            >
-              <View style={styles.termsContent}>
-                <Text style={styles.termsSubtitle}>
-                  By registering, you agree to:
-                </Text>
-                {[
-                  'Comply with all traffic laws and regulations',
-                  'Maintain valid documents and insurance',
-                  'Accept delivery assignments responsibly',
-                  'Maintain professional conduct with customers',
-                  'Allow location tracking when online for deliveries',
-                ].map((point, i) => (
-                  <View key={i} style={styles.termsPoint}>
-                    <Icon name="check-circle" size={16} color="#10B981" />
-                    <Text style={styles.termsPointText}>{point}</Text>
-                  </View>
-                ))}
-              </View>
-            </ScrollView>
             <TouchableOpacity
               style={styles.checkboxContainer}
               onPress={() => {
                 ReactNativeHapticFeedback.trigger('impactLight', hapticOptions);
                 setAgreedToTerms(!agreedToTerms);
               }}
-              activeOpacity={0.7}
             >
               <View
                 style={[
@@ -2783,46 +2290,14 @@ const RiderRegistrationScreen: React.FC = () => {
                   agreedToTerms && styles.checkboxChecked,
                 ]}
               >
-                {agreedToTerms && <Icon name="check" size={16} color="white" />}
+                {agreedToTerms && <Icon name="check" size={16} color="#fff" />}
               </View>
-              <View style={styles.checkboxTextContainer}>
-                <Text style={styles.checkboxText}>
-                  I agree to the terms and conditions
-                </Text>
-                <Text style={styles.checkboxSubtext}>
-                  Required to proceed with registration
-                </Text>
+              <View>
+                <Text style={styles.checkboxText}>I agree to the terms</Text>
+                <Text style={styles.checkboxSubtext}>Required to proceed</Text>
               </View>
             </TouchableOpacity>
           </Animated.View>
-
-          {agreedToTerms && (
-            <Animated.View
-              style={[
-                styles.agreementCard,
-                { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
-              ]}
-            >
-              <Icon name="verified" size={20} color="#059669" />
-              <View style={styles.agreementTextContainer}>
-                <Text style={styles.agreementTitle}>Terms Accepted</Text>
-                <Text style={styles.agreementText}>
-                  Agreed on{' '}
-                  {new Date().toLocaleDateString('en-IN', {
-                    weekday: 'long',
-                    day: 'numeric',
-                    month: 'short',
-                    year: 'numeric',
-                  })}{' '}
-                  at{' '}
-                  {new Date().toLocaleTimeString('en-IN', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </Text>
-              </View>
-            </Animated.View>
-          )}
 
           <TouchableOpacity
             style={[
@@ -2831,48 +2306,29 @@ const RiderRegistrationScreen: React.FC = () => {
             ]}
             onPress={handleSubmit}
             disabled={!agreedToTerms || loading}
-            activeOpacity={0.8}
           >
             {loading ? (
-              <ActivityIndicator color="white" size="small" />
+              <ActivityIndicator color="#fff" size="small" />
             ) : (
               <View style={styles.buttonContent}>
                 <View style={styles.buttonIconContainer}>
-                  <Icon name="send" size={22} color="white" />
+                  <Icon name="send" size={22} color="#fff" />
                 </View>
-                <View style={styles.buttonTextContainer}>
+                <View>
                   <Text style={styles.submitButtonText}>
                     Submit Registration
                   </Text>
                   <Text style={styles.submitButtonSubtext}>
-                    Your application will be reviewed within 24 hours
+                    Reviewed within 24 hours
                   </Text>
                 </View>
-                <Icon
-                  name="arrow-forward"
-                  size={22}
-                  color="white"
-                  style={styles.buttonArrow}
-                />
               </View>
             )}
           </TouchableOpacity>
-
-          <View style={styles.helpCard}>
-            <View style={styles.helpIconContainer}>
-              <Icon name="support-agent" size={20} color="#7C3AED" />
-            </View>
-            <View style={styles.helpTextContainer}>
-              <Text style={styles.helpTitle}>Need Help?</Text>
-              <Text style={styles.helpText}>
-                Contact our support team at support@delivery.com
-              </Text>
-            </View>
-          </View>
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Modals - Keep existing modals (same as before) */}
+      {/* Modals */}
       <Modal
         visible={showCategoryModal}
         animationType="slide"
@@ -2888,11 +2344,9 @@ const RiderRegistrationScreen: React.FC = () => {
               >
                 <Icon name="arrow-back" size={24} color="#4F46E5" />
               </TouchableOpacity>
-              <View style={styles.modalTitleContainer}>
-                <Text style={styles.modalTitle}>Select Vehicle Category</Text>
-                <Text style={styles.modalSubtitle}>
-                  Choose your vehicle type
-                </Text>
+              <View>
+                <Text style={styles.modalTitle}>Select Category</Text>
+                <Text style={styles.modalSubtitle}>Choose vehicle type</Text>
               </View>
             </View>
           </View>
@@ -2913,7 +2367,6 @@ const RiderRegistrationScreen: React.FC = () => {
                     hapticOptions,
                   );
                 }}
-                activeOpacity={0.7}
               >
                 <View style={styles.modalItemContent}>
                   <View style={styles.modalIconContainer}>
@@ -2970,8 +2423,8 @@ const RiderRegistrationScreen: React.FC = () => {
               >
                 <Icon name="arrow-back" size={24} color="#4F46E5" />
               </TouchableOpacity>
-              <View style={styles.modalTitleContainer}>
-                <Text style={styles.modalTitle}>Select Vehicle Brand</Text>
+              <View>
+                <Text style={styles.modalTitle}>Select Brand</Text>
                 <Text style={styles.modalSubtitle}>
                   {vehicleCategory} brands
                 </Text>
@@ -2995,7 +2448,6 @@ const RiderRegistrationScreen: React.FC = () => {
                     hapticOptions,
                   );
                 }}
-                activeOpacity={0.7}
               >
                 <View style={styles.modalItemContent}>
                   <View style={styles.modalIconContainer}>
@@ -3042,8 +2494,8 @@ const RiderRegistrationScreen: React.FC = () => {
               >
                 <Icon name="arrow-back" size={24} color="#4F46E5" />
               </TouchableOpacity>
-              <View style={styles.modalTitleContainer}>
-                <Text style={styles.modalTitle}>Select Vehicle Model</Text>
+              <View>
+                <Text style={styles.modalTitle}>Select Model</Text>
                 <Text style={styles.modalSubtitle}>{vehicleBrand} models</Text>
               </View>
             </View>
@@ -3065,7 +2517,6 @@ const RiderRegistrationScreen: React.FC = () => {
                     hapticOptions,
                   );
                 }}
-                activeOpacity={0.7}
               >
                 <View style={styles.modalItemContent}>
                   <View style={styles.modalIconContainer}>
@@ -3112,11 +2563,9 @@ const RiderRegistrationScreen: React.FC = () => {
               >
                 <Icon name="arrow-back" size={24} color="#4F46E5" />
               </TouchableOpacity>
-              <View style={styles.modalTitleContainer}>
-                <Text style={styles.modalTitle}>Select Identity Document</Text>
-                <Text style={styles.modalSubtitle}>
-                  Choose your identity document type
-                </Text>
+              <View>
+                <Text style={styles.modalTitle}>Select Identity</Text>
+                <Text style={styles.modalSubtitle}>Choose document type</Text>
               </View>
             </View>
           </View>
@@ -3137,7 +2586,6 @@ const RiderRegistrationScreen: React.FC = () => {
                     hapticOptions,
                   );
                 }}
-                activeOpacity={0.7}
               >
                 <View style={styles.modalItemContent}>
                   <View style={styles.modalIconContainer}>
@@ -3195,20 +2643,80 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     textAlign: 'center',
   },
+
+  // Battery Card Styles
+  batteryCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    marginBottom: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    elevation: 2,
+  },
+  batteryCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  batteryCardTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1F2937',
+    marginLeft: 8,
+  },
+  batteryStatsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 16,
+  },
+  batteryStatItem: { alignItems: 'center' },
+  batteryStatValue: { fontSize: 20, fontWeight: '700', marginTop: 4 },
+  batteryStatLabel: { fontSize: 12, color: '#6B7280', marginTop: 2 },
+  batteryProgressBar: {
+    height: 6,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 16,
+  },
+  batteryProgressFill: { height: '100%', borderRadius: 3 },
+  timeoutRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 16,
+    paddingVertical: 8,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+  },
+  timeoutItem: { alignItems: 'center' },
+  timeoutLabel: { fontSize: 11, color: '#6B7280', marginTop: 4 },
+  timeoutValue: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1F2937',
+    marginTop: 2,
+  },
+  batteryModeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  batteryModeText: { fontSize: 12, fontWeight: '500', marginLeft: 6 },
+
+  // Status Card Styles
   statusHeader: {
     backgroundColor: '#4F46E5',
     padding: 20,
     borderRadius: 16,
-    marginBottom: 20,
+    marginBottom: 16,
     flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#4F46E5',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
     elevation: 6,
   },
-  statusHeaderIconContainer: {
+  statusHeaderIcon: {
     width: 52,
     height: 52,
     borderRadius: 12,
@@ -3217,30 +2725,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginRight: 14,
   },
-  statusHeaderTextContainer: { flex: 1 },
-  statusHeaderTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: -0.3,
-  },
-  statusHeaderSubtitle: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.9)',
-    marginTop: 2,
-    fontWeight: '400',
-  },
+  statusHeaderTitle: { fontSize: 18, fontWeight: '600', color: '#FFFFFF' },
+  statusHeaderSub: { fontSize: 14, color: 'rgba(255,255,255,0.9)' },
   statusCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
-    padding: 0,
     marginBottom: 20,
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
     elevation: 3,
     overflow: 'hidden',
   },
@@ -3253,13 +2745,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FAFAFA',
   },
   profileInfo: { flex: 1, marginLeft: 12 },
-  profileName: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1F2937',
-    marginBottom: 2,
-  },
-  profileVehicle: { fontSize: 14, color: '#6B7280', fontWeight: '400' },
+  profileName: { fontSize: 18, fontWeight: '600', color: '#1F2937' },
+  profileVehicle: { fontSize: 14, color: '#6B7280' },
   statusBadge: {
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -3286,23 +2773,16 @@ const styles = StyleSheet.create({
   },
   kycStatusVerified: { backgroundColor: '#D1FAE5' },
   kycStatusPending: { backgroundColor: '#FEF3C7' },
-  kycStatusText: { fontSize: 12, fontWeight: '700', letterSpacing: 0.5 },
+  kycStatusText: { fontSize: 12, fontWeight: '700' },
   kycDetails: { backgroundColor: '#F9FAFB', borderRadius: 8, padding: 12 },
-  kycDetailRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  kycDetailLabel: {
-    fontSize: 13,
-    color: '#6B7280',
-    width: 120,
-    fontWeight: '500',
-  },
+  kycDetailRow: { flexDirection: 'row', marginBottom: 8 },
+  kycDetailLabel: { fontSize: 13, color: '#6B7280', width: 120 },
   kycDetailValue: {
     fontSize: 13,
     color: '#1F2937',
     fontWeight: '600',
     flex: 1,
   },
-  kycStatusVerifiedText: { color: '#10B981' },
-  kycStatusPendingText: { color: '#F59E0B' },
   permissionWarningCard: {
     margin: 20,
     padding: 20,
@@ -3324,7 +2804,6 @@ const styles = StyleSheet.create({
     color: '#7F1D1D',
     textAlign: 'center',
     marginBottom: 20,
-    lineHeight: 20,
   },
   permissionWarningButton: {
     backgroundColor: '#EF4444',
@@ -3337,13 +2816,25 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+  permissionGrantedCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    margin: 20,
+    padding: 12,
+    backgroundColor: '#D1FAE5',
+    borderRadius: 12,
+  },
+  permissionGrantedText: {
+    fontSize: 14,
+    color: '#065F46',
+    fontWeight: '600',
+    marginLeft: 8,
+  },
   verificationCard: {
     padding: 24,
     margin: 20,
     backgroundColor: '#FFFBEB',
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
     alignItems: 'center',
   },
   verificationIconContainer: {
@@ -3362,28 +2853,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 8,
   },
-  verificationText: {
-    fontSize: 14,
-    color: '#92400E',
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 20,
-  },
-  verificationStatusContainer: { width: '100%', marginTop: 8 },
-  verificationStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#FDE68A',
-  },
-  verificationStatusText: {
-    fontSize: 14,
-    color: '#92400E',
-    marginLeft: 10,
-    fontWeight: '500',
-  },
-  verificationStatusCompleted: { color: '#065F46' },
+  verificationText: { fontSize: 14, color: '#92400E', textAlign: 'center' },
   swiperCard: {
     padding: 20,
     borderBottomWidth: 1,
@@ -3407,18 +2877,13 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: '#F3F4F6',
   },
-  swiperStatusText: { fontSize: 12, fontWeight: '700', letterSpacing: 0.5 },
+  swiperStatusText: { fontSize: 12, fontWeight: '700' },
   swiperStatusOnline: { color: '#10B981' },
   swiperStatusOffline: { color: '#6B7280' },
   swiperStatusTracking: { color: '#3B82F6' },
   swiperStatusNotTracking: { color: '#6B7280' },
   swiperBody: { marginTop: 4 },
-  swiperDescription: {
-    fontSize: 14,
-    color: '#6B7280',
-    lineHeight: 20,
-    marginBottom: 16,
-  },
+  swiperDescription: { fontSize: 14, color: '#6B7280', marginBottom: 16 },
   swiperContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3426,10 +2891,6 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   swiperLabel: { fontSize: 15, fontWeight: '600', color: '#374151' },
-  swiperSwitch: {
-    transform: Platform.OS === 'ios' ? [{ scaleX: 0.9 }, { scaleY: 0.9 }] : [],
-  },
-  swiperLoading: { marginTop: 8 },
   lastStatusContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3448,10 +2909,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    shadowColor: '#4F46E5',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
     elevation: 3,
   },
   buttonIconContainer: {
@@ -3468,30 +2925,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     textAlign: 'center',
-    marginLeft: 12,
   },
-  infoCard: {
-    padding: 20,
-    backgroundColor: '#F9FAFB',
-    marginHorizontal: 20,
-    marginBottom: 20,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  infoHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
-  infoTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1F2937',
-    marginLeft: 10,
-  },
-  infoRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
-  infoLabel: { fontSize: 14, color: '#6B7280', width: 120, fontWeight: '500' },
-  infoValue: { fontSize: 14, color: '#374151', fontWeight: '600', flex: 1 },
-  infoValueApproved: { color: '#10B981' },
-  infoValuePending: { color: '#F59E0B' },
-  infoValueDeclined: { color: '#EF4444' },
   newRegistrationButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3510,6 +2944,8 @@ const styles = StyleSheet.create({
     color: '#4F46E5',
     marginLeft: 10,
   },
+
+  // Form Styles
   header: {
     backgroundColor: '#4F46E5',
     paddingHorizontal: 20,
@@ -3517,10 +2953,6 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
-    shadowColor: '#4F46E5',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
     elevation: 8,
   },
   headerContent: {
@@ -3539,46 +2971,8 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.3)',
   },
-  headerTextContainer: { flex: 1 },
-  title: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: -0.3,
-    textShadowColor: 'rgba(0,0,0,0.1)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.9)',
-    marginTop: 4,
-    fontWeight: '400',
-  },
-  progressContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  progressText: {
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.9)',
-    fontWeight: '600',
-  },
-  progressBar: {
-    flex: 1,
-    height: 6,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 3,
-    marginLeft: 12,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    width: '40%',
-    height: '100%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 3,
-  },
+  title: { fontSize: 22, fontWeight: '700', color: '#FFFFFF' },
+  subtitle: { fontSize: 14, color: 'rgba(255,255,255,0.9)' },
   formContainer: { paddingHorizontal: 20, paddingBottom: 40, paddingTop: 8 },
   sectionHeader: {
     flexDirection: 'row',
@@ -3593,12 +2987,7 @@ const styles = StyleSheet.create({
     padding: 6,
     borderRadius: 8,
   },
-  sectionHeaderText: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1F2937',
-    letterSpacing: -0.3,
-  },
+  sectionHeaderText: { fontSize: 18, fontWeight: '700', color: '#1F2937' },
   sectionCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
@@ -3606,10 +2995,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
     elevation: 3,
   },
   checkInfoCard: {
@@ -3629,14 +3014,13 @@ const styles = StyleSheet.create({
     color: '#0369a1',
     marginBottom: 4,
   },
-  checkInfoText: { fontSize: 12, color: '#0c4a6e', lineHeight: 16 },
+  checkInfoText: { fontSize: 12, color: '#0c4a6e' },
   inputContainer: { marginBottom: 20 },
   inputLabel: {
     fontSize: 14,
     fontWeight: '600',
     color: '#374151',
     marginBottom: 8,
-    letterSpacing: -0.2,
   },
   inputWrapper: { position: 'relative' },
   inputIcon: {
@@ -3656,7 +3040,6 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     fontSize: 15,
     color: '#111827',
-    fontFamily: Platform.OS === 'ios' ? 'System' : 'Roboto',
     height: 48,
   },
   dropdownButton: {
@@ -3673,14 +3056,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#F0F9FF',
   },
   dropdownButtonContent: { flexDirection: 'row', alignItems: 'center' },
-  dropdownButtonText: {
-    flex: 1,
-    fontSize: 15,
-    marginLeft: 12,
-    fontFamily: Platform.OS === 'ios' ? 'System' : 'Roboto',
-  },
+  dropdownButtonText: { flex: 1, fontSize: 15, marginLeft: 12 },
   dropdownButtonTextSelected: { color: '#111827', fontWeight: '500' },
-  dropdownButtonTextPlaceholder: { color: '#9CA3AF', fontWeight: '400' },
+  dropdownButtonTextPlaceholder: { color: '#9CA3AF' },
   uploadButton: {
     backgroundColor: '#4F46E5',
     paddingVertical: 16,
@@ -3688,32 +3066,12 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1.5,
-    borderColor: '#4F46E5',
-    shadowColor: '#4F46E5',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    justifyContent: 'center',
     elevation: 2,
   },
-  uploadButtonSuccess: { backgroundColor: '#10B981', borderColor: '#10B981' },
+  uploadButtonSuccess: { backgroundColor: '#10B981' },
   uploadIcon: { marginRight: 12 },
-  uploadArrow: { opacity: 0.8 },
-  uploadText: {
-    flex: 1,
-    color: 'white',
-    fontSize: 15,
-    fontWeight: '600',
-    textAlign: 'left',
-  },
-  uploadHint: {
-    fontSize: 12,
-    color: '#10B981',
-    marginTop: 6,
-    fontWeight: '500',
-    marginLeft: 4,
-  },
+  uploadText: { color: '#FFFFFF', fontSize: 15, fontWeight: '600' },
   termsCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
@@ -3722,10 +3080,6 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     borderWidth: 1.5,
     borderColor: '#E5E7EB',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
     elevation: 3,
   },
   termsHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
@@ -3734,26 +3088,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1F2937',
     marginLeft: 12,
-  },
-  termsScroll: { maxHeight: 160, marginBottom: 20 },
-  termsContent: { paddingRight: 8 },
-  termsSubtitle: {
-    fontSize: 14,
-    color: '#6B7280',
-    fontWeight: '600',
-    marginBottom: 12,
-  },
-  termsPoint: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 10,
-  },
-  termsPointText: {
-    flex: 1,
-    fontSize: 13,
-    color: '#4B5563',
-    lineHeight: 18,
-    marginLeft: 10,
   },
   checkboxContainer: {
     flexDirection: 'row',
@@ -3777,112 +3111,39 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   checkboxChecked: { backgroundColor: '#4F46E5', borderColor: '#4F46E5' },
-  checkboxTextContainer: { flex: 1 },
-  checkboxText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#1F2937',
-    lineHeight: 22,
-    marginBottom: 2,
-  },
-  checkboxSubtext: { fontSize: 12, color: '#6B7280', fontWeight: '400' },
-  agreementCard: {
-    backgroundColor: '#F0FDF4',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#BBF7D0',
-  },
-  agreementTextContainer: { flex: 1, marginLeft: 12 },
-  agreementTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#065F46',
-    marginBottom: 2,
-  },
-  agreementText: {
-    fontSize: 12,
-    color: '#047857',
-    fontWeight: '500',
-    lineHeight: 16,
-  },
+  checkboxText: { fontSize: 15, fontWeight: '600', color: '#1F2937' },
+  checkboxSubtext: { fontSize: 12, color: '#6B7280' },
   submitButton: {
     backgroundColor: '#4F46E5',
     paddingVertical: 18,
     borderRadius: 14,
     marginBottom: 16,
-    borderWidth: 1.5,
-    borderColor: '#4F46E5',
-    shadowColor: '#4F46E5',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
     elevation: 6,
   },
-  submitButtonDisabled: {
-    backgroundColor: '#A5B4FC',
-    borderColor: '#A5B4FC',
-    opacity: 0.7,
-  },
+  submitButtonDisabled: { backgroundColor: '#A5B4FC', opacity: 0.7 },
   buttonContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 8,
+    justifyContent: 'center',
   },
-  buttonTextContainer: { flex: 1 },
   submitButtonText: {
-    color: 'white',
+    color: '#FFFFFF',
     fontSize: 17,
     fontWeight: '700',
     textAlign: 'center',
-    letterSpacing: -0.3,
   },
   submitButtonSubtext: {
     color: 'rgba(255,255,255,0.9)',
     fontSize: 12,
-    fontWeight: '400',
     textAlign: 'center',
-    marginTop: 2,
   },
-  buttonArrow: { opacity: 0.9 },
-  helpCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#EDE9FE',
-    marginBottom: 20,
-  },
-  helpIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: '#EDE9FE',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 14,
-  },
-  helpTextContainer: { flex: 1 },
-  helpTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1F2937',
-    marginBottom: 2,
-  },
-  helpText: { fontSize: 12, color: '#6B7280', lineHeight: 16 },
+
+  // Modal Styles
   modalSafeArea: { flex: 1, backgroundColor: '#FFFFFF' },
   modalHeader: {
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
   },
   modalTitleRow: {
     flexDirection: 'row',
@@ -3890,7 +3151,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   modalBackButton: { padding: 4, marginRight: 12 },
-  modalTitleContainer: { flex: 1 },
   modalTitle: { fontSize: 20, fontWeight: '700', color: '#1F2937' },
   modalSubtitle: { fontSize: 13, color: '#6B7280', marginTop: 2 },
   modalList: { paddingBottom: 16 },
