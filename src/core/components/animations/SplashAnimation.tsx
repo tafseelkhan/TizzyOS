@@ -42,6 +42,7 @@ export default function TizzyGo() {
   const [minTimeElapsed, setMinTimeElapsed] = useState(false);
   const [soundLoaded, setSoundLoaded] = useState(false);
   const [soundError, setSoundError] = useState<string | null>(null);
+  const [userRole, setUserRole] = useState<string | null>(null);
 
   // Animation values
   const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -109,16 +110,37 @@ export default function TizzyGo() {
     Animated.spring(scaleAnim, animations.pressScale(isPressed)).start();
   }, [isPressed]);
 
-  // Auth check and navigation
+  // Auth check and navigation with role
   useEffect(() => {
     const checkAuthAndNavigate = async () => {
-      // Wait minimum time
-      await SplashService.waitMinimumTime(3000);
-      setMinTimeElapsed(true);
+      try {
+        console.log('Step 1');
 
-      // Check auth and navigate
-      const result = await SplashService.checkAuthAndGetDestination();
-      navigation.navigate(result.shouldNavigateTo);
+        await SplashService.waitMinimumTime(3000);
+        setMinTimeElapsed(true);
+
+        console.log('Step 2');
+
+        // Check auth and get user role
+        const result = await SplashService.checkAuthAndGetDestination();
+
+        if (result.success && result.userRole) {
+          setUserRole(result.userRole);
+          console.log('✅ User Role from Splash:', result.userRole);
+
+          // ✅ Store role for later use
+          // You can save it to AsyncStorage or Context
+          // await AsyncStorage.setItem('userRole', result.userRole);
+        }
+
+        console.log('Step 3', result);
+
+        navigation.navigate(result.shouldNavigateTo);
+
+        console.log('Step 4');
+      } catch (e) {
+        console.error('Splash Error =>', e);
+      }
     };
 
     checkAuthAndNavigate();
@@ -170,7 +192,7 @@ export default function TizzyGo() {
               },
             ]}
           >
-            Tap anywhere to hearing
+            {'Tap anywhere to hearing'}
           </Animated.Text>
 
           <Animated.Text

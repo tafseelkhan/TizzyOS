@@ -11,14 +11,15 @@ import {
   ActivityIndicator,
   SafeAreaView,
   Platform,
-  PlatformColor,
   UIManager,
+  StatusBar,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import LinearGradient from 'react-native-linear-gradient';
 import { useNavigation, NavigationProp } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomNavigation from '../../home/BottomNavigation';
+import LottieView from 'lottie-react-native';
 
 // Enable LayoutAnimation for Android
 if (
@@ -39,10 +40,22 @@ type RootStackParamList = {
   Tracking: undefined;
   ShippingOrders: undefined;
   ShippingReviews: undefined;
+  // FWS Navigation Screens
+  ApplyFWS: undefined;
+  MyFWS: undefined;
+  FWSOrders: undefined;
+  FWSReviews: undefined;
+  // Employee Navigation Screens
+  EmployeeManagement: undefined;
+  EmployeeList: undefined;
+  EmployeeAttendance: undefined;
+  EmployeeLeave: undefined;
+  EmployeePayroll: undefined;
+  CreateEmployee: undefined; // Added for Apply Employee
   [key: string]: undefined | object;
 };
 
-// Types
+// Types for Shipping
 interface ShippingStats {
   shipments: number;
   delivered: number;
@@ -58,17 +71,50 @@ interface ShippingProfile {
   stats: ShippingStats;
 }
 
+// Types for FWS (Freight & Warehouse Services)
+interface FWSStats {
+  totalOrders: number;
+  completed: number;
+  inProgress: number;
+  pending: number;
+}
+
+interface FWSProfile {
+  id: string;
+  name: string;
+  image: string;
+  isActive: boolean;
+  stats: FWSStats;
+}
+
+// Types for Employee
+interface EmployeeStats {
+  totalEmployees: number;
+  active: number;
+  onLeave: number;
+  pendingApproval: number;
+}
+
+interface EmployeeProfile {
+  id: string;
+  name: string;
+  image: string;
+  isActive: boolean;
+  stats: EmployeeStats;
+}
+
 interface MenuItem {
   segment: string;
   title: string;
-  icon: React.ReactNode;
-  badge?: number;
+  iconName: string;
+  iconColor: string;
 }
 
 interface MenuSection {
   segment: string;
   title: string;
-  icon: React.ReactNode;
+  iconName: string;
+  iconColor: string;
   children: MenuItem[];
 }
 
@@ -83,7 +129,7 @@ const getImageUrl = (image?: string): string => {
 const shippingApi = {
   getShippingProfile: async (token: string): Promise<ShippingProfile> => {
     try {
-      const response = await fetch(`${BASE_URL}/api/shipping/profile`, {
+      const response = await fetch(`${BASE_URL}/api/shipping`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -129,35 +175,78 @@ const shippingApi = {
     return [
       {
         segment: 'shipping',
-        title: 'Shipping Dashboard',
-        icon: <Icon name="boat" size={24} color="#FFFFFF" />,
+        title: 'Shippings Management',
+        iconName: 'grid-outline',
+        iconColor: '#4F46E5',
         children: [
           {
             segment: 'apply-shipping',
-            title: 'Apply for Shipping ID',
-            icon: <Icon name="person-add" size={22} color="#2196F3" />,
-            badge: 2,
+            title: 'Apply for Shipping',
+            iconName: 'person-add-outline',
+            iconColor: '#4F46E5',
           },
           {
             segment: 'shipments',
             title: 'My Shipments',
-            icon: <Icon name="cube" size={22} color="#FF9800" />,
-            badge: 15,
+            iconName: 'cube-outline',
+            iconColor: '#F59E0B',
           },
           {
             segment: 'shipping-orders',
-            title: 'Shipping Orders',
-            icon: <Icon name="cart" size={22} color="#F44336" />,
-            badge: 8,
-          },
-          {
-            segment: 'shipping-reviews',
-            title: 'Shipping Reviews',
-            icon: <Icon name="star" size={22} color="#FF9800" />,
+            title: 'Orders Tracking',
+            iconName: 'cart-outline',
+            iconColor: '#EF4444',
           },
         ],
       },
     ];
+  },
+};
+
+// Employee API Service
+const employeeApi = {
+  getEmployeeProfile: async (token: string): Promise<EmployeeProfile> => {
+    try {
+      const response = await fetch(`${BASE_URL}/api/employee`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        return {
+          id: data._id || 'emp_123',
+          name: data.name || 'HR Department',
+          image: getImageUrl(data.image),
+          isActive: data.isActive || true,
+          stats: {
+            totalEmployees: data.stats?.totalEmployees || 45,
+            active: data.stats?.active || 30,
+            onLeave: data.stats?.onLeave || 8,
+            pendingApproval: data.stats?.pendingApproval || 7,
+          },
+        };
+      }
+    } catch (error) {
+      console.error('Error fetching employee profile:', error);
+    }
+
+    // Return mock data if API fails
+    return {
+      id: 'emp_123',
+      name: 'HR Department',
+      image: 'https://via.placeholder.com/150',
+      isActive: true,
+      stats: {
+        totalEmployees: 45,
+        active: 30,
+        onLeave: 8,
+        pendingApproval: 7,
+      },
+    };
   },
 };
 
@@ -177,34 +266,42 @@ const SidebarWithShipping: React.FC = () => {
     Record<string, boolean>
   >({
     shipping: true,
+    fws: true,
+    employee: true, // Added Employee section expanded by default
   });
   const [activeItem, setActiveItem] = useState<string>('');
   const [shippingProfile, setShippingProfile] =
     useState<ShippingProfile | null>(null);
+  const [fwsProfile, setFwsProfile] = useState<FWSProfile | null>(null);
+  const [employeeProfile, setEmployeeProfile] =
+    useState<EmployeeProfile | null>(null);
   const [menuData, setMenuData] = useState<MenuSection[]>([]);
   const [loading, setLoading] = useState(true);
+  const [imageError, setImageError] = useState(false);
   const [profileData, setProfileData] = useState({
     _id: '',
     name: 'User',
+    email: '',
+    phone: '',
     image: 'https://via.placeholder.com/150',
   });
 
-  // Colors - Blue theme
+  // Colors - Premium Modern Minimalist Theme
   const colors = {
-    background: isDark ? '#0F172A' : '#F8FAFC',
-    card: isDark ? '#1E293B' : '#FFFFFF',
-    textPrimary: isDark ? '#F1F5F9' : '#1E293B',
-    textSecondary: isDark ? '#94A3B8' : '#64748B',
-    textMuted: isDark ? '#64748B' : '#94A3B8',
-    border: isDark ? '#334155' : '#E2E8F0',
-    accent: '#1976D2',
-    accentLight: isDark ? '#2196F3' : '#1976D2',
-    gradientStart: isDark ? '#1976D2' : '#2196F3',
-    gradientEnd: isDark ? '#0D47A1' : '#1565C0',
-    badge: '#F44336',
-    success: '#4CAF50',
-    warning: '#FF9800',
-    info: '#2196F3',
+    background: isDark ? '#0F0F12' : '#F8F9FC',
+    card: isDark ? '#16161D' : '#FFFFFF',
+    textPrimary: isDark ? '#F3F4F6' : '#111827',
+    textSecondary: isDark ? '#9CA3AF' : '#4B5563',
+    textMuted: isDark ? '#6B7280' : '#9CA3AF',
+    border: isDark ? '#22222B' : '#E5E7EB',
+    accent: '#6366F1',
+    accentLight: '#818CF8',
+    gradientStart: isDark ? '#4F46E5' : '#6366F1',
+    gradientEnd: isDark ? '#4338CA' : '#4F46E5',
+    badge: '#EF4444',
+    success: '#10B981',
+    warning: '#F59E0B',
+    info: '#3B82F6',
   };
 
   // Fetch profile data
@@ -229,6 +326,8 @@ const SidebarWithShipping: React.FC = () => {
           setProfileData({
             _id: data?._id ?? '',
             name: data?.name ?? 'User',
+            email: data?.email ?? 'user@example.com',
+            phone: data?.phone ?? '+91 9876543210',
             image: normalized,
           });
         } else {
@@ -247,21 +346,25 @@ const SidebarWithShipping: React.FC = () => {
 
   // Load data from API
   useEffect(() => {
-    loadShippingData();
+    loadShippingFWSAndEmployeeData();
   }, []);
 
-  const loadShippingData = async () => {
+  const loadShippingFWSAndEmployeeData = async () => {
     try {
       setLoading(true);
       const token = await AsyncStorage.getItem('authToken');
-      const [profile, menu] = await Promise.all([
+
+      // Load all three data in parallel
+      const [shippingProfileData, shippingMenuData] = await Promise.all([
         shippingApi.getShippingProfile(token || ''),
         shippingApi.getShippingMenu(),
       ]);
-      setShippingProfile(profile);
-      setMenuData(menu);
+
+      setShippingProfile(shippingProfileData);
+      // Combine all three menus
+      setMenuData([...shippingMenuData]);
     } catch (error) {
-      console.error('Error loading shipping data:', error);
+      console.error('Error loading data:', error);
     } finally {
       setLoading(false);
     }
@@ -273,6 +376,7 @@ const SidebarWithShipping: React.FC = () => {
     setActiveItem(segment);
 
     switch (segment) {
+      // Shipping navigation
       case 'apply-shipping':
         navigation.navigate('ApplyShipping');
         break;
@@ -291,6 +395,7 @@ const SidebarWithShipping: React.FC = () => {
       case 'shipping-reviews':
         navigation.navigate('ShippingReviews');
         break;
+
       default:
         console.log('Navigate to:', segment);
     }
@@ -307,15 +412,25 @@ const SidebarWithShipping: React.FC = () => {
   if (loading) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
+        <StatusBar
+          barStyle={isDark ? 'light-content' : 'dark-content'}
+          backgroundColor={colors.background}
+          translucent={false}
+        />
         <View
           style={[
             styles.loadingContainer,
             { backgroundColor: colors.background },
           ]}
         >
-          <ActivityIndicator size="large" color={colors.accentLight} />
-          <Text style={[styles.loadingText, { color: colors.textPrimary }]}>
-            Loading Shipping Hub...
+          <LottieView
+            source={require('../../animations/lotties/Loading animation blue.json')}
+            autoPlay
+            loop
+            style={styles.lottieLoading}
+          />
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+            Finding your network.....
           </Text>
         </View>
       </SafeAreaView>
@@ -323,108 +438,160 @@ const SidebarWithShipping: React.FC = () => {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-      <ScrollView
-        style={[styles.container, { backgroundColor: colors.background }]}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-      >
-        {/* Header Section with Shipping Profile */}
-        <View style={styles.header}>
-          <LinearGradient
-            colors={[colors.gradientStart, colors.gradientEnd]}
-            style={styles.headerGradient}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <StatusBar
+        barStyle={isDark ? 'light-content' : 'dark-content'}
+        backgroundColor={colors.background}
+        translucent={false}
+      />
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
+        <ScrollView
+          style={[styles.container, { backgroundColor: colors.background }]}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
+        >
+          {/* Simple User Profile Section - Only Name and Image */}
+          <View
+            style={[
+              styles.userProfileContainer,
+              { backgroundColor: colors.card },
+            ]}
           >
-            <View style={styles.headerContent}>
-              {/* Shipping Profile Image and Name */}
-              <View style={styles.shippingProfileContainer}>
-                <Image
-                  source={{ uri: profileData.image }}
-                  style={styles.shippingImage}
+            {/* Profile Image with Lottie fallback */}
+            {imageError ? (
+              <View
+                style={[
+                  styles.userLottieContainer,
+                  { borderColor: colors.border },
+                ]}
+              >
+                <LottieView
+                  source={require('../../animations/lotties/Login icon (1).json')}
+                  autoPlay
+                  loop
+                  style={styles.userProfileLottie}
                 />
-                <View style={styles.shippingInfo}>
-                  <Text style={styles.shippingName}>{profileData.name}</Text>
+              </View>
+            ) : (
+              <Image
+                source={{ uri: profileData.image }}
+                style={[
+                  styles.userProfileImage,
+                  { borderColor: colors.border },
+                ]}
+                onError={() => setImageError(true)}
+              />
+            )}
+
+            <View style={styles.userInfo}>
+              <Text style={[styles.userName, { color: colors.textPrimary }]}>
+                {profileData.name}
+              </Text>
+              {/* Added Email */}
+              <View style={styles.userDetailRow}>
+                <Icon
+                  name="mail-outline"
+                  size={14}
+                  color={colors.textSecondary}
+                />
+                <Text
+                  style={[
+                    styles.userDetailText,
+                    { color: colors.textSecondary },
+                  ]}
+                >
+                  {profileData.email}
+                </Text>
+              </View>
+              {/* Added Phone */}
+              <View style={styles.userDetailRow}>
+                <Icon
+                  name="call-outline"
+                  size={14}
+                  color={colors.textSecondary}
+                />
+                <Text
+                  style={[
+                    styles.userDetailText,
+                    { color: colors.textSecondary },
+                  ]}
+                >
+                  {profileData.phone}
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Employee Stats Cards - COMMENTED OUT */}
+          {/* {employeeProfile && (
+            <View style={styles.statsContainer}>
+              <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+                <View style={[styles.statIconBg, { backgroundColor: '#EDE9FE' }]}>
+                  <Icon name="people-outline" size={18} color="#8B5CF6" />
                 </View>
+                <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
+                  {employeeProfile.stats.totalEmployees}
+                </Text>
+                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                  Total Employees
+                </Text>
               </View>
 
-              <Text style={styles.headerTitle}>Shipping Hub</Text>
-              <Text style={styles.headerSubtitle}>
-                Manage your shipments efficiently
-              </Text>
+              <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+                <View style={[styles.statIconBg, { backgroundColor: '#D1FAE5' }]}>
+                  <Icon name="checkmark-circle" size={18} color={colors.success} />
+                </View>
+                <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
+                  {employeeProfile.stats.active}
+                </Text>
+                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                  Active
+                </Text>
+              </View>
+
+              <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+                <View style={[styles.statIconBg, { backgroundColor: '#FEF3C7' }]}>
+                  <Icon name="time-outline" size={18} color={colors.warning} />
+                </View>
+                <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
+                  {employeeProfile.stats.onLeave}
+                </Text>
+                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                  On Leave
+                </Text>
+              </View>
             </View>
-          </LinearGradient>
-        </View>
+          )} */}
 
-        {/* Stats Cards */}
-        <View style={styles.statsContainer}>
-          <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-            <Icon name="cube" size={20} color={colors.warning} />
-            <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
-              {shippingProfile?.stats.shipments}
-            </Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-              Shipments
-            </Text>
-          </View>
-          <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-            <Icon name="checkmark-circle" size={20} color={colors.success} />
-            <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
-              {shippingProfile?.stats.delivered}
-            </Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-              Delivered
-            </Text>
-          </View>
-          <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-            <Icon name="navigate" size={20} color={colors.info} />
-            <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
-              {shippingProfile?.stats.inTransit}
-            </Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-              In Transit
-            </Text>
-          </View>
-        </View>
-
-        {/* Shipping Menu Sections */}
-        {menuData.map(section => (
-          <View key={section.segment} style={styles.section}>
-            <TouchableOpacity
-              style={styles.sectionHeader}
-              onPress={() => toggleSection(section.segment)}
-              activeOpacity={0.8}
-            >
-              <LinearGradient
-                colors={
-                  expandedSections[section.segment]
-                    ? [colors.gradientStart, colors.gradientEnd]
-                    : [colors.card, colors.card]
-                }
-                style={styles.sectionHeaderGradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
+          {menuData.map(section => (
+            <View key={section.segment} style={styles.section}>
+              <TouchableOpacity
+                style={styles.sectionHeader}
+                onPress={() => toggleSection(section.segment)}
+                activeOpacity={0.7}
               >
                 <View style={styles.sectionHeaderContent}>
                   <View style={styles.sectionHeaderLeft}>
                     <View
                       style={[
                         styles.iconContainer,
-                        expandedSections[section.segment] &&
-                          styles.iconContainerActive,
+                        {
+                          backgroundColor: isDark
+                            ? 'rgba(99, 102, 241, 0.15)'
+                            : 'rgba(99, 102, 241, 0.08)',
+                        },
                       ]}
                     >
-                      {section.icon}
+                      <Icon
+                        name={section.iconName}
+                        size={18}
+                        color={section.iconColor}
+                      />
                     </View>
                     <Text
                       style={[
                         styles.sectionTitle,
-                        {
-                          color: expandedSections[section.segment]
-                            ? '#FFF'
-                            : colors.textPrimary,
-                        },
+                        { color: colors.textPrimary },
                       ]}
                     >
                       {section.title}
@@ -436,58 +603,56 @@ const SidebarWithShipping: React.FC = () => {
                         ? 'chevron-up'
                         : 'chevron-down'
                     }
-                    size={20}
-                    color={
-                      expandedSections[section.segment]
-                        ? '#FFF'
-                        : colors.textSecondary
-                    }
+                    size={18}
+                    color={colors.textSecondary}
                   />
                 </View>
-              </LinearGradient>
-            </TouchableOpacity>
+              </TouchableOpacity>
 
-            {expandedSections[section.segment] && (
-              <View style={[styles.subMenu, { backgroundColor: colors.card }]}>
-                {section.children.map((item, index) => (
-                  <TouchableOpacity
-                    key={item.segment}
-                    style={[
-                      styles.subMenuItem,
-                      { borderBottomColor: colors.border },
-                      activeItem === item.segment && [
-                        styles.subMenuItemActive,
-                        {
-                          borderLeftColor: colors.accent,
-                          backgroundColor: isDark ? '#0D1B2A' : '#E3F2FD',
-                        },
-                      ],
-                      index === section.children.length - 1 &&
-                        styles.lastSubMenuItem,
-                    ]}
-                    onPress={() => handleItemPress(item.segment)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.subMenuItemLeft}>
-                      <View
-                        style={[
-                          styles.itemIconContainer,
-                          { backgroundColor: isDark ? '#0D1B2A' : '#E3F2FD' },
-                          activeItem === item.segment && {
-                            backgroundColor: colors.accent + '20',
-                          },
-                        ]}
-                      >
-                        {item.icon}
-                      </View>
-                      <View style={styles.textContainer}>
+              {expandedSections[section.segment] && (
+                <View
+                  style={[
+                    styles.subMenu,
+                    {
+                      backgroundColor: colors.card,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                >
+                  {section.children.map((item, index) => (
+                    <TouchableOpacity
+                      key={item.segment}
+                      style={[
+                        styles.subMenuItem,
+                        activeItem === item.segment && styles.subMenuItemActive,
+                      ]}
+                      onPress={() => handleItemPress(item.segment)}
+                      activeOpacity={0.6}
+                    >
+                      <View style={styles.subMenuItemLeft}>
+                        <View
+                          style={[
+                            styles.itemIconContainer,
+                            {
+                              backgroundColor: isDark
+                                ? 'rgba(255,255,255,0.03)'
+                                : '#F3F4F6',
+                            },
+                          ]}
+                        >
+                          <Icon
+                            name={item.iconName}
+                            size={20}
+                            color={item.iconColor}
+                          />
+                        </View>
                         <Text
                           style={[
                             styles.subMenuText,
                             {
                               color:
                                 activeItem === item.segment
-                                  ? colors.accentLight
+                                  ? colors.accent
                                   : colors.textPrimary,
                             },
                           ]}
@@ -495,48 +660,28 @@ const SidebarWithShipping: React.FC = () => {
                           {item.title}
                         </Text>
                       </View>
-                    </View>
-                    <View style={styles.rightContent}>
-                      {item.badge && (
-                        <View style={styles.badge}>
-                          <Text style={styles.badgeText}>{item.badge}</Text>
-                        </View>
-                      )}
-                      <Icon
-                        name="chevron-forward"
-                        size={16}
-                        color={
-                          activeItem === item.segment
-                            ? colors.accentLight
-                            : colors.textMuted
-                        }
-                      />
-                    </View>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-          </View>
-        ))}
+                      <View style={styles.rightContent}>
+                        <Icon
+                          name="chevron-forward"
+                          size={14}
+                          color={colors.textMuted}
+                        />
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+          ))}
 
-        {/* Refresh Button */}
-        <TouchableOpacity
-          style={[styles.refreshButton, { backgroundColor: colors.card }]}
-          onPress={loadShippingData}
-        >
-          <Icon name="refresh" size={20} color={colors.accentLight} />
-          <Text style={[styles.refreshText, { color: colors.accentLight }]}>
-            Refresh Data
-          </Text>
-        </TouchableOpacity>
+          {/* Extra space for bottom navigation */}
+          <View style={styles.bottomSpacer} />
+        </ScrollView>
 
-        {/* Extra space for bottom navigation */}
-        <View style={styles.bottomSpacer} />
-      </ScrollView>
-
-      {/* Bottom Navigation */}
-      <BottomNavigation activeTab={activeTab} setActiveTab={setActiveTab} />
-    </SafeAreaView>
+        {/* Bottom Navigation */}
+        <BottomNavigation activeTab={activeTab} setActiveTab={setActiveTab} />
+      </SafeAreaView>
+    </View>
   );
 };
 
@@ -554,123 +699,110 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   loadingText: {
-    marginTop: 12,
+    marginTop: 16,
     fontSize: 16,
-    fontWeight: '500',
+    fontFamily: Platform.OS === 'ios' ? 'System' : 'Poppins-Medium',
+    letterSpacing: 0.3,
   },
-  header: {
-    borderRadius: 20,
-    margin: 16,
-    marginBottom: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.1,
-    shadowRadius: 20,
-    elevation: 10,
+  lottieLoading: {
+    width: 120,
+    height: 120,
   },
-  headerGradient: {
-    borderRadius: 20,
-    padding: 24,
-  },
-  headerContent: {
-    alignItems: 'center',
-  },
-  shippingProfileContainer: {
+  // Premium Modern Header Structure
+  userProfileContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    padding: 16,
-    borderRadius: 20,
-    marginBottom: 16,
-    width: '100%',
+    marginHorizontal: 16,
+    borderRadius: 24,
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+    marginTop: Platform.OS === 'ios' ? 20 : 16,
+    marginBottom: 20,
+    shadowColor: '#5356FB',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.04,
+    shadowRadius: 16,
+    elevation: 4,
   },
-  shippingImage: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.3)',
+  userProfileImage: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    borderWidth: 2.5,
   },
-  shippingInfo: {
-    marginLeft: 12,
+  userLottieContainer: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    overflow: 'hidden',
+    borderWidth: 2.5,
+  },
+  userProfileLottie: {
+    width: 68,
+    height: 68,
+  },
+  userInfo: {
+    marginLeft: 18,
     flex: 1,
   },
-  shippingName: {
-    color: '#FFF',
-    fontSize: 18,
+  userName: {
+    fontSize: 20,
     fontWeight: '700',
-    marginBottom: 4,
+    marginBottom: 6,
+    letterSpacing: -0.4,
   },
-  activeStatus: {
+  userDetailRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginTop: 3,
   },
-  activeDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  activeText: {
-    color: 'rgba(255,255,255,0.8)',
-    fontSize: 14,
+  userDetailText: {
+    fontSize: 13,
+    marginLeft: 8,
     fontWeight: '500',
-  },
-  headerTitle: {
-    color: '#FFF',
-    fontSize: 28,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  headerSubtitle: {
-    color: 'rgba(255,255,255,0.8)',
-    fontSize: 16,
-    fontWeight: '500',
-    textAlign: 'center',
+    fontFamily: Platform.OS === 'ios' ? 'System' : 'Roboto',
   },
   statsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    marginBottom: 24,
+    marginBottom: 16,
+    gap: 12,
   },
   statCard: {
     borderRadius: 16,
-    padding: 16,
+    padding: 14,
     alignItems: 'center',
     flex: 1,
-    marginHorizontal: 4,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 5,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  statIconBg: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
   },
   statNumber: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '700',
-    marginTop: 8,
+    marginBottom: 2,
   },
   statLabel: {
-    fontSize: 12,
-    marginTop: 4,
+    fontSize: 11,
   },
   section: {
     marginBottom: 16,
     marginHorizontal: 16,
   },
   sectionHeader: {
-    borderRadius: 16,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 5,
-  },
-  sectionHeaderGradient: {
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
   },
   sectionHeaderContent: {
     flexDirection: 'row',
@@ -682,44 +814,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   iconContainer: {
-    width: 40,
-    height: 40,
+    width: 36,
+    height: 36,
     borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
-  },
-  iconContainerActive: {
-    backgroundColor: 'rgba(255,255,255,0.3)',
+    marginRight: 14,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: -0.2,
   },
   subMenu: {
-    borderRadius: 16,
+    borderRadius: 20,
     marginTop: 8,
-    paddingVertical: 8,
+    paddingVertical: 6,
+    borderWidth: 1,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.03,
     shadowRadius: 12,
-    elevation: 5,
+    elevation: 2,
   },
   subMenuItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginHorizontal: 6,
+    borderRadius: 14,
   },
   subMenuItemActive: {
-    borderLeftWidth: 4,
-  },
-  lastSubMenuItem: {
-    borderBottomWidth: 0,
+    backgroundColor: 'rgba(99, 102, 241, 0.08)',
   },
   subMenuItemLeft: {
     flexDirection: 'row',
@@ -727,63 +855,24 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   itemIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
-  },
-  textContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
+    marginRight: 14,
   },
   subMenuText: {
-    fontSize: 16,
-    fontWeight: '500',
-    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+    letterSpacing: -0.1,
   },
   rightContent: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  badge: {
-    backgroundColor: '#F44336',
-    borderRadius: 12,
-    minWidth: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 8,
-  },
-  badgeText: {
-    color: '#FFF',
-    fontSize: 10,
-    fontWeight: '700',
-    paddingHorizontal: 6,
-  },
-  refreshButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    margin: 16,
-    marginTop: 8,
-    padding: 16,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  refreshText: {
-    fontWeight: '600',
-    marginLeft: 8,
-    fontSize: 16,
-  },
   bottomSpacer: {
-    height: 80,
+    height: 90,
   },
 });
 

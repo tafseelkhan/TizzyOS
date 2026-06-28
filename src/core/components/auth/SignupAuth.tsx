@@ -1,4 +1,4 @@
-// SignupScreen.tsx (updated version)
+// SignupScreen.tsx - COMPLETE FIXED VERSION
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -36,15 +36,42 @@ const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 type NavigationProp = StackNavigationProp<RootStackParamList>;
 
+// ✅ Role options with icons
+const ROLE_OPTIONS = [
+  {
+    id: 'SELLER',
+    label: 'Seller',
+    icon: 'storefront-outline',
+    description: 'Sell products on TizzyGo',
+  },
+  {
+    id: 'FWS',
+    label: 'FWS',
+    icon: 'warehouse-outline',
+    description: 'Manage Fulfillment Warehouse',
+  },
+  {
+    id: 'SHIPPING',
+    label: 'Shipping',
+    icon: 'car-outline',
+    description: 'Deliver orders as Rider/Truck',
+  },
+];
+
 export default function SignupScreen() {
   const navigation = useNavigation<NavigationProp>();
   const [step, setStep] = useState<'form' | 'otp'>('form');
   const [emailOrPhone, setEmailOrPhone] = useState('');
   const [name, setName] = useState('');
+  const [selectedRole, setSelectedRole] = useState<string>('SELLER');
   const [otp, setOtp] = useState('');
   const [msg, setMsg] = useState('');
   const [waitTime, setWaitTime] = useState(0);
-  const [errors, setErrors] = useState({ name: '', emailOrPhone: '' });
+  const [errors, setErrors] = useState({
+    name: '',
+    emailOrPhone: '',
+    role: '',
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
@@ -61,6 +88,8 @@ export default function SignupScreen() {
   const nameInputTranslateX = useRef(new Animated.Value(-20)).current;
   const emailInputOpacity = useRef(new Animated.Value(0)).current;
   const emailInputTranslateX = useRef(new Animated.Value(-20)).current;
+  const roleInputOpacity = useRef(new Animated.Value(0)).current;
+  const roleInputTranslateX = useRef(new Animated.Value(-20)).current;
   const checkboxOpacity = useRef(new Animated.Value(0)).current;
   const checkboxTranslateY = useRef(new Animated.Value(20)).current;
   const buttonOpacity = useRef(new Animated.Value(0)).current;
@@ -166,6 +195,22 @@ export default function SignupScreen() {
       ]).start();
     }, 600);
 
+    // Role input animation
+    setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(roleInputOpacity, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+        Animated.timing(roleInputTranslateX, {
+          toValue: 0,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }, 700);
+
     // Checkbox animation
     setTimeout(() => {
       Animated.parallel([
@@ -208,10 +253,13 @@ export default function SignupScreen() {
 
   const handleEmailPhoneFocus = () => {
     setTimeout(() => {
-      scrollViewRef.current?.scrollTo({ y: 150, animated: true });
+      scrollViewRef.current?.scrollTo({ y: 200, animated: true });
     }, 100);
   };
 
+  // =============================================
+  // ✅ FIXED: handleSignup - Proper response handling
+  // =============================================
   const handleSignup = async () => {
     const validationErrors = validateSignupForm(name, emailOrPhone);
 
@@ -219,7 +267,13 @@ export default function SignupScreen() {
       setErrors({
         name: validationErrors.name || '',
         emailOrPhone: validationErrors.emailOrPhone || '',
+        role: '',
       });
+      return;
+    }
+
+    if (!selectedRole) {
+      setErrors({ ...errors, role: 'Please select a role' });
       return;
     }
 
@@ -232,18 +286,54 @@ export default function SignupScreen() {
     }
 
     setIsLoading(true);
-    const res = await signup({ identifier: emailOrPhone });
 
-    if (res.success && res.identifier) {
-      setMsg(`OTP sent to ${res.identifier}`);
-      setStep('otp');
-      setWaitTime(30);
-    } else {
-      Alert.alert('Error', res.msg || 'Something went wrong');
+    try {
+      const res = await signup({
+        identifier: emailOrPhone,
+        role: selectedRole,
+      });
+
+      console.log('📥 Signup Response:', JSON.stringify(res, null, 2));
+
+      // ✅ FIXED: Check response properly - Backend returns { msg: "OTP sent..." }
+      // Success if:
+      // 1. res.success === true
+      // 2. OR res.msg contains "OTP sent"
+      // 3. OR res.identifier exists
+      const isSuccess =
+        res?.success === true ||
+        res?.msg?.includes('OTP sent') ||
+        res?.identifier;
+
+      if (isSuccess) {
+        setMsg(res?.msg || `OTP sent to ${emailOrPhone}`);
+        setStep('otp'); // ✅ GO TO OTP SCREEN
+        setWaitTime(30);
+        // Optional: Show success alert
+        Alert.alert(
+          'Success',
+          'OTP sent successfully! Please check your messages.',
+        );
+      } else {
+        Alert.alert(
+          'Error',
+          res?.msg || 'Failed to send OTP. Please try again.',
+        );
+      }
+    } catch (error: any) {
+      console.error('❌ Signup error:', error);
+      Alert.alert(
+        'Error',
+        error?.message || 'Something went wrong. Please try again.',
+      );
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
+  // =============================================
+  // ✅ FIXED: handleVerify - Proper response handling
+  // =============================================
   const handleVerify = async () => {
     if (!validateOTP(otp)) {
       Alert.alert('OTP Required', 'Please enter a valid 6-digit OTP');
@@ -251,35 +341,71 @@ export default function SignupScreen() {
     }
 
     setIsLoading(true);
-    const res = await verifySignup({
-      identifier: emailOrPhone,
-      otp,
-      name,
-    });
 
-    if (res.success && res.token && res.user) {
-      navigation.navigate('Home');
-    } else {
-      Alert.alert('Error', res.msg || 'Invalid OTP');
+    try {
+      const res = await verifySignup({
+        identifier: emailOrPhone,
+        otp,
+        name,
+        role: selectedRole,
+      });
+
+      console.log('📥 Verify Response:', JSON.stringify(res, null, 2));
+
+      // ✅ FIXED: Check response properly
+      const isSuccess = res?.success === true && res?.token && res?.user;
+
+      if (isSuccess) {
+        Alert.alert('Success', 'Account created successfully!');
+        navigation.navigate('Home');
+      } else {
+        Alert.alert('Error', res?.msg || 'Invalid OTP. Please try again.');
+      }
+    } catch (error: any) {
+      console.error('❌ Verify error:', error);
+      Alert.alert(
+        'Error',
+        error?.message || 'Verification failed. Please try again.',
+      );
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
+  // =============================================
+  // ✅ FIXED: handleResendOTP - Proper response handling
+  // =============================================
   const handleResendOTP = async () => {
     if (waitTime > 0) return;
-    setIsLoading(true);
-    const res = await resendOtp({ identifier: emailOrPhone });
 
-    if (res.success && res.identifier) {
-      setMsg(`OTP resent to ${res.identifier}`);
-      setWaitTime(30);
-    } else {
-      Alert.alert('Error', res.msg || 'Failed to resend OTP');
+    setIsLoading(true);
+
+    try {
+      const res = await resendOtp({ identifier: emailOrPhone });
+
+      console.log('📥 Resend Response:', JSON.stringify(res, null, 2));
+
+      const isSuccess =
+        res?.success === true ||
+        res?.msg?.includes('OTP sent') ||
+        res?.identifier;
+
+      if (isSuccess) {
+        setMsg(res?.msg || `OTP resent to ${emailOrPhone}`);
+        setWaitTime(30);
+        Alert.alert('Success', 'OTP resent successfully!');
+      } else {
+        Alert.alert('Error', res?.msg || 'Failed to resend OTP');
+      }
+    } catch (error: any) {
+      console.error('❌ Resend error:', error);
+      Alert.alert('Error', error?.message || 'Failed to resend OTP');
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
-  // Animated styles (same as before)
+  // Animated styles
   const headerAnimatedStyle = {
     opacity: headerOpacity,
     transform: [{ translateY: headerTranslateY }],
@@ -300,6 +426,11 @@ export default function SignupScreen() {
     transform: [{ translateX: emailInputTranslateX }],
   };
 
+  const roleInputAnimatedStyle = {
+    opacity: roleInputOpacity,
+    transform: [{ translateX: roleInputTranslateX }],
+  };
+
   const checkboxAnimatedStyle = {
     opacity: checkboxOpacity,
     transform: [{ translateY: checkboxTranslateY }],
@@ -313,6 +444,52 @@ export default function SignupScreen() {
   const lottieAnimatedStyle = {
     opacity: lottieOpacity,
   };
+
+  // ✅ Render Role Selection
+  const renderRoleSelection = () => (
+    <Animated.View style={[styles.roleContainer, roleInputAnimatedStyle]}>
+      <Text style={styles.inputLabel}>Select Your Role *</Text>
+      <View style={styles.roleOptionsContainer}>
+        {ROLE_OPTIONS.map(role => (
+          <TouchableOpacity
+            key={role.id}
+            style={[
+              styles.roleOption,
+              selectedRole === role.id && styles.roleOptionSelected,
+            ]}
+            onPress={() => {
+              setSelectedRole(role.id);
+              setErrors({ ...errors, role: '' });
+            }}
+            activeOpacity={0.8}
+          >
+            <View style={styles.roleIconContainer}>
+              <Icon
+                name={role.icon}
+                size={24}
+                color={selectedRole === role.id ? '#3b82f6' : '#9ca3af'}
+              />
+            </View>
+            <Text
+              style={[
+                styles.roleLabel,
+                selectedRole === role.id && styles.roleLabelSelected,
+              ]}
+            >
+              {role.label}
+            </Text>
+            <Text style={styles.roleDescription}>{role.description}</Text>
+            {selectedRole === role.id && (
+              <View style={styles.roleCheckmark}>
+                <Icon name="checkmark-circle" size={20} color="#3b82f6" />
+              </View>
+            )}
+          </TouchableOpacity>
+        ))}
+      </View>
+      {errors.role ? <Text style={styles.errorText}>{errors.role}</Text> : null}
+    </Animated.View>
+  );
 
   return (
     <>
@@ -353,7 +530,7 @@ export default function SignupScreen() {
               </Animated.View>
             )}
 
-            {/* Solid Switch Tabs - Now with real vector icons */}
+            {/* Tabs */}
             <View style={styles.tabsContainer}>
               <TouchableOpacity style={[styles.tab, styles.tabActive]}>
                 <Icon
@@ -378,7 +555,7 @@ export default function SignupScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Solid Form Container */}
+            {/* Form Container */}
             <Animated.View style={[styles.formContainer, formAnimatedStyle]}>
               {step === 'form' ? (
                 <View style={styles.formContent}>
@@ -390,7 +567,7 @@ export default function SignupScreen() {
                       nameInputAnimatedStyle,
                     ]}
                   >
-                    <Text style={styles.inputLabel}>Full Name</Text>
+                    <Text style={styles.inputLabel}>Full Name *</Text>
                     <View style={styles.inputWrapper}>
                       <FontAwesome
                         name="user-o"
@@ -423,7 +600,7 @@ export default function SignupScreen() {
                       emailInputAnimatedStyle,
                     ]}
                   >
-                    <Text style={styles.inputLabel}>Email or Phone</Text>
+                    <Text style={styles.inputLabel}>Email or Phone *</Text>
                     <View style={styles.inputWrapper}>
                       <MaterialIcon
                         name="email"
@@ -452,6 +629,9 @@ export default function SignupScreen() {
                       </Text>
                     ) : null}
                   </Animated.View>
+
+                  {/* ✅ Role Selection */}
+                  {renderRoleSelection()}
 
                   {/* Checkbox - Terms & Privacy */}
                   <Animated.View
@@ -895,5 +1075,50 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     fontSize: 14,
     marginLeft: 4,
+  },
+  // ✅ Role Selection Styles
+  roleContainer: {
+    marginBottom: 8,
+  },
+  roleOptionsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  roleOption: {
+    flex: 1,
+    backgroundColor: '#f9fafb',
+    borderWidth: 2,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    padding: 12,
+    alignItems: 'center',
+    position: 'relative',
+  },
+  roleOptionSelected: {
+    borderColor: '#3b82f6',
+    backgroundColor: '#eff6ff',
+  },
+  roleIconContainer: {
+    marginBottom: 6,
+  },
+  roleLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6b7280',
+    marginBottom: 2,
+  },
+  roleLabelSelected: {
+    color: '#1f2937',
+  },
+  roleDescription: {
+    fontSize: 10,
+    color: '#9ca3af',
+    textAlign: 'center',
+  },
+  roleCheckmark: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
   },
 });

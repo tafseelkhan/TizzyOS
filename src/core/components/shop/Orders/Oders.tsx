@@ -1,20 +1,28 @@
-import React, { useState } from 'react';
+// SellerOrdersScreen.tsx - FULLY FIXED FOR BOTH SELLER & FWS
+
+import React, {
+  useState,
+  useRef,
+  useMemo,
+  useCallback,
+  useEffect,
+} from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
-  TouchableOpacity,
   RefreshControl,
+  TouchableOpacity,
   Alert,
   ActivityIndicator,
   SafeAreaView,
   StatusBar,
   Dimensions,
-  Modal,
   FlatList,
   Image,
   Platform,
+  Modal,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
@@ -22,25 +30,21 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { useTheme } from '../../../contexts/theme/ThemeContext';
 
-// Import vector icons from react-native-vector-icons
+// Import vector icons
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
-import FontAwesome5 from 'react-native-vector-icons/FontAwesome5';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import AntDesign from 'react-native-vector-icons/AntDesign';
 
-// Import Haptics from react-native-haptic-feedback
+// Import Haptics
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 
-const { width } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
 
-// Haptics configuration
 const hapticOptions = {
   enableVibrateFallback: true,
   ignoreAndroidSystemSettings: false,
 };
 
-// Type definitions
 type RootStackParamList = {
   SellerOrders: undefined;
   OrderDetails: { orderId: string; orderData?: Order };
@@ -82,6 +86,42 @@ type OrderItem = {
   productId?: string;
 };
 
+type TrackingHistoryEntry = {
+  status: string;
+  holderType: string;
+  holderId?: string;
+  timestamp?: string;
+  location?: string;
+  notes?: string;
+  scanInfo?: {
+    status: string;
+    holderType: string;
+    holderId: string;
+    holderName?: string;
+    note: string;
+    fwsProcessingStage?: string;
+    createdAt: string;
+  };
+};
+
+type QROwnershipEntry = {
+  holderId: string;
+  holderType: string;
+  holderName: string;
+  receivedAt: string;
+  releasedAt?: string;
+};
+
+type QRCodeData = {
+  showQR: boolean;
+  completed?: boolean;
+  message?: string;
+  qrCodeUrl?: string;
+  qrData?: string;
+  holderType?: string;
+  status?: string;
+};
+
 type Order = {
   _id?: string;
   orderId?: string;
@@ -93,11 +133,10 @@ type Order = {
   productPrice?: number;
   productMrp?: number;
   productFinalPrice?: number;
-  productGst?: number;
+  productGstRate?: number;
   deliveryCharge?: number;
   finalAmount?: number;
   status?: string;
-  deliveryStatus?: string;
   paymentIntentId?: string;
   paymentStatus?: string;
   buyerAddress?: BuyerAddress;
@@ -105,12 +144,23 @@ type Order = {
   createdAt?: string;
   updatedAt?: string;
   isConfirmed?: boolean;
+  fulfillmentType?: 'SELLER' | 'FWS';
+  currentHolderType?: string;
+  currentStatus?: string;
   shippingRider?: {
     id: string;
     name: string;
     phoneNumber?: string;
     vehicleType?: string;
   };
+  metadata?: {
+    idempotencyKey?: string;
+    cartId?: string;
+    createdAt?: string;
+  };
+  trackingHistory?: TrackingHistoryEntry[] | null;
+  qrOwnershipHistory?: QROwnershipEntry[] | null;
+  qrCodeData?: QRCodeData | null;
 };
 
 type OrderStats = {
@@ -126,6 +176,9 @@ type ShippingPartner = {
   rating: number;
   deliveryTime?: string;
   vehicleType: string;
+  vehicleBrand?: string;
+  vehicleModel?: string;
+  vehicleNumber?: string;
   price?: number;
   imageUrl?: string;
   vehicleImage?: string;
@@ -134,18 +187,18 @@ type ShippingPartner = {
   maxOrdersPerDay: number;
   currentOrders: number;
   orderStats?: OrderStats;
+  shippingType?: string;
+  city?: string;
+  state?: string;
+  kyc?: any;
 };
 
 const API_BASE_URL = 'http://172.20.10.12:5000';
 
-// Premium theme-based color definitions
+// Theme colors
 const getThemeColors = (isDark: boolean) => {
   return {
-    primaryGradient: isDark ? ['#667EEA', '#764BA2'] : ['#2196F3', '#21CBF3'],
-    successGradient: isDark ? ['#059669', '#10B981'] : ['#10B981', '#34D399'],
-    warningGradient: isDark ? ['#F59E0B', '#D97706'] : ['#F59E0B', '#FBBF24'],
     background: isDark ? '#0F172A' : '#F8FAFC',
-    chatbackground: isDark ? '#0F172A' : '#ffffffff',
     cardBackground: isDark ? '#1E293B' : '#FFFFFF',
     textPrimary: isDark ? '#F1F5F9' : '#0F172A',
     textSecondary: isDark ? '#94A3B8' : '#64748B',
@@ -156,15 +209,7 @@ const getThemeColors = (isDark: boolean) => {
     danger: '#EF4444',
     info: '#3B82F6',
     purple: '#8B5CF6',
-    pending: '#F59E0B',
-    confirmed: '#10B981',
-    pending_rider_acceptance: '#8B5CF6',
-    assigned_to_rider: '#3B82F6',
-    shipped: '#8B5CF6',
-    delivered: '#10B981',
-    cancelled: '#EF4444',
     border: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)',
-    shadow: isDark ? 'rgba(0, 0, 0, 0.3)' : 'rgba(0, 0, 0, 0.08)',
     headerBackground: isDark
       ? 'rgba(15, 23, 42, 0.95)'
       : 'rgba(248, 250, 252, 0.95)',
@@ -177,7 +222,242 @@ const getThemeColors = (isDark: boolean) => {
   };
 };
 
+// ==================================================
+// QR CODE MODAL COMPONENT
+// ==================================================
+const QRCodeModal: React.FC<{
+  visible: boolean;
+  onClose: () => void;
+  qrCodeUrl: string;
+  orderId: string;
+  colors: any;
+}> = ({ visible, onClose, qrCodeUrl, orderId, colors }) => {
+  return (
+    <Modal
+      visible={visible}
+      transparent={true}
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={styles.qrModalOverlay}>
+        <View
+          style={[
+            styles.qrModalContainer,
+            { backgroundColor: colors.cardBackground },
+          ]}
+        >
+          <View style={styles.qrModalHeader}>
+            <Text style={[styles.qrModalTitle, { color: colors.textPrimary }]}>
+              Handover QR Code
+            </Text>
+            <TouchableOpacity onPress={onClose} style={styles.qrCloseButton}>
+              <Ionicons name="close" size={24} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.qrCodeWrapper}>
+            {qrCodeUrl ? (
+              <Image
+                source={{ uri: qrCodeUrl }}
+                style={styles.qrCodeImage}
+                resizeMode="contain"
+              />
+            ) : (
+              <ActivityIndicator size="large" color={colors.primary} />
+            )}
+          </View>
+
+          <Text style={[styles.qrOrderId, { color: colors.textSecondary }]}>
+            Order ID: {orderId}
+          </Text>
+          <Text style={[styles.qrInstruction, { color: colors.textTertiary }]}>
+            Show this QR code to the rider/truck driver for handover
+            verification
+          </Text>
+
+          <TouchableOpacity
+            style={[styles.qrDoneButton, { backgroundColor: colors.primary }]}
+            onPress={onClose}
+          >
+            <Text style={styles.qrDoneButtonText}>Done</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+// ==================================================
+// ✅ FIXED: TRACKING HISTORY HELPER FUNCTIONS
+// ==================================================
+
+const hasSellerAccepted = (
+  trackingHistory?: TrackingHistoryEntry[] | null,
+): boolean => {
+  if (!trackingHistory) return false;
+  return trackingHistory.some(
+    entry =>
+      entry.status === 'waiting_for_assignment' &&
+      entry.holderType === 'SELLER',
+  );
+};
+
+const hasAssignmentSent = (
+  trackingHistory?: TrackingHistoryEntry[] | null,
+): boolean => {
+  if (!trackingHistory) return false;
+  return trackingHistory.some(entry => entry.status === 'assignment_sent');
+};
+
+const hasIntransitToFWS = (
+  trackingHistory?: TrackingHistoryEntry[] | null,
+): boolean => {
+  if (!trackingHistory) return false;
+  return trackingHistory.some(entry => entry.status === 'in_transit_to_fws');
+};
+
+const hasReceivedAtFWS = (
+  trackingHistory?: TrackingHistoryEntry[] | null,
+): boolean => {
+  if (!trackingHistory) return false;
+  return trackingHistory.some(entry => entry.status === 'received_at_fws');
+};
+
+const hasScannedAtFWS = (
+  trackingHistory?: TrackingHistoryEntry[] | null,
+): boolean => {
+  if (!trackingHistory) return false;
+  return trackingHistory.some(entry => entry.status === 'scanned_at_fws');
+};
+
+const hasReadyForDispatch = (
+  trackingHistory?: TrackingHistoryEntry[] | null,
+): boolean => {
+  if (!trackingHistory) return false;
+  return trackingHistory.some(entry => entry.status === 'ready_for_dispatch');
+};
+
+const hasInTransit = (
+  trackingHistory?: TrackingHistoryEntry[] | null,
+): boolean => {
+  if (!trackingHistory) return false;
+  return trackingHistory.some(entry => entry.status === 'in_transit');
+};
+
+const isOrderDelivered = (
+  trackingHistory?: TrackingHistoryEntry[] | null,
+): boolean => {
+  if (!trackingHistory) return false;
+  return trackingHistory.some(entry => entry.status === 'delivered');
+};
+
+// ✅ FIXED: Get Delivery Status Text - DELIVERED FIRST PRIORITY
+const getDeliveryStatusText = (order: Order): string => {
+  const trackingHistory = order.trackingHistory;
+
+  // 🔴 HIGHEST PRIORITY: Check delivered first
+  if (isOrderDelivered(trackingHistory)) return 'Delivered';
+  if (hasInTransit(trackingHistory)) return 'In Transit';
+  if (hasReadyForDispatch(trackingHistory)) return 'Ready for Dispatch';
+  if (hasScannedAtFWS(trackingHistory)) return 'Scanned at FWS';
+  if (hasReceivedAtFWS(trackingHistory)) return 'Received at FWS';
+  if (hasIntransitToFWS(trackingHistory)) return 'In Transit to FWS';
+  if (hasAssignmentSent(trackingHistory)) return 'Assignment Sent';
+  if (hasSellerAccepted(trackingHistory)) return 'Accepted';
+
+  return 'Pending ⏳';
+};
+
+// ✅ FIXED: Get Delivery Status Color - DELIVERED FIRST PRIORITY
+const getDeliveryStatusColor = (order: Order): string => {
+  const trackingHistory = order.trackingHistory;
+
+  // 🔴 HIGHEST PRIORITY: Delivered = Green
+  if (isOrderDelivered(trackingHistory)) return '#10B981';
+  if (hasInTransit(trackingHistory)) return '#3B82F6';
+  if (hasReadyForDispatch(trackingHistory)) return '#8B5CF6';
+  if (hasScannedAtFWS(trackingHistory)) return '#06B6D4';
+  if (hasReceivedAtFWS(trackingHistory)) return '#10B981';
+  if (hasIntransitToFWS(trackingHistory)) return '#F59E0B';
+  if (hasAssignmentSent(trackingHistory)) return '#F59E0B';
+  if (hasSellerAccepted(trackingHistory)) return '#3B82F6';
+
+  return '#F59E0B';
+};
+
+// ==================================================
+// QR CODE BUTTON LOGIC - FIXED FOR FWS
+// ==================================================
+const shouldShowQRCodeButton = (order: Order): boolean => {
+  const trackingHistory = order.trackingHistory;
+  const qrOwnershipHistory = order.qrOwnershipHistory;
+  const currentHolderType = order.currentHolderType;
+
+  if (!trackingHistory) return false;
+
+  // Don't show if delivered
+  if (isOrderDelivered(trackingHistory)) return false;
+
+  // ✅ CRITICAL: Only show QR if current holder is SELLER
+  if (currentHolderType && currentHolderType !== 'SELLER') {
+    return false;
+  }
+
+  // ✅ Check QR ownership history - last holder must be SELLER with no release
+  if (qrOwnershipHistory && qrOwnershipHistory.length > 0) {
+    const lastHolder = qrOwnershipHistory[qrOwnershipHistory.length - 1];
+    if (lastHolder.holderType !== 'SELLER') {
+      return false;
+    }
+    if (lastHolder.releasedAt) {
+      return false;
+    }
+  }
+
+  // For FWS fulfillment: Show QR when in_transit_to_fws
+  if (order.fulfillmentType === 'FWS') {
+    return hasIntransitToFWS(trackingHistory);
+  }
+
+  // For SELLER fulfillment: Show QR when assignment_sent
+  if (order.fulfillmentType === 'SELLER') {
+    return hasAssignmentSent(trackingHistory);
+  }
+
+  return false;
+};
+
+// ==================================================
+// COMPLETION MESSAGE - FIXED FOR FWS
+// ==================================================
+const getCompletionMessage = (order: Order): string | null => {
+  const trackingHistory = order.trackingHistory;
+
+  // If delivered, show completion for both FWS and SELLER
+  if (isOrderDelivered(trackingHistory)) {
+    return 'Order delivered successfully!';
+  }
+
+  // For FWS fulfillment: Show completion when FWS received
+  if (order.fulfillmentType === 'FWS') {
+    if (hasReceivedAtFWS(trackingHistory) || hasScannedAtFWS(trackingHistory)) {
+      return 'Parcel received at FWS warehouse! Your work is done.';
+    }
+  }
+
+  // For SELLER fulfillment: Show completion when handed to rider/truck
+  if (order.fulfillmentType === 'SELLER') {
+    if (hasInTransit(trackingHistory)) {
+      return 'Your work is done! Parcel handed over to delivery partner.';
+    }
+  }
+
+  return null;
+};
+
+// ==================================================
 // Manual Shipping Selection Modal Component
+// ==================================================
 const ManualShippingModal: React.FC<{
   visible: boolean;
   onClose: () => void;
@@ -186,22 +466,14 @@ const ManualShippingModal: React.FC<{
   colors: any;
   isDark: boolean;
   authToken: string | null;
-}> = ({
-  visible,
-  onClose,
-  onSelectPartner,
-  order,
-  colors,
-  isDark,
-  authToken,
-}) => {
+}> = ({ visible, onClose, onSelectPartner, order, colors, authToken }) => {
   const [shippingPartners, setShippingPartners] = useState<ShippingPartner[]>(
     [],
   );
   const [loadingPartners, setLoadingPartners] = useState<boolean>(true);
   const [selectedPartner, setSelectedPartner] = useState<string | null>(null);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (visible && order && authToken) {
       fetchShippingPartners();
     } else {
@@ -214,112 +486,86 @@ const ManualShippingModal: React.FC<{
   const fetchShippingPartners = async () => {
     try {
       setLoadingPartners(true);
-
-      console.log('🔍 Fetching shipping partners...');
-      console.log('📱 Auth Token Present:', !!authToken);
-      console.log('📦 Order ID:', order?.orderId);
-
-      if (!authToken) {
-        console.error('❌ No auth token available');
-        setShippingPartners([]);
-        return;
-      }
-
-      const apiUrl = `${API_BASE_URL}/api/shipping/available-riders`;
-
+      const apiUrl = `${API_BASE_URL}/api/shipping/available-shipping`;
       const headers = {
         Authorization: `Bearer ${authToken}`,
         'Content-Type': 'application/json',
       };
-
-      const response = await axios.get(apiUrl, {
-        headers,
-        timeout: 10000,
-      });
+      const response = await axios.get(apiUrl, { headers, timeout: 10000 });
 
       let ridersArray: any[] = [];
-
       if (response.data) {
-        if (response.data.success && Array.isArray(response.data.riders)) {
-          ridersArray = response.data.riders;
+        if (
+          response.data.success &&
+          Array.isArray(response.data.shippingPartners)
+        ) {
+          ridersArray = response.data.shippingPartners;
         } else if (Array.isArray(response.data)) {
           ridersArray = response.data;
         } else if (
-          response.data.riders &&
-          !Array.isArray(response.data.riders)
+          response.data.partners &&
+          Array.isArray(response.data.partners)
         ) {
-          if (
-            typeof response.data.riders === 'object' &&
-            response.data.riders !== null
-          ) {
-            ridersArray = Object.values(response.data.riders);
-          }
+          ridersArray = response.data.partners;
         }
       }
 
       const mappedPartners: ShippingPartner[] = [];
-
       if (Array.isArray(ridersArray)) {
         ridersArray.forEach((rider: any, index: number) => {
           try {
-            const maxOrdersPerDay = rider.maxOrdersPerDay || 10;
-            const currentOrders = rider.currentOrders || 0;
-            const ordersRemaining = Math.max(
-              0,
-              maxOrdersPerDay - currentOrders,
-            );
-
-            const orderStats: OrderStats = rider.orderStats || {
-              assigned: currentOrders || 0,
-              delivered: rider.deliveredOrders || 0,
-              remaining: ordersRemaining > 0 ? ordersRemaining : 0,
-            };
-
-            const riderUserId = rider.userId || rider._id || `rider-${index}`;
-
             mappedPartners.push({
-              id: rider._id || rider.id || `rider-${index}-${Date.now()}`,
-              userId: riderUserId,
-              name: rider.fullName || rider.name || 'Delivery Partner',
-              rating: rider.rating || 4.0 + Math.random() * 0.5,
-              vehicleType: rider.vehicleType || 'Bike',
-              vehicleImage:
-                rider.vehicleImage ||
-                'https://storage.googleapis.com/tizzygo-os.firebasestorage.app/shipping/vehicle-icon.png',
-              price: rider.deliveryCharge || 50,
-              imageUrl: rider.profileImage,
-              isAvailable: rider.isAvailable !== false && ordersRemaining > 0,
-              phoneNumber: rider.phoneNumber || rider.contactNumber,
-              maxOrdersPerDay: maxOrdersPerDay,
-              currentOrders: currentOrders,
-              orderStats: orderStats,
+              id: rider._id || rider.id || `shipping-${index}`,
+              userId: rider.userId,
+              name: rider.name || 'Delivery Partner',
+              rating: rider.rating || 4.0,
+              vehicleType:
+                rider.vehicleCategory ||
+                (rider.shippingType === 'RIDER' ? 'Bike' : 'Truck'),
+              vehicleBrand: rider.vehicleBrand,
+              vehicleModel: rider.vehicleModel,
+              vehicleNumber: rider.vehicleNumber,
+              vehicleImage: rider.vehicleImage,
+              isAvailable: rider.isOnline && rider.isAvailable,
+              phoneNumber: rider.phoneNumber,
+              maxOrdersPerDay: rider.maxOrdersPerDay || 10,
+              currentOrders: rider.orderStats?.assigned || 0,
+              orderStats: rider.orderStats,
+              shippingType: rider.shippingType,
+              city: rider.city,
+              state: rider.state,
+              kyc: rider.kyc,
             });
           } catch (error) {
-            console.error(`❌ Error mapping rider ${index}:`, error);
+            console.error(`Error mapping partner ${index}:`, error);
           }
         });
       }
-
       setShippingPartners(mappedPartners);
     } catch (error: any) {
-      console.error('❌ Error fetching available riders:', error);
+      console.error('Error fetching shipping partners:', error);
       setShippingPartners([]);
     } finally {
       setLoadingPartners(false);
     }
   };
 
-  const handleTizzyChat = (partner: ShippingPartner) => {
-    ReactNativeHapticFeedback.trigger('selection', hapticOptions);
-    Alert.alert('TizzyChat', `Start chat with ${partner.name}`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Start Chat',
-        onPress: () => {
-          console.log('Starting chat with:', partner.name);
-        },
-      },
-    ]);
+  const handleSelectPartner = (partnerId: string, isAvailable: boolean) => {
+    if (isAvailable) {
+      ReactNativeHapticFeedback.trigger('selection', hapticOptions);
+      setSelectedPartner(partnerId);
+    }
+  };
+
+  const handleConfirm = () => {
+    if (selectedPartner) {
+      const partner = shippingPartners.find(p => p.id === selectedPartner);
+      if (partner) {
+        ReactNativeHapticFeedback.trigger('notificationSuccess', hapticOptions);
+        onSelectPartner(partner);
+        onClose();
+      }
+    }
   };
 
   const renderShippingPartner = ({ item }: { item: ShippingPartner }) => {
@@ -339,13 +585,9 @@ const ManualShippingModal: React.FC<{
             opacity: availabilityStatus ? 1 : 0.6,
           },
         ]}
-        onPress={() => {
-          if (availabilityStatus) {
-            ReactNativeHapticFeedback.trigger('selection', hapticOptions);
-            setSelectedPartner(item.id);
-          }
-        }}
+        onPress={() => handleSelectPartner(item.id, availabilityStatus)}
         disabled={!availabilityStatus}
+        activeOpacity={0.7}
       >
         <View style={styles.shippingPartnerHeader}>
           <View style={styles.shippingPartnerInfo}>
@@ -364,18 +606,22 @@ const ManualShippingModal: React.FC<{
                   ]}
                 >
                   <Ionicons
-                    name="bicycle-outline"
-                    size={20}
+                    name={
+                      item.vehicleType === 'Bike'
+                        ? 'bicycle-outline'
+                        : 'bus-outline'
+                    }
+                    size={24}
                     color={colors.primary}
                   />
                 </View>
               )}
             </View>
-
             <View style={styles.driverDetails}>
               <View style={styles.driverNameRow}>
                 <Text
                   style={[styles.driverName, { color: colors.textPrimary }]}
+                  numberOfLines={1}
                 >
                   {item.name}
                 </Text>
@@ -420,101 +666,16 @@ const ManualShippingModal: React.FC<{
                   • {item.vehicleType}
                 </Text>
               </View>
+              <View style={styles.capacityContainer}>
+                <Text
+                  style={[styles.capacityText, { color: colors.textTertiary }]}
+                >
+                  Orders: {item.currentOrders}/{item.maxOrdersPerDay}
+                </Text>
+              </View>
             </View>
           </View>
-
-          <View style={styles.capacityInfo}>
-            <Text
-              style={[
-                styles.capacityNumber,
-                {
-                  color:
-                    ordersRemaining > 3
-                      ? colors.success
-                      : ordersRemaining > 0
-                      ? colors.warning
-                      : colors.danger,
-                },
-              ]}
-            >
-              {ordersRemaining}/{item.maxOrdersPerDay}
-            </Text>
-            <Text
-              style={[styles.capacityLabel, { color: colors.textSecondary }]}
-            >
-              Orders Remaining
-            </Text>
-          </View>
         </View>
-
-        <View style={styles.orderStatsContainer}>
-          <View style={styles.orderStatItem}>
-            <View
-              style={[styles.orderStatDot, { backgroundColor: colors.primary }]}
-            />
-            <Text style={[styles.orderStatText, { color: colors.textPrimary }]}>
-              Assigned:{' '}
-              <Text style={{ fontWeight: '700' }}>
-                {item.orderStats?.assigned || 0}
-              </Text>
-            </Text>
-          </View>
-          <View style={styles.orderStatItem}>
-            <View
-              style={[styles.orderStatDot, { backgroundColor: colors.success }]}
-            />
-            <Text style={[styles.orderStatText, { color: colors.textPrimary }]}>
-              Delivered:{' '}
-              <Text style={{ fontWeight: '700' }}>
-                {item.orderStats?.delivered || 0}
-              </Text>
-            </Text>
-          </View>
-          <View style={styles.orderStatItem}>
-            <View
-              style={[
-                styles.orderStatDot,
-                {
-                  backgroundColor:
-                    item.orderStats?.remaining || 0 > 0
-                      ? colors.warning
-                      : colors.danger,
-                },
-              ]}
-            />
-            <Text style={[styles.orderStatText, { color: colors.textPrimary }]}>
-              Remaining:{' '}
-              <Text
-                style={{
-                  fontWeight: '700',
-                  color:
-                    item.orderStats?.remaining || 0 > 0
-                      ? colors.warning
-                      : colors.danger,
-                }}
-              >
-                {item.orderStats?.remaining || 0}
-              </Text>
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.shippingPartnerFooter}>
-          <TouchableOpacity
-            style={styles.chatButton}
-            onPress={() => handleTizzyChat(item)}
-            activeOpacity={0.8}
-          >
-            <View style={styles.chatButtonContent}>
-              <Image
-                source={require('../../../../assets/images/nex-logo.png')}
-                style={styles.chatIcon}
-              />
-              <Text style={styles.chatButtonText}>TizzyChat</Text>
-            </View>
-          </TouchableOpacity>
-        </View>
-
         {selectedPartner === item.id && (
           <View
             style={[
@@ -536,20 +697,14 @@ const ManualShippingModal: React.FC<{
     );
   };
 
-  if (!order) {
-    return null;
-  }
-
   return (
     <Modal
-      animationType="slide"
-      transparent={true}
       visible={visible}
+      transparent={true}
+      animationType="slide"
       onRequestClose={onClose}
     >
-      <View
-        style={[styles.modalOverlay, { backgroundColor: colors.modalOverlay }]}
-      >
+      <View style={styles.modalOverlay}>
         <View
           style={[
             styles.modalContainer,
@@ -567,7 +722,7 @@ const ManualShippingModal: React.FC<{
                 <Text
                   style={[styles.modalTitle, { color: colors.textPrimary }]}
                 >
-                  Select Delivery Rider
+                  Select Shipping Partner
                 </Text>
                 <Text
                   style={[
@@ -575,7 +730,7 @@ const ManualShippingModal: React.FC<{
                     { color: colors.textSecondary },
                   ]}
                 >
-                  Order: {order.orderId || 'N/A'}
+                  Order: {order?.orderId || 'N/A'}
                 </Text>
               </View>
             </View>
@@ -583,71 +738,17 @@ const ManualShippingModal: React.FC<{
               <Ionicons name="close" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
-
-          <View
-            style={[
-              styles.orderInfoCard,
-              { backgroundColor: colors.cardBackground },
-            ]}
-          >
-            <View style={styles.orderInfoRow}>
-              <View style={styles.orderInfoItem}>
-                <Text
-                  style={[
-                    styles.orderInfoLabel,
-                    { color: colors.textSecondary },
-                  ]}
-                >
-                  Delivery To
-                </Text>
-                <Text
-                  style={[styles.orderInfoValue, { color: colors.textPrimary }]}
-                >
-                  {order.buyerName || 'Customer'}
-                </Text>
-              </View>
-              <View style={styles.orderInfoItem}>
-                <Text
-                  style={[
-                    styles.orderInfoLabel,
-                    { color: colors.textSecondary },
-                  ]}
-                >
-                  Amount
-                </Text>
-                <Text
-                  style={[styles.orderInfoValue, { color: colors.success }]}
-                >
-                  ₹{order.finalAmount?.toFixed(2) || '0.00'}
-                </Text>
-              </View>
-            </View>
-            {order.buyerAddress?.address && (
-              <Text
-                style={[styles.addressText, { color: colors.textSecondary }]}
-              >
-                {order.buyerAddress.address.substring(0, 50)}...
-              </Text>
-            )}
-          </View>
-
           <Text style={[styles.partnersTitle, { color: colors.textPrimary }]}>
-            Available Riders (
-            {
-              shippingPartners.filter(
-                p => p.isAvailable && p.maxOrdersPerDay - p.currentOrders > 0,
-              ).length
-            }
-            )
+            Available Partners (
+            {shippingPartners.filter(p => p.isAvailable).length})
           </Text>
-
           {loadingPartners ? (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color={colors.primary} />
               <Text
                 style={[styles.loadingText, { color: colors.textSecondary }]}
               >
-                Finding available riders...
+                Finding available partners...
               </Text>
             </View>
           ) : shippingPartners.length === 0 ? (
@@ -663,7 +764,7 @@ const ManualShippingModal: React.FC<{
                   { color: colors.textPrimary },
                 ]}
               >
-                No riders available
+                No partners available
               </Text>
               <Text
                 style={[
@@ -683,7 +784,6 @@ const ManualShippingModal: React.FC<{
               showsVerticalScrollIndicator={false}
             />
           )}
-
           <View style={styles.modalActions}>
             <TouchableOpacity
               style={[
@@ -702,7 +802,6 @@ const ManualShippingModal: React.FC<{
                 Cancel
               </Text>
             </TouchableOpacity>
-
             <TouchableOpacity
               style={[
                 styles.modalButton,
@@ -714,20 +813,7 @@ const ManualShippingModal: React.FC<{
                   opacity: selectedPartner ? 1 : 0.5,
                 },
               ]}
-              onPress={() => {
-                if (selectedPartner) {
-                  const partner = shippingPartners.find(
-                    p => p.id === selectedPartner,
-                  );
-                  if (partner) {
-                    ReactNativeHapticFeedback.trigger(
-                      'notificationSuccess',
-                      hapticOptions,
-                    );
-                    onSelectPartner(partner);
-                  }
-                }
-              }}
+              onPress={handleConfirm}
               disabled={!selectedPartner}
             >
               <Ionicons name="checkmark" size={28} color="#FFFFFF" />
@@ -739,9 +825,11 @@ const ManualShippingModal: React.FC<{
   );
 };
 
-// Main SellerOrdersScreen Component
+// ==================================================
+// MAIN SELLER ORDERS SCREEN
+// ==================================================
 const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
-  const { isDark, resolvedTheme, theme } = useTheme();
+  const { isDark } = useTheme();
   const colors = getThemeColors(isDark);
 
   const [orders, setOrders] = useState<Order[]>([]);
@@ -749,6 +837,9 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [sellerId, setSellerId] = useState<string | null>(null);
   const [processingOrder, setProcessingOrder] = useState<string | null>(null);
+  const [processingFWSOrder, setProcessingFWSOrder] = useState<string | null>(
+    null,
+  );
   const [selectedTab, setSelectedTab] = useState<
     'all' | 'pending' | 'assigned'
   >('all');
@@ -756,18 +847,134 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
   const [showShippingModal, setShowShippingModal] = useState<boolean>(false);
   const [selectedOrderForShipping, setSelectedOrderForShipping] =
     useState<Order | null>(null);
+  const [qrModalVisible, setQrModalVisible] = useState<boolean>(false);
+  const [selectedQRCode, setSelectedQRCode] = useState<{
+    url: string;
+    orderId: string;
+  } | null>(null);
 
-  // Helper functions (keep all the existing helper functions - extractSellerIdFromToken, formatDate, mapApiOrderToUI, etc.)
-  // They remain the same as in your original code, just remove expo-haptics imports
+  // ==================================================
+  // QR CODE API
+  // ==================================================
+  const fetchQRCode = async (orderId: string): Promise<QRCodeData | null> => {
+    try {
+      const tokenToUse = authToken || (await AsyncStorage.getItem('authToken'));
+      if (!tokenToUse) return null;
+
+      const response = await axios.get(
+        `${API_BASE_URL}/api/delivery/tracking/${orderId}/qr`,
+        {
+          headers: { Authorization: `Bearer ${tokenToUse}` },
+          timeout: 10000,
+        },
+      );
+
+      if (response.data && response.data.success && response.data.data) {
+        return response.data.data;
+      }
+      return null;
+    } catch (error: any) {
+      console.error(`QR Code fetch error for ${orderId}:`, error.message);
+      return null;
+    }
+  };
+
+  const handleShowQRCode = async (order: Order) => {
+    ReactNativeHapticFeedback.trigger('impactMedium', hapticOptions);
+
+    const qrData = await fetchQRCode(order.orderId!);
+
+    if (!qrData) {
+      Alert.alert('Error', 'Unable to fetch QR code. Please try again.');
+      return;
+    }
+
+    if (!qrData.showQR) {
+      Alert.alert(
+        'Not Available',
+        qrData.message || 'QR code is not available for this order.',
+      );
+      return;
+    }
+
+    if (qrData.qrCodeUrl) {
+      setSelectedQRCode({ url: qrData.qrCodeUrl, orderId: order.orderId! });
+      setQrModalVisible(true);
+    } else {
+      Alert.alert('Error', 'QR code URL not found.');
+    }
+  };
+
+  // ==================================================
+  // TRACKING API INTEGRATION
+  // ==================================================
+  const fetchTrackingStatus = async (
+    orderId: string,
+  ): Promise<{
+    trackingHistory: TrackingHistoryEntry[] | null;
+    qrOwnershipHistory: QROwnershipEntry[] | null;
+  }> => {
+    try {
+      const tokenToUse = authToken || (await AsyncStorage.getItem('authToken'));
+      if (!tokenToUse)
+        return { trackingHistory: null, qrOwnershipHistory: null };
+
+      const response = await axios.get(
+        `${API_BASE_URL}/api/tracking/history/status`,
+        {
+          params: { orderId },
+          headers: { Authorization: `Bearer ${tokenToUse}` },
+          timeout: 10000,
+        },
+      );
+
+      if (response.data && response.data.success) {
+        return {
+          trackingHistory: response.data.trackingHistory || null,
+          qrOwnershipHistory: response.data.qrOwnershipHistory || null,
+        };
+      }
+      return { trackingHistory: null, qrOwnershipHistory: null };
+    } catch (error: any) {
+      console.error(
+        `Error fetching tracking for order ${orderId}:`,
+        error.message,
+      );
+      return { trackingHistory: null, qrOwnershipHistory: null };
+    }
+  };
+
+  // ==================================================
+  // SELLER LOGIC HELPERS - FIXED
+  // ==================================================
+  const shouldShowAcceptButton = (order: Order): boolean =>
+    !hasSellerAccepted(order.trackingHistory) &&
+    !isOrderDelivered(order.trackingHistory);
+
+  const shouldShowAssignButton = (order: Order): boolean => {
+    return (
+      order.fulfillmentType === 'SELLER' &&
+      hasSellerAccepted(order.trackingHistory) &&
+      !hasAssignmentSent(order.trackingHistory) &&
+      !isOrderDelivered(order.trackingHistory)
+    );
+  };
+
+  const shouldShowDeliverToFWSButton = (order: Order): boolean => {
+    return (
+      order.fulfillmentType === 'FWS' &&
+      hasSellerAccepted(order.trackingHistory) &&
+      !hasIntransitToFWS(order.trackingHistory) &&
+      !isOrderDelivered(order.trackingHistory)
+    );
+  };
 
   const extractSellerIdFromToken = async (): Promise<string | null> => {
     try {
       const storedToken = await AsyncStorage.getItem('authToken');
       if (!storedToken) return null;
       setAuthToken(storedToken);
-
       try {
-        // First try to parse as JSON
         const tokenData = JSON.parse(storedToken);
         const userId =
           tokenData.userId ||
@@ -779,51 +986,32 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
           return userId;
         }
       } catch (jsonError) {
-        // Token is not JSON, try JWT decode
         try {
           const tokenParts = storedToken.split('.');
           if (tokenParts.length === 3) {
             const payloadBase64 = tokenParts[1];
-
-            // ✅ FIX: Use base64 decode without atob or Buffer
-            // For React Native, we can use a simple base64 decode function
-            let payloadJson;
-
-            // Simple base64 decode function for React Native
             const base64Decode = (base64: string): string => {
-              // Replace non-url compatible chars with base64 standard chars
               let str = base64.replace(/-/g, '+').replace(/_/g, '/');
-              // Pad out with '=' characters
-              while (str.length % 4) {
-                str += '=';
-              }
-
-              // For React Native, we can use decodeURIComponent with atob polyfill
-              // Create a simple atob replacement
+              while (str.length % 4) str += '=';
               const chars =
                 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
               let output = '';
               str = str.replace(/[^A-Za-z0-9+/=]/g, '');
-
               for (let i = 0; i < str.length; i += 4) {
                 const enc1 = chars.indexOf(str[i]);
                 const enc2 = chars.indexOf(str[i + 1]);
                 const enc3 = chars.indexOf(str[i + 2]);
                 const enc4 = chars.indexOf(str[i + 3]);
-
                 const chr1 = (enc1 << 2) | (enc2 >> 4);
                 const chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
                 const chr3 = ((enc3 & 3) << 6) | enc4;
-
                 output += String.fromCharCode(chr1);
                 if (enc3 !== 64) output += String.fromCharCode(chr2);
                 if (enc4 !== 64) output += String.fromCharCode(chr3);
               }
-
               return decodeURIComponent(escape(output));
             };
-
-            payloadJson = base64Decode(payloadBase64);
+            const payloadJson = base64Decode(payloadBase64);
             const payload = JSON.parse(payloadJson);
             const userId = payload.userId || payload.sub || payload.id;
             if (userId) {
@@ -835,18 +1023,6 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
           console.error('Error decoding JWT:', jwtError);
         }
       }
-
-      // If still no ID found, try using token as is if it looks like an ID
-      if (
-        storedToken.length < 50 &&
-        !storedToken.includes('.') &&
-        !storedToken.includes(' ')
-      ) {
-        console.log('✅ Using token as sellerId (plain ID):', storedToken);
-        setSellerId(storedToken);
-        return storedToken;
-      }
-
       return null;
     } catch (error) {
       console.error('Error extracting sellerId:', error);
@@ -872,51 +1048,48 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     }
   };
 
-  const mapApiOrderToUI = (apiOrder: any): Order => {
-    let productId = apiOrder.productId;
-    if (!productId && apiOrder.items && apiOrder.items.length > 0) {
-      productId =
-        apiOrder.items[0].productId ||
-        apiOrder.items[0].productData?._id ||
-        apiOrder.items[0].productData?.id;
-    }
-    if (!productId) {
-      productId = apiOrder._id || `product_${Date.now()}`;
-    }
-
+  const mapApiOrderToUI = (
+    apiOrder: any,
+    trackingHistory?: TrackingHistoryEntry[] | null,
+    qrOwnershipHistory?: QROwnershipEntry[] | null,
+  ): Order => {
     return {
       _id: apiOrder._id,
       orderId: apiOrder.orderId,
-      productId: productId,
+      productId: apiOrder.productId,
+      sellerId: apiOrder.sellerId,
       userId: apiOrder.userId || apiOrder.buyerId,
       buyerName: apiOrder.buyerName,
       status: apiOrder.status,
-      deliveryStatus: apiOrder.deliveryStatus,
       paymentStatus: apiOrder.paymentStatus || apiOrder.status,
       createdAt: apiOrder.createdAt,
       updatedAt: apiOrder.updatedAt,
       finalAmount: apiOrder.finalAmount,
       productFinalPrice: apiOrder.productFinalPrice,
+      productPrice: apiOrder.productPrice,
+      productMrp: apiOrder.productMrp,
+      productGstRate: apiOrder.productGstRate,
+      deliveryCharge: apiOrder.deliveryCharge,
       items: apiOrder.items,
       buyerAddress: apiOrder.buyerAddress,
       sellerAddress: apiOrder.sellerAddress,
-      productPrice: apiOrder.productPrice,
-      productMrp: apiOrder.productMrp,
-      productGst: apiOrder.productGst,
-      deliveryCharge: apiOrder.deliveryCharge,
-      isConfirmed:
-        apiOrder.isConfirmed ||
-        apiOrder.status === 'confirmed' ||
-        apiOrder.status === 'approved',
+      isConfirmed: apiOrder.isConfirmed || apiOrder.status === 'confirmed',
       shippingRider: apiOrder.shippingRider || apiOrder.rider,
       paymentIntentId: apiOrder.paymentIntentId,
+      fulfillmentType: apiOrder.fulfillmentType,
+      metadata: apiOrder.metadata,
+      trackingHistory: trackingHistory || null,
+      qrOwnershipHistory: qrOwnershipHistory || null,
+      qrCodeData: null,
+      currentHolderType: apiOrder.currentHolderType || 'SELLER',
+      currentStatus: apiOrder.currentStatus || apiOrder.status,
     };
   };
 
   const fetchOrders = async (currentSellerId: string): Promise<void> => {
     try {
       if (!currentSellerId) {
-        console.error('❌ No sellerId provided');
+        console.error('No sellerId provided');
         Alert.alert('Error', 'Unable to get seller information');
         setLoading(false);
         setRefreshing(false);
@@ -929,7 +1102,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
         if (tokenToUse) {
           setAuthToken(tokenToUse);
         } else {
-          console.error('❌ No auth token available');
+          console.error('No auth token available');
           Alert.alert('Error', 'Authentication required. Please login again.');
           setLoading(false);
           setRefreshing(false);
@@ -942,50 +1115,44 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
         Authorization: `Bearer ${tokenToUse}`,
         'Content-Type': 'application/json',
       };
-
       const response = await axios.get(apiUrl, { headers, timeout: 10000 });
 
       let ordersArray: any[] = [];
       if (response.data) {
-        if (response.data.success && Array.isArray(response.data.orders)) {
+        if (response.data.success && Array.isArray(response.data.orders))
           ordersArray = response.data.orders;
-        } else if (Array.isArray(response.data)) {
-          ordersArray = response.data;
-        } else if (
-          response.data.orders &&
-          Array.isArray(response.data.orders)
-        ) {
+        else if (Array.isArray(response.data)) ordersArray = response.data;
+        else if (response.data.orders && Array.isArray(response.data.orders))
           ordersArray = response.data.orders;
-        }
       }
 
       const mappedOrders: Order[] = [];
-      if (Array.isArray(ordersArray)) {
-        ordersArray.forEach((order: any) => {
-          try {
-            mappedOrders.push(mapApiOrderToUI(order));
-          } catch (error) {
-            console.error('❌ Error mapping order:', error);
-          }
-        });
+      for (const order of ordersArray) {
+        try {
+          const { trackingHistory, qrOwnershipHistory } =
+            await fetchTrackingStatus(order.orderId);
+          mappedOrders.push(
+            mapApiOrderToUI(order, trackingHistory, qrOwnershipHistory),
+          );
+        } catch (error) {
+          console.error('Error processing order:', error);
+          mappedOrders.push(mapApiOrderToUI(order, null, null));
+        }
       }
-
       setOrders(mappedOrders);
     } catch (error: any) {
-      console.error('❌ Error fetching orders:', error);
+      console.error('Error fetching orders:', error);
       let errorMessage = 'Failed to fetch orders. Please try again.';
       if (error.response) {
         if (error.response.status === 401) {
           errorMessage = 'Session expired. Please login again.';
           await AsyncStorage.removeItem('authToken');
           setAuthToken(null);
-        } else if (error.response.status === 404) {
+        } else if (error.response.status === 404)
           errorMessage = 'Seller not found.';
-        } else if (error.response.status === 500) {
+        else if (error.response.status === 500)
           errorMessage = 'Server error. Please try again later.';
-        } else {
-          errorMessage = error.response.data?.message || errorMessage;
-        }
+        else errorMessage = error.response.data?.message || errorMessage;
       } else if (error.request) {
         errorMessage = 'Network error. Please check your internet connection.';
       }
@@ -997,100 +1164,405 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     }
   };
 
-  const extractProductIdFromOrder = (order: Order): string => {
-    if (order.productId && order.productId !== 'undefined') {
-      return order.productId;
-    }
-    if (order.items && order.items.length > 0) {
-      if (order.items[0].productId) return order.items[0].productId;
-      if (order.items[0].productData?._id)
-        return order.items[0].productData._id;
-      if (order.items[0].productData?.id) return order.items[0].productData.id;
-    }
-    return order._id || `fallback_product_${Date.now()}`;
-  };
+  const sellerAcceptOrder = async (order: Order): Promise<void> => {
+    try {
+      let tokenToUse = authToken;
+      if (!tokenToUse) {
+        tokenToUse = await AsyncStorage.getItem('authToken');
+        if (!tokenToUse) {
+          Alert.alert('Error', 'Authentication token not found');
+          return;
+        }
+        setAuthToken(tokenToUse);
+      }
 
-  const getOrderSection = (order: Order): 'pending' | 'assigned' | 'other' => {
-    const deliveryStatus = order.deliveryStatus?.toLowerCase() || '';
-    if (deliveryStatus === 'waiting_for_seller') {
-      return 'pending';
-    } else if (
-      deliveryStatus === 'pending_rider_accept' ||
-      deliveryStatus === 'assigned' ||
-      deliveryStatus === 'waiting_for_rider' ||
-      deliveryStatus === 'picked_up' ||
-      deliveryStatus === 'delivered'
-    ) {
-      return 'assigned';
-    }
-    return 'other';
-  };
+      setProcessingOrder(order._id || order.orderId || '');
+      const response = await axios.post(
+        `${API_BASE_URL}/api/delivery/tracking/shipping/seller/accept-order`,
+        { orderId: order.orderId },
+        {
+          headers: {
+            Authorization: `Bearer ${tokenToUse}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15000,
+        },
+      );
 
-  const getDeliveryStatusColor = (
-    deliveryStatus: string | undefined,
-  ): string => {
-    if (!deliveryStatus) return colors.textTertiary;
-    const statusLower = deliveryStatus.toLowerCase();
-    switch (statusLower) {
-      case 'waiting_for_seller':
-        return colors.warning;
-      case 'pending_rider_accept':
-        return colors.purple;
-      case 'assigned':
-        return colors.info;
-      case 'waiting_for_rider':
-        return colors.primary;
-      case 'picked_up':
-        return colors.purple;
-      case 'delivered':
-        return colors.success;
-      default:
-        return colors.textTertiary;
-    }
-  };
-
-  const formatDeliveryStatusText = (
-    deliveryStatus: string | undefined,
-  ): string => {
-    if (!deliveryStatus) return 'Waiting';
-    const statusMap: Record<string, string> = {
-      waiting_for_seller: 'Pending',
-      pending_rider_accept: 'Awaiting Rider',
-      assigned: 'Assigned',
-      waiting_for_rider: 'Rider En Route',
-      picked_up: 'Picked Up',
-      delivered: 'Delivered',
-    };
-    return statusMap[deliveryStatus.toLowerCase()] || deliveryStatus;
-  };
-
-  const getDeliveryStatusIcon = (deliveryStatus: string | undefined) => {
-    if (!deliveryStatus)
-      return <MaterialIcons name="access-time" size={12} color="#FFFFFF" />;
-    const statusLower = deliveryStatus.toLowerCase();
-    switch (statusLower) {
-      case 'waiting_for_seller':
-        return <MaterialIcons name="access-time" size={12} color="#FFFFFF" />;
-      case 'pending_rider_accept':
-      case 'assigned':
-      case 'waiting_for_rider':
-        return <MaterialIcons name="person" size={12} color="#FFFFFF" />;
-      case 'picked_up':
-        return (
-          <MaterialIcons name="local-shipping" size={12} color="#FFFFFF" />
+      if (response.data && response.data.success) {
+        ReactNativeHapticFeedback.trigger('notificationSuccess', hapticOptions);
+        Alert.alert(
+          'Success',
+          'Order accepted successfully! Now you can assign a shipping partner.',
         );
-      case 'delivered':
-        return <MaterialIcons name="check-circle" size={12} color="#FFFFFF" />;
-      default:
-        return <MaterialIcons name="warning" size={12} color="#FFFFFF" />;
+        if (order.orderId) {
+          const { trackingHistory, qrOwnershipHistory } =
+            await fetchTrackingStatus(order.orderId);
+          setOrders(prevOrders =>
+            prevOrders.map(o =>
+              o.orderId === order.orderId
+                ? {
+                    ...o,
+                    trackingHistory: trackingHistory || o.trackingHistory,
+                    qrOwnershipHistory:
+                      qrOwnershipHistory || o.qrOwnershipHistory,
+                  }
+                : o,
+            ),
+          );
+        }
+      } else {
+        throw new Error(response.data?.message || 'Failed to accept order');
+      }
+    } catch (error: any) {
+      console.error('Error accepting order:', error);
+      let errorMessage = 'Failed to accept order. Please try again.';
+      if (error.response)
+        errorMessage =
+          error.response.data?.error ||
+          error.response.data?.message ||
+          errorMessage;
+      else if (error.request)
+        errorMessage = 'Network error. Please check your connection.';
+      Alert.alert('Error', errorMessage);
+    } finally {
+      setProcessingOrder(null);
     }
   };
+
+  const sellerAssignShipping = async (
+    order: Order,
+    shippingPartner: ShippingPartner,
+  ): Promise<void> => {
+    try {
+      let tokenToUse = authToken;
+      if (!tokenToUse) {
+        tokenToUse = await AsyncStorage.getItem('authToken');
+        if (!tokenToUse) {
+          Alert.alert('Error', 'Authentication token not found');
+          return;
+        }
+        setAuthToken(tokenToUse);
+      }
+
+      setProcessingOrder(order._id || order.orderId || '');
+      let shippingTypeValue =
+        shippingPartner.shippingType ||
+        (shippingPartner.vehicleType?.toLowerCase() === 'bike'
+          ? 'RIDER'
+          : 'TRUCK');
+
+      const response = await axios.post(
+        `${API_BASE_URL}/api/delivery/tracking/shipping/seller/assign/auto-manual`,
+        {
+          orderId: order.orderId,
+          assignmentType: 'MANUAL',
+          shippingType: shippingTypeValue,
+          shippingId: shippingPartner.userId,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${tokenToUse}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15000,
+        },
+      );
+
+      if (response.data && response.data.success) {
+        ReactNativeHapticFeedback.trigger('notificationSuccess', hapticOptions);
+        Alert.alert(
+          'Success',
+          `${shippingPartner.vehicleType} assigned successfully!`,
+        );
+        if (order.orderId) {
+          const { trackingHistory, qrOwnershipHistory } =
+            await fetchTrackingStatus(order.orderId);
+          setOrders(prevOrders =>
+            prevOrders.map(o =>
+              o.orderId === order.orderId
+                ? {
+                    ...o,
+                    trackingHistory: trackingHistory || o.trackingHistory,
+                    qrOwnershipHistory:
+                      qrOwnershipHistory || o.qrOwnershipHistory,
+                  }
+                : o,
+            ),
+          );
+        }
+        setShowShippingModal(false);
+        setSelectedOrderForShipping(null);
+      } else {
+        throw new Error(
+          response.data?.message || 'Failed to assign shipping partner',
+        );
+      }
+    } catch (error: any) {
+      console.error('Error assigning shipping partner:', error);
+      Alert.alert(
+        'Error',
+        error.response?.data?.error ||
+          error.response?.data?.message ||
+          'Failed to assign shipping partner.',
+      );
+    } finally {
+      setProcessingOrder(null);
+    }
+  };
+
+  const promptForShippingTypeAndAutoAssign = (order: Order) => {
+    Alert.alert(
+      'Auto Assign Shipping',
+      'Please choose the type of vehicle for auto-assignment:',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: () =>
+            ReactNativeHapticFeedback.trigger('selection', hapticOptions),
+        },
+        {
+          text: 'Rider',
+          onPress: () => {
+            ReactNativeHapticFeedback.trigger('impactMedium', hapticOptions);
+            sellerAutoAssignWithType(order, 'RIDER');
+          },
+        },
+        {
+          text: 'Truck',
+          onPress: () => {
+            ReactNativeHapticFeedback.trigger('impactMedium', hapticOptions);
+            sellerAutoAssignWithType(order, 'TRUCK');
+          },
+        },
+      ],
+    );
+  };
+
+  const sellerAutoAssignWithType = async (
+    order: Order,
+    shippingType: 'RIDER' | 'TRUCK',
+  ): Promise<void> => {
+    try {
+      let tokenToUse = authToken;
+      if (!tokenToUse) {
+        tokenToUse = await AsyncStorage.getItem('authToken');
+        if (!tokenToUse) {
+          Alert.alert('Error', 'Authentication token not found');
+          return;
+        }
+        setAuthToken(tokenToUse);
+      }
+
+      setProcessingOrder(order._id || order.orderId || '');
+      const response = await axios.post(
+        `${API_BASE_URL}/api/delivery/tracking/shipping/seller/assign/auto-manual`,
+        { orderId: order.orderId, assignmentType: 'AUTO', shippingType },
+        {
+          headers: {
+            Authorization: `Bearer ${tokenToUse}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15000,
+        },
+      );
+
+      if (response.data && response.data.success) {
+        ReactNativeHapticFeedback.trigger('notificationSuccess', hapticOptions);
+        Alert.alert(
+          'Auto-Assign Success',
+          `${shippingType} automatically assigned.`,
+        );
+        if (order.orderId) {
+          const { trackingHistory, qrOwnershipHistory } =
+            await fetchTrackingStatus(order.orderId);
+          setOrders(prevOrders =>
+            prevOrders.map(o =>
+              o.orderId === order.orderId
+                ? {
+                    ...o,
+                    trackingHistory: trackingHistory || o.trackingHistory,
+                    qrOwnershipHistory:
+                      qrOwnershipHistory || o.qrOwnershipHistory,
+                  }
+                : o,
+            ),
+          );
+        }
+      } else {
+        throw new Error(
+          response.data?.message || 'Failed to auto-assign shipping partner',
+        );
+      }
+    } catch (error: any) {
+      console.error('Error auto-assigning:', error);
+      Alert.alert(
+        'Auto-Assign Failed',
+        error.response?.data?.error ||
+          error.response?.data?.message ||
+          'Auto-assignment failed. Please use manual mode.',
+      );
+    } finally {
+      setProcessingOrder(null);
+    }
+  };
+
+  const sellerDeliverToFWS = async (order: Order): Promise<void> => {
+    try {
+      let tokenToUse = authToken;
+      if (!tokenToUse) {
+        tokenToUse = await AsyncStorage.getItem('authToken');
+        if (!tokenToUse) {
+          Alert.alert('Error', 'Authentication token not found');
+          return;
+        }
+        setAuthToken(tokenToUse);
+      }
+
+      setProcessingFWSOrder(order._id || order.orderId || '');
+      const response = await axios.post(
+        `${API_BASE_URL}/api/delivery/tracking/shipping/seller/deliver-to-fws`,
+        { orderId: order.orderId },
+        {
+          headers: {
+            Authorization: `Bearer ${tokenToUse}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15000,
+        },
+      );
+
+      if (response.data && response.data.success) {
+        ReactNativeHapticFeedback.trigger('notificationSuccess', hapticOptions);
+        Alert.alert(
+          'Success',
+          'Order marked as Intransit To FWS successfully!',
+        );
+        if (order.orderId) {
+          const { trackingHistory, qrOwnershipHistory } =
+            await fetchTrackingStatus(order.orderId);
+          setOrders(prevOrders =>
+            prevOrders.map(o =>
+              o.orderId === order.orderId
+                ? {
+                    ...o,
+                    trackingHistory: trackingHistory || o.trackingHistory,
+                    qrOwnershipHistory:
+                      qrOwnershipHistory || o.qrOwnershipHistory,
+                  }
+                : o,
+            ),
+          );
+        }
+      } else {
+        throw new Error(response.data?.message || 'Failed to intransit to FWS');
+      }
+    } catch (error: any) {
+      console.error('Error intransit to FWS:', error);
+      Alert.alert(
+        'Error',
+        error.response?.data?.error ||
+          error.response?.data?.message ||
+          'Failed to intransit to FWS. Please try again.',
+      );
+    } finally {
+      setProcessingFWSOrder(null);
+    }
+  };
+
+  const handleAcceptOrder = (order: Order) => {
+    ReactNativeHapticFeedback.trigger('selection', hapticOptions);
+    Alert.alert(
+      'Accept Order',
+      'Do you want to accept this order? After acceptance, you can assign a shipping partner.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: () =>
+            ReactNativeHapticFeedback.trigger('selection', hapticOptions),
+        },
+        {
+          text: 'Accept Order',
+          onPress: () => {
+            ReactNativeHapticFeedback.trigger('impactMedium', hapticOptions);
+            sellerAcceptOrder(order);
+          },
+        },
+      ],
+    );
+  };
+
+  const handleAssignShipping = (order: Order) => {
+    ReactNativeHapticFeedback.trigger('selection', hapticOptions);
+    Alert.alert('Assign Shipping Partner', 'How would you like to assign?', [
+      {
+        text: 'Cancel',
+        style: 'cancel',
+        onPress: () =>
+          ReactNativeHapticFeedback.trigger('selection', hapticOptions),
+      },
+      {
+        text: 'AUTO Assign',
+        onPress: () => promptForShippingTypeAndAutoAssign(order),
+      },
+      {
+        text: 'MANUAL Select',
+        onPress: () => {
+          ReactNativeHapticFeedback.trigger('impactHeavy', hapticOptions);
+          setSelectedOrderForShipping(order);
+          setShowShippingModal(true);
+        },
+      },
+    ]);
+  };
+
+  const handleSelectShippingPartner = (shippingPartner: ShippingPartner) => {
+    if (selectedOrderForShipping)
+      sellerAssignShipping(selectedOrderForShipping, shippingPartner);
+  };
+
+  useFocusEffect(
+    React.useCallback(() => {
+      loadData();
+      return () => {};
+    }, []),
+  );
+
+  const loadData = async (): Promise<void> => {
+    setLoading(true);
+    const id = await extractSellerIdFromToken();
+    if (id) await fetchOrders(id);
+    else {
+      Alert.alert('Error', 'Unable to get seller information');
+      setLoading(false);
+    }
+  };
+
+  const onRefresh = async (): Promise<void> => {
+    ReactNativeHapticFeedback.trigger('impactLight', hapticOptions);
+    setRefreshing(true);
+    const id = sellerId || (await extractSellerIdFromToken());
+    if (id) await fetchOrders(id);
+    else {
+      setRefreshing(false);
+      Alert.alert('Error', 'Unable to get seller information');
+    }
+  };
+
+  const isOrderPending = (order: Order): boolean =>
+    !hasSellerAccepted(order.trackingHistory) &&
+    !isOrderDelivered(order.trackingHistory);
+
+  const isOrderAssigned = (order: Order): boolean =>
+    hasSellerAccepted(order.trackingHistory) &&
+    !isOrderDelivered(order.trackingHistory);
 
   const getPaymentStatusInfo = (order: Order) => {
     const paymentStatus =
       order.paymentStatus?.toLowerCase() || order.status?.toLowerCase() || '';
     const paymentIntentId = order.paymentIntentId;
-
     if (
       !paymentIntentId ||
       paymentIntentId === 'cod' ||
@@ -1102,7 +1574,6 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
         icon: <FontAwesome name="money" size={10} color="#FFFFFF" />,
       };
     }
-
     switch (paymentStatus) {
       case 'succeeded':
       case 'paid':
@@ -1135,259 +1606,6 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     }
   };
 
-  const autoAssignRider = async (order: Order): Promise<void> => {
-    try {
-      let tokenToUse = authToken;
-      if (!tokenToUse) {
-        tokenToUse = await AsyncStorage.getItem('authToken');
-        if (!tokenToUse) {
-          Alert.alert('Error', 'Authentication token not found');
-          return;
-        }
-        setAuthToken(tokenToUse);
-      }
-
-      setProcessingOrder(order._id || order.orderId || '');
-
-      const sellerAddress = order.sellerAddress || {};
-      const buyerAddress = order.buyerAddress || {};
-      const productId = extractProductIdFromOrder(order);
-
-      const requestData = {
-        orderId: order.orderId,
-        productId: productId,
-        mode: 'auto',
-        buyerName: order.buyerName || 'Customer',
-        sellerId: sellerId,
-        buyerId: order.userId,
-        finalAmount: order.finalAmount,
-        status: order.status,
-        sellerAddress: {
-          latitude: sellerAddress.latitude || 0,
-          longitude: sellerAddress.longitude || 0,
-          address: sellerAddress.address || 'Seller Address',
-        },
-        buyerAddress: {
-          latitude: buyerAddress.latitude || 0,
-          longitude: buyerAddress.longitude || 0,
-          address: buyerAddress.address || 'Buyer Address',
-        },
-      };
-
-      const response = await axios.post(
-        `${API_BASE_URL}/api/shipping/assign-rider`,
-        requestData,
-        {
-          headers: {
-            Authorization: `Bearer ${tokenToUse}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: 15000,
-        },
-      );
-
-      if (response.data && response.data.success) {
-        ReactNativeHapticFeedback.trigger('notificationSuccess', hapticOptions);
-        Alert.alert(
-          'Success',
-          'Rider assigned successfully! Rider will receive the delivery request.',
-        );
-        setOrders(prevOrders =>
-          prevOrders.map(o =>
-            o.orderId === order.orderId || o._id === order._id
-              ? {
-                  ...o,
-                  deliveryStatus: 'pending_rider_accept',
-                  isConfirmed: true,
-                  shippingRider: response.data.rider,
-                }
-              : o,
-          ),
-        );
-      } else {
-        throw new Error(response.data?.message || 'Failed to assign rider');
-      }
-    } catch (error: any) {
-      console.error('Error auto assigning rider:', error);
-      Alert.alert(
-        'Error',
-        error.response?.data?.message ||
-          'Failed to assign rider. Please try again.',
-      );
-    } finally {
-      setProcessingOrder(null);
-    }
-  };
-
-  const manualAssignRider = async (
-    order: Order,
-    shippingPartner: ShippingPartner,
-  ): Promise<void> => {
-    try {
-      let tokenToUse = authToken;
-      if (!tokenToUse) {
-        tokenToUse = await AsyncStorage.getItem('authToken');
-        if (!tokenToUse) {
-          Alert.alert('Error', 'Authentication token not found');
-          return;
-        }
-        setAuthToken(tokenToUse);
-      }
-
-      setProcessingOrder(order._id || order.orderId || '');
-
-      const sellerAddress = order.sellerAddress || {};
-      const buyerAddress = order.buyerAddress || {};
-      const productId = extractProductIdFromOrder(order);
-      const riderId = shippingPartner.id;
-
-      const requestData = {
-        orderId: order.orderId,
-        productId: productId,
-        mode: 'manual',
-        buyerName: order.buyerName || 'Customer',
-        status: order.status,
-        finalAmount: order.finalAmount,
-        sellerId: sellerId,
-        buyerId: order.userId,
-        sellerAddress: {
-          latitude: sellerAddress.latitude || 0,
-          longitude: sellerAddress.longitude || 0,
-          address: sellerAddress.address || 'Seller Address',
-        },
-        buyerAddress: {
-          latitude: buyerAddress.latitude || 0,
-          longitude: buyerAddress.longitude || 0,
-          address: buyerAddress.address || 'Buyer Address',
-        },
-        selectedRider: {
-          name: shippingPartner.name,
-          vehicleType: shippingPartner.vehicleType,
-        },
-        riderId: riderId,
-      };
-
-      const response = await axios.post(
-        `${API_BASE_URL}/api/shipping/assign-rider`,
-        requestData,
-        {
-          headers: {
-            Authorization: `Bearer ${tokenToUse}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: 15000,
-        },
-      );
-
-      if (response.data && response.data.success) {
-        ReactNativeHapticFeedback.trigger('notificationSuccess', hapticOptions);
-        Alert.alert(
-          'Success',
-          `Order assigned! ${shippingPartner.name} will receive the delivery request.`,
-        );
-        setOrders(prevOrders =>
-          prevOrders.map(o =>
-            o.orderId === order.orderId || o._id === order._id
-              ? {
-                  ...o,
-                  deliveryStatus: 'pending_rider_accept',
-                  isConfirmed: true,
-                  shippingRider: response.data.rider || shippingPartner,
-                }
-              : o,
-          ),
-        );
-        setShowShippingModal(false);
-        setSelectedOrderForShipping(null);
-      } else {
-        throw new Error(response.data?.message || 'Failed to assign rider');
-      }
-    } catch (error: any) {
-      console.error('Error manual assigning rider:', error);
-      Alert.alert(
-        'Error',
-        error.response?.data?.message ||
-          'Failed to assign rider. Please try again.',
-      );
-    } finally {
-      setProcessingOrder(null);
-    }
-  };
-
-  const handleApproveOrder = (order: Order) => {
-    ReactNativeHapticFeedback.trigger('selection', hapticOptions);
-    Alert.alert(
-      'Assign Delivery Rider',
-      'How would you like to assign rider?',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-          onPress: () =>
-            ReactNativeHapticFeedback.trigger('selection', hapticOptions),
-        },
-        {
-          text: 'AUTO Assign Rider',
-          onPress: () => {
-            ReactNativeHapticFeedback.trigger('impactMedium', hapticOptions);
-            autoAssignRider(order);
-          },
-        },
-        {
-          text: 'MANUAL Select Rider',
-          onPress: () => {
-            ReactNativeHapticFeedback.trigger('impactHeavy', hapticOptions);
-            setSelectedOrderForShipping(order);
-            setShowShippingModal(true);
-          },
-        },
-      ],
-    );
-  };
-
-  const handleSelectShippingPartner = (shippingPartner: ShippingPartner) => {
-    if (selectedOrderForShipping) {
-      manualAssignRider(selectedOrderForShipping, shippingPartner);
-    }
-  };
-
-  useFocusEffect(
-    React.useCallback(() => {
-      loadData();
-      return () => {};
-    }, []),
-  );
-
-  const loadData = async (): Promise<void> => {
-    setLoading(true);
-    const id = await extractSellerIdFromToken();
-    if (id) {
-      await fetchOrders(id);
-    } else {
-      Alert.alert('Error', 'Unable to get seller information');
-      setLoading(false);
-    }
-  };
-
-  const onRefresh = async (): Promise<void> => {
-    ReactNativeHapticFeedback.trigger('impactLight', hapticOptions);
-    setRefreshing(true);
-    const id = sellerId || (await extractSellerIdFromToken());
-    if (id) {
-      await fetchOrders(id);
-    } else {
-      setRefreshing(false);
-      Alert.alert('Error', 'Unable to get seller information');
-    }
-  };
-
-  const isOrderPending = (order: Order): boolean =>
-    getOrderSection(order) === 'pending';
-  const isOrderAssigned = (order: Order): boolean =>
-    getOrderSection(order) === 'assigned';
-  const shouldShowAssignButton = (order: Order): boolean =>
-    order.deliveryStatus?.toLowerCase() === 'waiting_for_seller';
-
   const getFilteredOrders = () => {
     switch (selectedTab) {
       case 'pending':
@@ -1407,7 +1625,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     ) {
       return order.items[0].productData.title;
     }
-    return 'Product';
+    return `ORDER ${order.orderId || 'Product'}`;
   };
 
   const getItemCount = (order: Order): number => {
@@ -1417,7 +1635,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
         0,
       );
     }
-    return 0;
+    return 1;
   };
 
   const renderStatsCard = () => {
@@ -1427,11 +1645,6 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     const assignedOrdersCount = orders.filter(order =>
       isOrderAssigned(order),
     ).length;
-    const totalRevenue = orders.reduce(
-      (sum, order) => sum + (order.finalAmount || 0),
-      0,
-    );
-
     return (
       <View style={styles.statsContainer}>
         <View
@@ -1497,7 +1710,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
             {assignedOrdersCount}
           </Text>
           <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-            Assigned
+            Active
           </Text>
         </View>
       </View>
@@ -1507,16 +1720,43 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
   const renderOrderItem = (order: Order, index: number) => {
     const productTitle = getProductTitle(order);
     const itemCount = getItemCount(order);
-    const displayAmount = order.finalAmount || order.productFinalPrice || 0;
+    const displayAmount = order.finalAmount || 0;
+    const productPrice = order.productPrice || 0;
+    const productMrp = order.productMrp || 0;
+    const productGst = order.productGstRate || 0;
+    const deliveryCharge = order.deliveryCharge || 0;
     const formattedDate = formatDate(order.createdAt);
-    const statusText = formatDeliveryStatusText(order.deliveryStatus);
-    const statusColor = getDeliveryStatusColor(order.deliveryStatus);
-    const statusIcon = getDeliveryStatusIcon(order.deliveryStatus);
+
+    // ✅ FIXED: Use the new functions
+    const statusText = getDeliveryStatusText(order);
+    const statusColor = getDeliveryStatusColor(order);
+
+    const statusIcon = (
+      <MaterialIcons
+        name={
+          isOrderDelivered(order.trackingHistory)
+            ? 'check-circle'
+            : hasSellerAccepted(order.trackingHistory)
+            ? 'check-circle'
+            : 'access-time'
+        }
+        size={12}
+        color="#FFFFFF"
+      />
+    );
     const paymentStatusInfo = getPaymentStatusInfo(order);
     const isProcessing =
       processingOrder === order.orderId || processingOrder === order._id;
+    const isProcessingFWS =
+      processingFWSOrder === order.orderId || processingFWSOrder === order._id;
     const hasRiderAssigned = order.shippingRider;
+    const fulfillmentType = order.fulfillmentType || 'SELLER';
+
+    const showAcceptButton = shouldShowAcceptButton(order);
     const showAssignButton = shouldShowAssignButton(order);
+    const showDeliverToFWSButton = shouldShowDeliverToFWSButton(order);
+    const showQRCodeButton = shouldShowQRCodeButton(order);
+    const completionMessage = getCompletionMessage(order);
 
     return (
       <TouchableOpacity
@@ -1530,12 +1770,11 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
         ]}
         onPress={() => {
           ReactNativeHapticFeedback.trigger('impactLight', hapticOptions);
-          if (order.orderId) {
+          if (order.orderId)
             navigation.navigate('OrderDetails', {
               orderId: order.orderId,
               orderData: order,
             });
-          }
         }}
         activeOpacity={0.9}
       >
@@ -1584,18 +1823,37 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
           </View>
         </View>
 
-        {(hasRiderAssigned ||
-          order.deliveryStatus === 'pending_rider_accept' ||
-          order.deliveryStatus === 'assigned' ||
-          order.deliveryStatus === 'waiting_for_rider' ||
-          order.deliveryStatus === 'picked_up' ||
-          order.deliveryStatus === 'delivered') && (
+        <View style={{ marginBottom: 8 }}>
+          <View
+            style={[
+              styles.statusBadge,
+              {
+                backgroundColor:
+                  fulfillmentType === 'FWS' ? colors.purple : colors.info,
+                alignSelf: 'flex-start',
+              },
+            ]}
+          >
+            <MaterialIcons
+              name={fulfillmentType === 'FWS' ? 'warehouse' : 'store'}
+              size={10}
+              color="#FFFFFF"
+            />
+            <Text style={styles.statusText}>
+              {fulfillmentType === 'FWS'
+                ? 'FWS Fulfillment'
+                : 'Self Fulfillment'}
+            </Text>
+          </View>
+        </View>
+
+        {hasRiderAssigned && (
           <View
             style={[
               styles.riderBadge,
               {
                 backgroundColor: colors.info + '15',
-                marginTop: 8,
+                marginTop: 4,
                 flexDirection: 'row',
                 alignItems: 'center',
                 justifyContent: 'space-between',
@@ -1615,39 +1873,10 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
                 ]}
               >
                 {order.shippingRider?.name
-                  ? `${order.shippingRider.name} • ${
-                      order.shippingRider?.vehicleType || 'Bike'
-                    }`
-                  : 'Rider to be assigned'}
+                  ? `${order.shippingRider.name}`
+                  : 'Partner assigned'}
               </Text>
             </View>
-            {order.shippingRider?.vehicleType && (
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Ionicons
-                  name={
-                    order.shippingRider.vehicleType
-                      .toLowerCase()
-                      .includes('bike')
-                      ? 'bicycle'
-                      : order.shippingRider.vehicleType
-                          .toLowerCase()
-                          .includes('car')
-                      ? 'car'
-                      : 'bicycle'
-                  }
-                  size={10}
-                  color={colors.info}
-                />
-                <Text
-                  style={[
-                    styles.riderText,
-                    { color: colors.info, marginLeft: 2 },
-                  ]}
-                >
-                  {order.shippingRider.vehicleType}
-                </Text>
-              </View>
-            )}
           </View>
         )}
 
@@ -1664,21 +1893,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
               {order.buyerName || 'N/A'}
             </Text>
           </View>
-          <View style={styles.detailRow}>
-            <FontAwesome
-              name="calendar"
-              size={12}
-              color={colors.textSecondary}
-            />
-            <Text
-              style={[
-                styles.detailText,
-                { color: colors.textSecondary, marginLeft: 6 },
-              ]}
-            >
-              Ordered: {formattedDate.split(',')[0]}
-            </Text>
-          </View>
+
           <View style={styles.productInfo}>
             <Text style={[styles.productTitle, { color: colors.textPrimary }]}>
               {productTitle}
@@ -1687,135 +1902,218 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
               {itemCount} item{itemCount !== 1 ? 's' : ''}
             </Text>
           </View>
-          <View style={styles.amountSection}>
+
+          <View style={styles.priceSection}>
             <View style={styles.amountRow}>
-              <FontAwesome name="rupee" size={14} color={colors.success} />
+              <FontAwesome name="rupee" size={16} color={colors.success} />
               <Text style={[styles.orderAmount, { color: colors.success }]}>
                 ₹{displayAmount.toFixed(2)}
               </Text>
             </View>
-            {order.productMrp && order.productMrp > displayAmount && (
+            {productMrp > displayAmount && (
               <Text style={[styles.mrpAmount, { color: colors.textTertiary }]}>
-                M.R.P: ₹{order.productMrp.toFixed(2)}
+                M.R.P: ₹{productMrp.toFixed(2)}
               </Text>
             )}
           </View>
-          <View style={styles.quickStats}>
-            <View
-              style={[
-                styles.statPill,
-                {
-                  backgroundColor: isDark
-                    ? 'rgba(255,255,255,0.05)'
-                    : 'rgba(0,0,0,0.03)',
-                },
-              ]}
-            >
+
+          <View style={styles.quickStatsRow}>
+            <View style={styles.quickStatItem}>
               <Text
-                style={[styles.statPillText, { color: colors.textSecondary }]}
+                style={[styles.quickStatValue, { color: colors.textPrimary }]}
               >
-                ₹{order.productPrice?.toFixed(2) || '0.00'}
+                ₹{productPrice.toFixed(2)}
               </Text>
               <Text
-                style={[styles.statPillLabel, { color: colors.textTertiary }]}
+                style={[styles.quickStatLabel, { color: colors.textTertiary }]}
               >
                 Price
               </Text>
             </View>
-            {order.productGst && order.productGst > 0 && (
-              <View
-                style={[
-                  styles.statPill,
-                  {
-                    backgroundColor: isDark
-                      ? 'rgba(255,255,255,0.05)'
-                      : 'rgba(0,0,0,0.03)',
-                  },
-                ]}
-              >
+            {productGst > 0 && (
+              <View style={styles.quickStatItem}>
                 <Text
-                  style={[styles.statPillText, { color: colors.textSecondary }]}
+                  style={[styles.quickStatValue, { color: colors.textPrimary }]}
                 >
-                  ₹{order.productGst.toFixed(2)}
+                  ₹{productGst.toFixed(2)}
                 </Text>
                 <Text
-                  style={[styles.statPillLabel, { color: colors.textTertiary }]}
+                  style={[
+                    styles.quickStatLabel,
+                    { color: colors.textTertiary },
+                  ]}
                 >
-                  GST
+                  GST ({order.productGstRate || 18}%)
                 </Text>
               </View>
             )}
-            <View
-              style={[
-                styles.statPill,
-                {
-                  backgroundColor: isDark
-                    ? 'rgba(255,255,255,0.05)'
-                    : 'rgba(0,0,0,0.03)',
-                },
-              ]}
-            >
+            <View style={styles.quickStatItem}>
               <Text
                 style={[
-                  styles.statPillText,
+                  styles.quickStatValue,
                   {
                     color:
-                      order.deliveryCharge === 0
+                      deliveryCharge === 0
                         ? colors.success
-                        : colors.textSecondary,
+                        : colors.textPrimary,
                   },
                 ]}
               >
-                {order.deliveryCharge === 0
+                {deliveryCharge === 0
                   ? 'FREE'
-                  : `₹${order.deliveryCharge?.toFixed(2) || '0.00'}`}
+                  : `₹${deliveryCharge.toFixed(2)}`}
               </Text>
               <Text
-                style={[styles.statPillLabel, { color: colors.textTertiary }]}
+                style={[styles.quickStatLabel, { color: colors.textTertiary }]}
               >
                 Delivery
               </Text>
             </View>
           </View>
 
-          {showAssignButton && (
+          {/* QR Code Button */}
+          {showQRCodeButton && (
             <TouchableOpacity
-              style={[
-                styles.actionButton,
-                { backgroundColor: colors.success },
-                isProcessing && styles.processingButton,
-              ]}
+              style={[styles.qrCodeButton, { backgroundColor: colors.success }]}
               onPress={e => {
                 e.stopPropagation();
-                handleApproveOrder(order);
+                handleShowQRCode(order);
               }}
-              disabled={isProcessing}
             >
-              {isProcessing ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <>
-                  <MaterialIcons
-                    name="check-circle"
-                    size={16}
-                    color="#FFFFFF"
-                  />
-                  <Text style={styles.actionButtonText}>Assign Rider</Text>
-                </>
-              )}
+              <Ionicons name="qr-code" size={20} color="#FFFFFF" />
+              <Text style={styles.qrCodeButtonText}>
+                Show QR Code for Handover
+              </Text>
             </TouchableOpacity>
           )}
+
+          {/* Completion Message */}
+          {completionMessage && (
+            <View
+              style={[
+                styles.completionMessageContainer,
+                { backgroundColor: colors.success + '15' },
+              ]}
+            >
+              <MaterialIcons
+                name="check-circle"
+                size={18}
+                color={colors.success}
+              />
+              <Text
+                style={[
+                  styles.completionMessageText,
+                  { color: colors.success },
+                ]}
+              >
+                {completionMessage}
+              </Text>
+            </View>
+          )}
+
+          {/* Deliver to FWS Button */}
+          {!completionMessage &&
+            !showQRCodeButton &&
+            showDeliverToFWSButton && (
+              <TouchableOpacity
+                style={[
+                  styles.actionButton,
+                  { backgroundColor: colors.purple },
+                  isProcessingFWS && styles.processingButton,
+                ]}
+                onPress={e => {
+                  e.stopPropagation();
+                  sellerDeliverToFWS(order);
+                }}
+                disabled={isProcessingFWS}
+              >
+                {isProcessingFWS ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <MaterialIcons name="warehouse" size={16} color="#FFFFFF" />
+                    <Text style={styles.actionButtonText}>
+                      Intransit to FWS
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
+
+          {/* Assign Button */}
+          {!completionMessage &&
+            !showQRCodeButton &&
+            showAssignButton &&
+            fulfillmentType === 'SELLER' && (
+              <TouchableOpacity
+                style={[
+                  styles.actionButton,
+                  { backgroundColor: colors.primary },
+                  isProcessing && styles.processingButton,
+                ]}
+                onPress={e => {
+                  e.stopPropagation();
+                  handleAssignShipping(order);
+                }}
+                disabled={isProcessing}
+              >
+                {isProcessing ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <MaterialIcons
+                      name="local-shipping"
+                      size={16}
+                      color="#FFFFFF"
+                    />
+                    <Text style={styles.actionButtonText}>Assign Partner</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
+
+          {/* Accept Button */}
+          {!completionMessage &&
+            !showQRCodeButton &&
+            !showAssignButton &&
+            !showDeliverToFWSButton &&
+            showAcceptButton && (
+              <TouchableOpacity
+                style={[
+                  styles.actionButton,
+                  { backgroundColor: colors.success },
+                  isProcessing && styles.processingButton,
+                ]}
+                onPress={e => {
+                  e.stopPropagation();
+                  handleAcceptOrder(order);
+                }}
+                disabled={isProcessing}
+              >
+                {isProcessing ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <MaterialIcons
+                      name="check-circle"
+                      size={16}
+                      color="#FFFFFF"
+                    />
+                    <Text style={styles.actionButtonText}>Accept Order</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
 
           <TouchableOpacity
             style={styles.viewDetails}
             onPress={() => {
               ReactNativeHapticFeedback.trigger('impactLight', hapticOptions);
-              if (order.orderId) {
+              if (order.orderId)
                 navigation.navigate('OrderDetails', {
                   orderId: order.orderId,
                   orderData: order,
                 });
-              }
             }}
           >
             <Text style={[styles.viewDetailsText, { color: colors.primary }]}>
@@ -2026,7 +2324,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
                 },
               ]}
             >
-              Assigned ({assignedOrdersCount})
+              Active ({assignedOrdersCount})
             </Text>
           </View>
         </TouchableOpacity>
@@ -2069,7 +2367,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
                 ? 'No orders yet'
                 : selectedTab === 'pending'
                 ? 'No pending orders'
-                : 'No assigned orders'}
+                : 'No active orders'}
             </Text>
             <Text
               style={[styles.emptySubtext, { color: colors.textSecondary }]}
@@ -2077,8 +2375,8 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
               {selectedTab === 'all'
                 ? 'When customers place orders, they will appear here'
                 : selectedTab === 'pending'
-                ? 'All orders are currently assigned'
-                : 'Assign riders to pending orders to see them here'}
+                ? 'All orders have been accepted'
+                : 'All accepted orders appear here'}
             </Text>
             <TouchableOpacity
               style={[
@@ -2097,18 +2395,16 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
                 ? 'All Orders'
                 : selectedTab === 'pending'
                 ? 'Pending Orders'
-                : 'Assigned Orders'}{' '}
+                : 'Active Orders'}{' '}
               • {filteredOrders.length}
             </Text>
             {filteredOrders
-              .sort((a, b) => {
-                const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-                const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-                return dateB - dateA;
-              })
-              .map((order: Order, index: number) =>
-                renderOrderItem(order, index),
-              )}
+              .sort(
+                (a, b) =>
+                  (b.createdAt ? new Date(b.createdAt).getTime() : 0) -
+                  (a.createdAt ? new Date(a.createdAt).getTime() : 0),
+              )
+              .map((order, index) => renderOrderItem(order, index))}
             <View style={{ height: 80 }} />
           </>
         )}
@@ -2142,6 +2438,14 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
           authToken={authToken}
         />
       )}
+
+      <QRCodeModal
+        visible={qrModalVisible}
+        onClose={() => setQrModalVisible(false)}
+        qrCodeUrl={selectedQRCode?.url || ''}
+        orderId={selectedQRCode?.orderId || ''}
+        colors={colors}
+      />
     </SafeAreaView>
   );
 };
@@ -2363,7 +2667,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.3,
   },
   itemCount: { fontSize: 11, fontWeight: '500', opacity: 0.8 },
-  amountSection: {
+  priceSection: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -2377,15 +2681,21 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     opacity: 0.7,
   },
-  quickStats: { flexDirection: 'row', gap: 6, marginTop: 8 },
-  statPill: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    alignItems: 'center',
+  quickStatsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    gap: 8,
   },
-  statPillText: { fontSize: 10, fontWeight: '600' },
-  statPillLabel: { fontSize: 8, fontWeight: '500', marginTop: 1, opacity: 0.8 },
+  quickStatItem: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0,0,0,0.03)',
+  },
+  quickStatValue: { fontSize: 12, fontWeight: '700' },
+  quickStatLabel: { fontSize: 9, fontWeight: '500', marginTop: 2 },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2437,12 +2747,88 @@ const styles = StyleSheet.create({
     elevation: 10,
     zIndex: 1000,
   },
-  modalOverlay: { flex: 1, justifyContent: 'flex-end' },
+  qrCodeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 10,
+    gap: 8,
+    marginTop: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  qrCodeButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
+  qrModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  qrModalContainer: {
+    width: width * 0.85,
+    borderRadius: 20,
+    padding: 20,
+    alignItems: 'center',
+  },
+  qrModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 20,
+  },
+  qrModalTitle: { fontSize: 18, fontWeight: '700' },
+  qrCloseButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  qrCodeWrapper: { width: 200, height: 200, marginVertical: 20 },
+  qrCodeImage: { width: '100%', height: '100%' },
+  qrOrderId: { fontSize: 12, marginTop: 10, textAlign: 'center' },
+  qrInstruction: {
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 8,
+    marginBottom: 20,
+  },
+  qrDoneButton: {
+    paddingHorizontal: 30,
+    paddingVertical: 12,
+    borderRadius: 10,
+    marginTop: 10,
+  },
+  qrDoneButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
+  completionMessageContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 10,
+  },
+  completionMessageText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 18,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
   modalContainer: {
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '90%',
-    paddingBottom: 30,
+    maxHeight: height * 0.9,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -2462,23 +2848,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  orderInfoCard: {
-    margin: 20,
-    marginTop: 10,
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.05)',
-  },
-  orderInfoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  orderInfoItem: { alignItems: 'flex-start' },
-  orderInfoLabel: { fontSize: 11, fontWeight: '500', marginBottom: 2 },
-  orderInfoValue: { fontSize: 14, fontWeight: '700' },
-  addressText: { fontSize: 12, marginTop: 4 },
   partnersTitle: {
     fontSize: 16,
     fontWeight: '700',
@@ -2523,10 +2892,10 @@ const styles = StyleSheet.create({
   },
   shippingPartnerInfo: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   vehicleImageContainer: { marginRight: 10 },
-  vehicleImage: { width: 30, height: 30, borderRadius: 8 },
+  vehicleImage: { width: 40, height: 40, borderRadius: 8 },
   vehicleIconPlaceholder: {
-    width: 30,
-    height: 30,
+    width: 40,
+    height: 40,
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
@@ -2537,7 +2906,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 4,
   },
-  driverName: { fontSize: 14, fontWeight: '700', marginRight: 8 },
+  driverName: { fontSize: 14, fontWeight: '700', marginRight: 8, flex: 1 },
   availableBadge: {
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -2547,36 +2916,8 @@ const styles = StyleSheet.create({
   ratingContainer: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   ratingText: { fontSize: 12, fontWeight: '600', marginLeft: 2 },
   vehicleText: { fontSize: 11, fontWeight: '500' },
-  capacityInfo: { alignItems: 'flex-end' },
-  capacityNumber: { fontSize: 14, fontWeight: '700' },
-  capacityLabel: { fontSize: 10, marginTop: 2, opacity: 0.8 },
-  orderStatsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    backgroundColor: 'rgba(0,0,0,0.02)',
-    borderRadius: 8,
-    padding: 8,
-    marginBottom: 12,
-  },
-  orderStatItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  orderStatDot: { width: 6, height: 6, borderRadius: 3 },
-  orderStatText: { fontSize: 11, fontWeight: '500' },
-  shippingPartnerFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  chatButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  chatButtonContent: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  chatIcon: { width: 16, height: 16, borderRadius: 4 },
-  chatButtonText: { color: '#000000ff', fontSize: 12, fontWeight: '600' },
+  capacityContainer: { marginTop: 4 },
+  capacityText: { fontSize: 10, fontWeight: '500' },
   selectedIndicator: {
     flexDirection: 'row',
     alignItems: 'center',

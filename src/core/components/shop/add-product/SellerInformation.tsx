@@ -1,4 +1,4 @@
-// SellerInformation.tsx - SIMPLIFIED VERSION (No Map, No GPS)
+// SellerInformation.tsx - WITH GPS LOCATION AND MAP DISPLAY
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
@@ -9,15 +9,20 @@ import {
   ActivityIndicator,
   ScrollView,
   Dimensions,
+  Linking,
   Modal,
   SafeAreaView,
   StatusBar,
   Platform,
   Alert,
   KeyboardAvoidingView,
+  PermissionsAndroid,
 } from 'react-native';
 import { Config } from 'react-native-config';
 import Icon from 'react-native-vector-icons/Ionicons';
+import Fontisto from 'react-native-vector-icons/Fontisto';
+import GetLocation from 'react-native-get-location';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 
 export interface SellerLocation {
   address: string;
@@ -44,8 +49,17 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
     useState(false);
   const [manualAddress, setManualAddress] = useState('');
   const [mapError, setMapError] = useState<string | null>(null);
+  const [isGettingLocation, setIsGettingLocation] = useState(false);
+  const [showFullMapModal, setShowFullMapModal] = useState(false);
+  const [mapRegion, setMapRegion] = useState({
+    latitude: sellerLocation.latitude || 28.6139,
+    longitude: sellerLocation.longitude || 77.209,
+    latitudeDelta: 0.01,
+    longitudeDelta: 0.01,
+  });
 
   const isMountedRef = useRef(true);
+  const mapRef = useRef<MapView>(null);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -53,6 +67,155 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
       isMountedRef.current = false;
     };
   }, []);
+
+  // Update map region when seller location changes
+  useEffect(() => {
+    if (sellerLocation.latitude !== 0 && sellerLocation.longitude !== 0) {
+      setMapRegion({
+        latitude: sellerLocation.latitude,
+        longitude: sellerLocation.longitude,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+      });
+      if (mapRef.current) {
+        mapRef.current.animateToRegion({
+          latitude: sellerLocation.latitude,
+          longitude: sellerLocation.longitude,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        });
+      }
+    }
+  }, [sellerLocation.latitude, sellerLocation.longitude]);
+
+  // Request location permissions for Android
+  const requestLocationPermission = async (): Promise<boolean> => {
+    if (Platform.OS === 'android') {
+      try {
+        const fineGranted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+          {
+            title: 'Location Permission',
+            message:
+              'App needs access to your location to set business address',
+            buttonPositive: 'Allow',
+            buttonNegative: 'Deny',
+          },
+        );
+
+        if (Platform.Version >= 29) {
+          const bgGranted = await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
+            {
+              title: 'Background Location Permission',
+              message: 'App needs background location for delivery tracking',
+              buttonPositive: 'Allow',
+              buttonNegative: 'Deny',
+            },
+          );
+          return (
+            fineGranted === PermissionsAndroid.RESULTS.GRANTED &&
+            bgGranted === PermissionsAndroid.RESULTS.GRANTED
+          );
+        }
+
+        return fineGranted === PermissionsAndroid.RESULTS.GRANTED;
+      } catch (error) {
+        console.error('Permission error:', error);
+        return false;
+      }
+    }
+    return true;
+  };
+
+  // Get current location using react-native-get-location
+  const getCurrentLocation = async () => {
+    setIsGettingLocation(true);
+    setMapError(null);
+
+    try {
+      const hasPermission = await requestLocationPermission();
+      if (!hasPermission) {
+        Alert.alert(
+          'Permission Required',
+          'Please enable location permission to use this feature',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => Linking.openSettings() },
+          ],
+        );
+        setIsGettingLocation(false);
+        return;
+      }
+
+      const location = await GetLocation.getCurrentPosition({
+        enableHighAccuracy: true,
+        timeout: 15000,
+      });
+
+      if (location && location.latitude !== 0 && location.longitude !== 0) {
+        // Update map region
+        setMapRegion({
+          latitude: location.latitude,
+          longitude: location.longitude,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        });
+
+        // Reverse geocode to get address from coordinates
+        await reverseGeocodeAndUpdate(location.latitude, location.longitude);
+
+      } else {
+        setMapError('Invalid location received');
+      }
+    } catch (error: any) {
+      console.error('Get location error:', error);
+      if (error.message?.includes('timeout')) {
+        setMapError('Location timeout. Please try again.');
+      } else if (error.message?.includes('denied')) {
+        setMapError('Location permission denied');
+      } else {
+        setMapError('Failed to get location. Please try again.');
+      }
+    } finally {
+      setIsGettingLocation(false);
+    }
+  };
+
+  // Reverse geocode coordinates to get address
+  const reverseGeocodeAndUpdate = async (
+    latitude: number,
+    longitude: number,
+  ) => {
+    try {
+      const response = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${Config.GOOGLE_SERVICES_ACCOUNT_KEY}&language=en`,
+      );
+      const data = await response.json();
+
+      if (data.status === 'OK' && data.results.length > 0) {
+        const address = data.results[0].formatted_address;
+        const placeId = data.results[0].place_id;
+
+        onSellerLocationChange('address', address);
+        onSellerLocationChange('latitude', latitude);
+        onSellerLocationChange('longitude', longitude);
+        onSellerLocationChange('googlePlaceId', placeId);
+        setQuery(address);
+        setMapError(null);
+      } else {
+        // Even if no address found, save coordinates
+        onSellerLocationChange('latitude', latitude);
+        onSellerLocationChange('longitude', longitude);
+        setMapError('Address not found, but coordinates saved');
+      }
+    } catch (error) {
+      // Still save coordinates even if reverse geocoding fails
+      onSellerLocationChange('latitude', latitude);
+      onSellerLocationChange('longitude', longitude);
+      setMapError('Could not fetch address, but coordinates saved');
+    }
+  };
 
   // Manual address input handler
   const handleManualAddressSubmit = () => {
@@ -86,7 +249,9 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
       const res = await fetch(
         `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(
           text,
-        )}&key=${Config.GOOGLE_SERVICES_ACCOUNT_KEY}&language=en&components=country:in`,
+        )}&key=${
+          Config.GOOGLE_SERVICES_ACCOUNT_KEY
+        }&language=en&components=country:in`,
       );
       const data = await res.json();
 
@@ -127,6 +292,15 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
           onSellerLocationChange('latitude', lat);
           onSellerLocationChange('longitude', lng);
           onSellerLocationChange('googlePlaceId', placeId);
+
+          // Update map region
+          setMapRegion({
+            latitude: lat,
+            longitude: lng,
+            latitudeDelta: 0.01,
+            longitudeDelta: 0.01,
+          });
+
           setSuggestions([]);
           setQuery(details.formatted_address || '');
           setMapError(null);
@@ -150,6 +324,15 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
     setMapError(null);
   };
 
+  const openFullMap = () => {
+    setShowFullMapModal(true);
+  };
+
+  const handleMapPress = (event: any) => {
+    const { coordinate } = event.nativeEvent;
+    reverseGeocodeAndUpdate(coordinate.latitude, coordinate.longitude);
+  };
+
   const isLocationInvalid =
     sellerLocation.latitude === 0 && sellerLocation.longitude === 0;
 
@@ -161,7 +344,7 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
       </View>
 
       <Text style={styles.subtitle}>
-        Search for your business address or enter manually
+        Search, use current location, or tap on map to set your business address
       </Text>
 
       {isLocationInvalid && (
@@ -180,6 +363,24 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
         </View>
       )}
 
+      {/* Current Location Button */}
+      <TouchableOpacity
+        style={styles.currentLocationButton}
+        onPress={getCurrentLocation}
+        disabled={isGettingLocation}
+      >
+        {isGettingLocation ? (
+          <ActivityIndicator size="small" color="white" />
+        ) : (
+          <>
+            <Fontisto name="map-marker-alt" size={18} color="white" />
+            <Text style={styles.currentLocationButtonText}>
+              Use Current Location
+            </Text>
+          </>
+        )}
+      </TouchableOpacity>
+
       {/* Manual Address Button */}
       <TouchableOpacity
         style={styles.manualButton}
@@ -187,6 +388,51 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
       >
         <Icon name="create" size={22} color="white" />
         <Text style={styles.manualButtonText}>Enter Address Manually</Text>
+      </TouchableOpacity>
+
+      {/* Map View - Shows current location or selected location */}
+      <TouchableOpacity
+        style={styles.mapContainer}
+        onPress={openFullMap}
+        activeOpacity={0.95}
+      >
+        <MapView
+          ref={mapRef}
+          style={styles.map}
+          provider={PROVIDER_GOOGLE}
+          region={mapRegion}
+          onPress={handleMapPress}
+          scrollEnabled={false}
+          zoomEnabled={false}
+          rotateEnabled={false}
+        >
+          {(sellerLocation.latitude !== 0 || mapRegion.latitude !== 0) && (
+            <Marker
+              coordinate={{
+                latitude:
+                  sellerLocation.latitude !== 0
+                    ? sellerLocation.latitude
+                    : mapRegion.latitude,
+                longitude:
+                  sellerLocation.longitude !== 0
+                    ? sellerLocation.longitude
+                    : mapRegion.longitude,
+              }}
+              draggable
+              onDragEnd={e => {
+                const { latitude, longitude } = e.nativeEvent.coordinate;
+                reverseGeocodeAndUpdate(latitude, longitude);
+              }}
+            >
+              <View style={styles.markerContainer}>
+                <Fontisto name="map-marker-alt" size={32} color="#ef4444" />
+              </View>
+            </Marker>
+          )}
+        </MapView>
+        <View style={styles.mapOverlay}>
+          <Text style={styles.mapTapText}>Tap to open full map</Text>
+        </View>
       </TouchableOpacity>
 
       {/* Search Input */}
@@ -264,6 +510,70 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
           </Text>
         </View>
       )}
+
+      {/* Full Map Modal */}
+      <Modal
+        animationType="slide"
+        visible={showFullMapModal}
+        onRequestClose={() => setShowFullMapModal(false)}
+      >
+        <SafeAreaView style={styles.fullMapContainer}>
+          <View style={styles.fullMapHeader}>
+            <TouchableOpacity
+              onPress={() => setShowFullMapModal(false)}
+              style={styles.fullMapBackButton}
+            >
+              <Icon name="arrow-back" size={24} color="#1f2937" />
+            </TouchableOpacity>
+            <Text style={styles.fullMapTitle}>Select Location on Map</Text>
+            {sellerLocation.latitude !== 0 && (
+              <TouchableOpacity
+                onPress={() => setShowFullMapModal(false)}
+                style={styles.fullMapDoneButton}
+              >
+                <Text style={styles.fullMapDoneText}>Done</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <MapView
+            style={styles.fullMap}
+            provider={PROVIDER_GOOGLE}
+            region={mapRegion}
+            onPress={handleMapPress}
+            showsUserLocation={true}
+            showsMyLocationButton={true}
+          >
+            {(sellerLocation.latitude !== 0 || mapRegion.latitude !== 0) && (
+              <Marker
+                coordinate={{
+                  latitude:
+                    sellerLocation.latitude !== 0
+                      ? sellerLocation.latitude
+                      : mapRegion.latitude,
+                  longitude:
+                    sellerLocation.longitude !== 0
+                      ? sellerLocation.longitude
+                      : mapRegion.longitude,
+                }}
+                draggable
+                onDragEnd={e => {
+                  const { latitude, longitude } = e.nativeEvent.coordinate;
+                  reverseGeocodeAndUpdate(latitude, longitude);
+                }}
+              >
+                <View style={styles.markerContainer}>
+                  <Fontisto name="map-marker-alt" size={40} color="#ef4444" />
+                </View>
+              </Marker>
+            )}
+          </MapView>
+          <View style={styles.fullMapFooter}>
+            <Text style={styles.fullMapFooterText}>
+              Tap anywhere on map or drag the marker to set location
+            </Text>
+          </View>
+        </SafeAreaView>
+      </Modal>
 
       {/* Manual Address Input Modal */}
       <Modal
@@ -347,6 +657,21 @@ const styles = StyleSheet.create({
     borderColor: '#ef4444',
   },
   errorText: { fontSize: 14, color: '#991b1b', marginLeft: 8, flex: 1 },
+  currentLocationButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#3b82f6',
+    paddingVertical: 14,
+    borderRadius: 12,
+    marginBottom: 12,
+    gap: 10,
+  },
+  currentLocationButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: 'white',
+  },
   manualButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -358,6 +683,27 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   manualButtonText: { fontSize: 16, fontWeight: '600', color: 'white' },
+  mapContainer: {
+    height: 200,
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    position: 'relative',
+  },
+  map: { width: '100%', height: '100%' },
+  mapOverlay: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  mapTapText: { fontSize: 12, color: 'white' },
+  markerContainer: { alignItems: 'center', justifyContent: 'center' },
   searchContainer: { marginBottom: 16 },
   searchInputWrapper: {
     flexDirection: 'row',
@@ -453,6 +799,33 @@ const styles = StyleSheet.create({
     marginLeft: 6,
   },
   coordinatesText: { fontSize: 12, color: '#374151', marginLeft: 22 },
+
+  // Full Map Modal Styles
+  fullMapContainer: { flex: 1, backgroundColor: '#fff' },
+  fullMapHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+    backgroundColor: '#fff',
+  },
+  fullMapBackButton: { padding: 8 },
+  fullMapTitle: { fontSize: 18, fontWeight: '600', color: '#1f2937' },
+  fullMapDoneButton: { padding: 8 },
+  fullMapDoneText: { fontSize: 16, fontWeight: '600', color: '#3b82f6' },
+  fullMap: { flex: 1 },
+  fullMapFooter: {
+    padding: 16,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+  },
+  fullMapFooterText: { fontSize: 14, color: '#64748b', textAlign: 'center' },
+
+  // Manual Modal Styles
   manualModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',

@@ -1,4 +1,4 @@
-// LoginScreen.tsx
+// LoginScreen.tsx - No role selection, just login
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -67,13 +67,11 @@ export default function LoginScreen() {
   useEffect(() => {
     const animations = createLoginAnimations();
 
-    // Header animation
     Animated.parallel([
       Animated.timing(headerOpacity, animations.header.opacity),
       Animated.timing(headerTranslateY, animations.header.translateY),
     ]).start();
 
-    // Form animation
     setTimeout(() => {
       Animated.parallel([
         Animated.timing(formOpacity, animations.form.opacity),
@@ -81,7 +79,6 @@ export default function LoginScreen() {
       ]).start();
     }, 200);
 
-    // Input animations
     setTimeout(() => {
       Animated.parallel([
         Animated.timing(identifierInputOpacity, animations.input.opacity),
@@ -89,7 +86,6 @@ export default function LoginScreen() {
       ]).start();
     }, 400);
 
-    // Button animation
     setTimeout(() => {
       Animated.parallel([
         Animated.timing(buttonOpacity, animations.button.opacity),
@@ -98,7 +94,6 @@ export default function LoginScreen() {
     }, 600);
   }, []);
 
-  // Wait time countdown
   useEffect(() => {
     if (waitTime > 0) {
       const timer = setTimeout(() => setWaitTime(waitTime - 1), 1000);
@@ -138,6 +133,7 @@ export default function LoginScreen() {
     const result = await AuthService.verifyOTPAndLogin(identifier, otp);
 
     if (result.success) {
+      // ✅ Login successful - user can now switch accounts using linked accounts
       navigation.navigate('Home');
     } else {
       setError(result.msg || 'OTP verification failed');
@@ -169,7 +165,6 @@ export default function LoginScreen() {
     handleClearErrors();
   };
 
-  // Animated styles
   const headerAnimatedStyle = {
     opacity: headerOpacity,
     transform: [{ translateY: headerTranslateY }],
@@ -199,7 +194,6 @@ export default function LoginScreen() {
       <StatusBar barStyle="dark-content" backgroundColor="#f8fafc" />
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.container}>
-          {/* Gradient Background */}
           <View style={styles.background}>
             <View style={[styles.gradientLayer, styles.gradientStart]} />
             <View style={[styles.gradientLayer, styles.gradientEnd]} />
@@ -214,7 +208,6 @@ export default function LoginScreen() {
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
           >
-            {/* Header - Hide when keyboard is open */}
             {!isKeyboardVisible && (
               <Animated.View style={[styles.header, headerAnimatedStyle]}>
                 <View style={styles.logoContainer}>
@@ -233,7 +226,6 @@ export default function LoginScreen() {
               </Animated.View>
             )}
 
-            {/* Tabs */}
             <View style={styles.tabsContainer}>
               <TouchableOpacity
                 style={styles.tab}
@@ -258,11 +250,9 @@ export default function LoginScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Form Container */}
             <Animated.View style={[styles.formContainer, formAnimatedStyle]}>
               {step === 'input' ? (
                 <View style={styles.formContent}>
-                  {/* Email/Phone Input */}
                   <Animated.View
                     style={[
                       styles.inputContainer,
@@ -298,7 +288,6 @@ export default function LoginScreen() {
                     ) : null}
                   </Animated.View>
 
-                  {/* Login Button */}
                   <Animated.View style={buttonAnimatedStyle}>
                     <TouchableOpacity
                       style={[
@@ -327,7 +316,6 @@ export default function LoginScreen() {
                     </TouchableOpacity>
                   </Animated.View>
 
-                  {/* Terms Text */}
                   <View style={styles.termsContainer}>
                     <Text style={styles.termsText}>
                       By logging in, you agree to our{' '}
@@ -336,7 +324,6 @@ export default function LoginScreen() {
                     </Text>
                   </View>
 
-                  {/* Signup Link */}
                   <View style={styles.signupContainer}>
                     <Text style={styles.signupText}>
                       Don't have an account?{' '}
@@ -351,7 +338,6 @@ export default function LoginScreen() {
                 </View>
               ) : (
                 <View style={styles.otpContent}>
-                  {/* OTP Message */}
                   <View style={styles.otpMessage}>
                     <MaterialIcon
                       name="mail-outline"
@@ -364,7 +350,6 @@ export default function LoginScreen() {
                     </Text>
                   </View>
 
-                  {/* OTP Input */}
                   <View style={styles.inputContainer}>
                     <Text style={styles.inputLabel}>Verification Code</Text>
                     <View style={styles.inputWrapper}>
@@ -393,7 +378,6 @@ export default function LoginScreen() {
                     ) : null}
                   </View>
 
-                  {/* Verify Button */}
                   <TouchableOpacity
                     style={[styles.button, isLoading && styles.buttonDisabled]}
                     onPress={handleVerify}
@@ -417,7 +401,6 @@ export default function LoginScreen() {
                     </View>
                   </TouchableOpacity>
 
-                  {/* Resend OTP */}
                   <TouchableOpacity
                     style={[
                       styles.resendButton,
@@ -439,7 +422,6 @@ export default function LoginScreen() {
                     )}
                   </TouchableOpacity>
 
-                  {/* Back to Login */}
                   <TouchableOpacity
                     style={styles.backButton}
                     onPress={handleBackToLogin}
@@ -464,7 +446,7 @@ export default function LoginScreen() {
   );
 }
 
-// Styles remain the same as your original styles
+// Styles remain the same as your original LoginScreen styles
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,

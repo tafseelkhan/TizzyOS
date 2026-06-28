@@ -10,7 +10,6 @@ import {
   Platform,
   Animated,
   FlatList,
-  Dimensions,
   ScrollView,
   Modal,
   Alert,
@@ -19,28 +18,24 @@ import {
   AppState,
   AppStateStatus,
   LogBox,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-// ✅ CORRECT IMPORT FOR FONTSITO
 import Fontisto from 'react-native-vector-icons/Fontisto';
+import FWSOnboardingScreen from '../FWSOnboardingScreen';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {
-  launchImageLibrary,
-  ImageLibraryOptions,
-} from 'react-native-image-picker';
+import { launchImageLibrary } from 'react-native-image-picker';
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 import DeviceInfo from 'react-native-device-info';
-import { vehicleOptions } from '../../shipping/Apply/vehicleCategory';
-
-// Import location and background packages
+import { vehicleOptions } from './vehicleCategory';
 import GetLocation from 'react-native-get-location';
 import BackgroundService from 'react-native-background-actions';
 
-// Ignore specific warnings
+const { width } = Dimensions.get('window');
 LogBox.ignoreLogs(['new NativeEventEmitter']);
 
 const hapticOptions = {
@@ -62,13 +57,13 @@ type RiderRegistrationScreenNavigationProp = NativeStackNavigationProp<
 
 type VehicleCategory = 'Car' | 'Bike' | 'Scooter' | 'Auto' | 'Tempo';
 type IdentityType = 'Aadhaar' | 'VoterID' | 'Passport' | 'PAN';
+type ShippingType = 'TRUCK' | 'RIDER';
 
 const API_BASE_URL = 'http://172.20.10.12:5000';
 
 // ============================================================
 // BATTERY BASED TIMEOUT CALCULATOR
 // ============================================================
-
 class BatteryTimeoutCalculator {
   private static readonly MIN_TIMEOUT_MS = 3000;
   private static readonly MAX_TIMEOUT_MS = 25000;
@@ -77,7 +72,6 @@ class BatteryTimeoutCalculator {
 
   static getForegroundTimeout(batteryLevel: number): number {
     const battery = Math.max(0, Math.min(100, batteryLevel));
-    // Linear interpolation: lower battery = lower timeout
     const timeout =
       this.BASE_FOREGROUND_TIMEOUT_MS * (battery / 100) +
       this.MIN_TIMEOUT_MS * ((100 - battery) / 100);
@@ -101,13 +95,8 @@ class BatteryTimeoutCalculator {
     isBackground: boolean,
   ): number {
     const battery = Math.max(0, Math.min(100, batteryLevel));
-    if (isBackground) {
-      // Background: 5s to 20s
-      return Math.floor(5000 + 15000 * (battery / 100));
-    } else {
-      // Foreground: 3s to 12s
-      return Math.floor(3000 + 9000 * (battery / 100));
-    }
+    if (isBackground) return Math.floor(5000 + 15000 * (battery / 100));
+    else return Math.floor(3000 + 9000 * (battery / 100));
   }
 
   static getAccuracyMode(batteryLevel: number): 'high' | 'balanced' | 'low' {
@@ -116,9 +105,7 @@ class BatteryTimeoutCalculator {
     return 'low';
   }
 
-  // 🔥 FONTOSTO BATTERY ICONS 🔥
   static getBatteryIconName(batteryLevel: number): string {
-    // Fontisto battery icons
     if (batteryLevel > 90) return 'battery-full';
     if (batteryLevel > 70) return 'battery-three-quarters';
     if (batteryLevel > 50) return 'battery-half';
@@ -149,7 +136,6 @@ class BatteryTimeoutCalculator {
 // ============================================================
 // LOGGING UTILITY
 // ============================================================
-
 const Logger = {
   FOREGROUND: '🟢',
   BACKGROUND: '🔵',
@@ -162,28 +148,24 @@ const Logger = {
   SUCCESS: '✅',
   WARNING: '⚠️',
   INFO: '📘',
-
-  log: (tag: string, message: string, data?: any) => {
+  log: (tag: string, message: string, data?: any) =>
     console.log(
       `${tag} [${new Date().toLocaleTimeString()}] ${message}`,
       data ? data : '',
-    );
-  },
+    ),
   logForeground: (message: string, data?: any) =>
     Logger.log(Logger.FOREGROUND, message, data),
   logBackground: (message: string, data?: any) =>
     Logger.log(Logger.BACKGROUND, message, data),
   logGPS: (message: string, coords?: any) => {
-    if (coords?.lat) {
+    if (coords?.lat)
       Logger.log(
         Logger.GPS,
         `${message} | Lat:${coords.lat.toFixed(6)} Lng:${coords.lng.toFixed(
           6,
         )} Acc:${(coords.acc || 0).toFixed(1)}m`,
       );
-    } else {
-      Logger.log(Logger.GPS, message);
-    }
+    else Logger.log(Logger.GPS, message);
   },
   logAPI: (message: string, data?: any) =>
     Logger.log(Logger.API, message, data),
@@ -218,9 +200,8 @@ const Logger = {
 };
 
 // ============================================================
-// LOCATION TRACKER WITH BATTERY-BASED TIMEOUTS
+// LOCATION TRACKER - FIXED TO MATCH BACKEND
 // ============================================================
-
 interface LocationData {
   latitude: number;
   longitude: number;
@@ -242,7 +223,7 @@ class LocationTracker {
   private static instance: LocationTracker;
   private isTracking = false;
   private pollingIntervalId: ReturnType<typeof setInterval> | null = null;
-  private riderId: string | null = null;
+  private shippingId: string | null = null;
   private authToken: string | null = null;
   private lastLocation: LocationData | null = null;
   private appStateSubscription: any = null;
@@ -285,9 +266,7 @@ class LocationTracker {
 
   setBatteryUpdateCallback(callback: BatteryUpdateCallback | null) {
     this.batteryUpdateCallback = callback;
-    if (callback && this.batteryLevel) {
-      callback(this.getBatteryInfo());
-    }
+    if (callback && this.batteryLevel) callback(this.getBatteryInfo());
   }
 
   getBatteryInfo() {
@@ -308,75 +287,96 @@ class LocationTracker {
   }
 
   private backgroundTask = async (taskData: any) => {
-    const { delay, riderId, authToken } = taskData;
-    if (riderId && authToken) {
-      this.riderId = riderId;
+    const { delay, shippingId, authToken } = taskData;
+    if (shippingId && authToken) {
+      this.shippingId = shippingId;
       this.authToken = authToken;
     }
     let bgPollCount = 0;
 
+    console.log('🔵 BACKGROUND TASK STARTED 🔵');
+    console.log(`🔵 Shipping ID: ${this.shippingId}`);
+    console.log(`🔵 Delay: ${delay}ms`);
+
     while (BackgroundService.isRunning()) {
       if (!this.isTracking) {
+        console.log('🔵 Tracking is off, waiting...');
         await this.sleep(delay);
         continue;
       }
       bgPollCount++;
-      Logger.logBackground(`Poll #${bgPollCount}`);
+      console.log(
+        `🔵 BACKGROUND POLL #${bgPollCount} at ${new Date().toISOString()}`,
+      );
+
       try {
-        const startTime = Date.now();
         const location = await this.getCurrentLocationWithRetry(true);
-        const elapsed = Date.now() - startTime;
-        Logger.logBackground(`Location fetch: ${elapsed}ms`);
         if (location) {
           location.isBackground = true;
-          Logger.logGPS(`BACKGROUND SUCCESS`, {
-            lat: location.latitude,
-            lng: location.longitude,
-            acc: location.accuracy,
-          });
+          console.log(
+            `🔵📍 BACKGROUND LOCATION: ${location.latitude}, ${location.longitude}`,
+          );
+          console.log(`🔵📍 Accuracy: ${location.accuracy}m`);
+
           await this.sendLocationToBackend(
             location.latitude,
             location.longitude,
             location.accuracy,
             true,
           );
+        } else {
+          console.log('🔵❌ Failed to get background location');
         }
       } catch (error) {
-        Logger.logError('Background error:', error);
+        console.log('🔵❌ Background location error:', error);
       }
       await this.sleep(delay);
     }
-    Logger.logBackground('Task ended');
+    console.log('🔵 BACKGROUND TASK ENDED 🔵');
+    return;
   };
 
   private sleep = (ms: number) =>
     new Promise(resolve => setTimeout(() => resolve(undefined), ms));
 
   async startBackgroundTask(): Promise<boolean> {
-    if (this.isBackgroundTaskRunning) return true;
-    if (!this.riderId || !this.authToken) return false;
+    if (this.isBackgroundTaskRunning) {
+      console.log('🔵 Background task already running');
+      return true;
+    }
+    if (!this.shippingId || !this.authToken) {
+      console.log(
+        '🔵 Cannot start background task: missing shippingId or authToken',
+      );
+      return false;
+    }
+
     const interval = BatteryTimeoutCalculator.getPollingInterval(
       this.batteryLevel,
       true,
     );
+    console.log(`🔵 Starting background task with interval: ${interval}ms`);
+
     const options = {
       taskName: 'RiderLocationTracking',
       taskTitle: 'TizzyGo',
       taskDesc: `Tracking | Battery:${this.batteryLevel.toFixed(0)}%`,
       taskIcon: { name: 'ic_launcher', type: 'mipmap' },
-      color: '#4F46E5',
+      color: '#2563EB',
       linkingURI: 'yourapp://home',
       parameters: {
         delay: interval,
-        riderId: this.riderId,
+        shippingId: this.shippingId,
         authToken: this.authToken,
       },
     };
     try {
       await BackgroundService.start(this.backgroundTask, options);
       this.isBackgroundTaskRunning = true;
+      console.log('🔵 Background task started successfully');
       return true;
     } catch (error) {
+      console.log('🔵 Failed to start background task:', error);
       return false;
     }
   }
@@ -386,8 +386,10 @@ class LocationTracker {
     try {
       await BackgroundService.stop();
       this.isBackgroundTaskRunning = false;
+      console.log('🔵 Background task stopped');
       return true;
     } catch (error) {
+      console.log('🔵 Failed to stop background task:', error);
       return false;
     }
   }
@@ -397,15 +399,18 @@ class LocationTracker {
   ): Promise<LocationData | null> {
     const mode = isBackground ? 'BACKGROUND' : 'FOREGROUND';
     if (this.isLocationRequestInProgress) {
-      Logger.logWarning(`${mode} request in progress, skipping`);
+      console.log(`${mode} request in progress, skipping`);
       return null;
     }
 
     const now = Date.now();
-    if (now - this.lastRequestTime < this.MIN_REQUEST_INTERVAL)
+    if (now - this.lastRequestTime < this.MIN_REQUEST_INTERVAL) {
+      console.log(`${mode} rate limited, waiting...`);
       await this.sleep(
         this.MIN_REQUEST_INTERVAL - (now - this.lastRequestTime),
       );
+    }
+
     this.isLocationRequestInProgress = true;
     this.lastRequestTime = Date.now();
 
@@ -415,26 +420,26 @@ class LocationTracker {
       while (attempt <= maxRetries) {
         try {
           const startTime = Date.now();
+          console.log(`${mode} getting location (attempt ${attempt + 1})...`);
           const location = await this.getCurrentLocationPromise(isBackground);
+          const elapsed = Date.now() - startTime;
+
           if (location && this.isValidLocation(location)) {
-            Logger.logGPS(`${mode} FOUND in ${Date.now() - startTime}ms`, {
-              lat: location.latitude,
-              lng: location.longitude,
-              acc: location.accuracy,
-            });
+            console.log(`${mode} location obtained in ${elapsed}ms`);
             return location;
+          } else {
+            console.log(`${mode} invalid location received`);
           }
         } catch (error: any) {
-          if (!error?.message?.includes('CANCELLED'))
-            Logger.logError(
-              `${mode} attempt ${attempt + 1} failed:`,
-              error?.message,
-            );
+          console.log(`${mode} attempt ${attempt + 1} failed:`, error?.message);
         }
         attempt++;
-        if (attempt <= maxRetries) await this.sleep(2000);
+        if (attempt <= maxRetries) {
+          console.log(`${mode} retrying in 2 seconds...`);
+          await this.sleep(2000);
+        }
       }
-      Logger.logError(`${mode} all attempts failed`);
+      console.log(`${mode} all attempts failed`);
       return null;
     } finally {
       this.isLocationRequestInProgress = false;
@@ -455,6 +460,7 @@ class LocationTracker {
       timeoutId = setTimeout(() => {
         if (!resolved) {
           resolved = true;
+          console.log(`${mode} location timeout after ${timeoutMs}ms`);
           reject(new Error('Location timeout'));
         }
       }, timeoutMs);
@@ -469,12 +475,19 @@ class LocationTracker {
         maxAge: 0,
       };
 
+      console.log(`${mode} requesting location with options:`, options);
+
       try {
         GetLocation.getCurrentPosition(options)
           .then((loc: any) => {
             if (!resolved) {
               resolved = true;
               clearTimeout(timeoutId);
+              console.log(`${mode} location received:`, {
+                lat: loc.latitude,
+                lng: loc.longitude,
+                acc: loc.accuracy,
+              });
               resolve({
                 latitude: loc.latitude,
                 longitude: loc.longitude,
@@ -488,6 +501,7 @@ class LocationTracker {
             if (!resolved) {
               resolved = true;
               clearTimeout(timeoutId);
+              console.log(`${mode} location error:`, err?.message);
               reject(err);
             }
           });
@@ -522,8 +536,10 @@ class LocationTracker {
         bg = await PermissionsAndroid.check(
           PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
         );
+      console.log(`🔐 Permissions - Fine: ${fine}, Background: ${bg}`);
       return fine && bg;
-    } catch {
+    } catch (error) {
+      console.log('🔐 Permission check error:', error);
       return false;
     }
   }
@@ -566,7 +582,8 @@ class LocationTracker {
         bg = bgResult === PermissionsAndroid.RESULTS.GRANTED;
       }
       return true;
-    } catch {
+    } catch (error) {
+      console.log('🔐 Permission request error:', error);
       return false;
     }
   }
@@ -582,21 +599,41 @@ class LocationTracker {
     });
   }
 
-  async startTracking(riderId: string, authToken: string): Promise<boolean> {
-    if (!(await this.checkRealPermissions())) return false;
-    if (this.isStarting || this.isTracking) return false;
+  async startTracking(shippingId: string, authToken: string): Promise<boolean> {
+    console.log('🎯 START TRACKING CALLED 🎯');
+    console.log(`🎯 Shipping ID: ${shippingId}`);
+    console.log(`🎯 Has Auth Token: ${!!authToken}`);
+
+    if (!(await this.checkRealPermissions())) {
+      console.log('🎯 Permission check failed');
+      return false;
+    }
+    if (this.isStarting || this.isTracking) {
+      console.log(
+        `🎯 Already tracking or starting - isStarting: ${this.isStarting}, isTracking: ${this.isTracking}`,
+      );
+      return false;
+    }
+
     this.isStarting = true;
     try {
       this.stopPollingLoop();
       this.isTracking = true;
-      this.riderId = riderId;
+      this.shippingId = shippingId;
       this.authToken = authToken;
       this.pollCount = this.successCount = this.failCount = 0;
+
+      console.log('🎯 Tracking started successfully');
+      console.log(`🎯 Shipping ID set: ${this.shippingId}`);
+
       await this.updateBatteryLevel();
       this.startPollingLoop();
       await this.startBackgroundTask();
+
+      console.log('🎯 FOREGROUND TRACKING ACTIVE 🎯');
       return true;
     } catch (error) {
+      console.log('🎯 Error starting tracking:', error);
       return false;
     } finally {
       this.isStarting = false;
@@ -604,23 +641,33 @@ class LocationTracker {
   }
 
   async stopTracking(): Promise<void> {
+    console.log('🛑 STOP TRACKING CALLED 🛑');
     if (this.isStopping) return;
     this.isStopping = true;
     try {
       this.isTracking = false;
       this.stopPollingLoop();
       await this.stopBackgroundTask();
-      this.riderId = null;
+      this.shippingId = null;
       this.authToken = null;
       this.lastLocation = null;
+      console.log('🛑 Tracking stopped successfully');
     } finally {
       this.isStopping = false;
     }
   }
 
   private onAppStateChange(nextState: AppStateStatus) {
+    console.log(`📱 App state changed to: ${nextState}`);
     this.appState = nextState;
     this.backgroundMode = nextState === 'background';
+
+    if (nextState === 'active') {
+      console.log('🟢 App in FOREGROUND - Active tracking');
+    } else {
+      console.log('🔵 App in BACKGROUND - Background tracking active');
+    }
+
     if (this.isTracking) this.restartPollingWithNewInterval();
   }
 
@@ -638,6 +685,12 @@ class LocationTracker {
       this.backgroundMode,
     );
     this.currentIntervalMs = interval;
+
+    const mode = this.backgroundMode ? 'BACKGROUND' : 'FOREGROUND';
+    console.log(
+      `🔄 Starting ${mode} polling loop with interval: ${interval}ms`,
+    );
+
     if (this.batteryUpdateCallback)
       this.batteryUpdateCallback(this.getBatteryInfo());
     this.executeLocationPoll();
@@ -651,6 +704,7 @@ class LocationTracker {
     if (this.pollingIntervalId) {
       clearInterval(this.pollingIntervalId);
       this.pollingIntervalId = null;
+      console.log('🔄 Polling loop stopped');
     }
   }
 
@@ -658,14 +712,28 @@ class LocationTracker {
     if (!this.isTracking || this.isPollingInProgress) return;
     this.pollCount++;
     this.isPollingInProgress = true;
+
+    const mode = this.backgroundMode ? 'BACKGROUND' : 'FOREGROUND';
+    console.log(
+      `📍 ${mode} POLL #${this.pollCount} at ${new Date().toISOString()}`,
+    );
+
     try {
       const location = await this.getCurrentLocationWithRetry(false);
       if (location) {
         this.successCount++;
+        console.log(
+          `✅ ${mode} location successful - Total success: ${this.successCount}`,
+        );
         await this.handleLocationUpdate(location);
       } else {
         this.failCount++;
+        console.log(
+          `❌ ${mode} location failed - Total fails: ${this.failCount}`,
+        );
       }
+    } catch (error) {
+      console.log(`❌ ${mode} location error:`, error);
     } finally {
       this.isPollingInProgress = false;
     }
@@ -679,8 +747,12 @@ class LocationTracker {
           this.batteryLevel,
           this.backgroundMode,
         );
-        if (newInterval !== this.currentIntervalMs)
+        if (newInterval !== this.currentIntervalMs) {
+          console.log(
+            `🔋 Battery level changed to ${this.batteryLevel}%, updating interval to ${newInterval}ms`,
+          );
           this.restartPollingWithNewInterval();
+        }
       }
     }, 60000);
     this.updateBatteryLevel();
@@ -698,23 +770,46 @@ class LocationTracker {
   }
 
   private async handleLocationUpdate(location: LocationData) {
-    if (!this.isTracking || !this.riderId || !this.authToken) return;
+    if (!this.isTracking || !this.shippingId || !this.authToken) {
+      console.log('⚠️ Cannot handle location update - missing data');
+      return;
+    }
+
     const { latitude, longitude, accuracy } = location;
-    if (latitude === 0 && longitude === 0) return;
+    if (latitude === 0 && longitude === 0) {
+      console.log('⚠️ Invalid location (0,0), skipping');
+      return;
+    }
+
     if (this.lastLocation) {
       const distance = Math.hypot(
         (latitude - this.lastLocation.latitude) * 111000,
         (longitude - this.lastLocation.longitude) * 111000,
       );
-      if (distance < 10 && Math.abs(accuracy - this.lastLocation.accuracy) < 5)
+      if (
+        distance < 10 &&
+        Math.abs(accuracy - this.lastLocation.accuracy) < 5
+      ) {
+        console.log(
+          `📍 Location change < 10m (${distance.toFixed(1)}m), skipping update`,
+        );
         return;
+      }
+      console.log(`📍 Location changed by ${distance.toFixed(1)}m`);
     }
+
     this.lastLocation = {
       latitude,
       longitude,
       accuracy,
       timestamp: Date.now(),
     };
+
+    const mode = this.backgroundMode ? 'BACKGROUND' : 'FOREGROUND';
+    console.log(
+      `📤 Sending ${mode} location to backend: ${latitude}, ${longitude}`,
+    );
+
     await this.sendLocationToBackend(latitude, longitude, accuracy, false);
   }
 
@@ -724,16 +819,35 @@ class LocationTracker {
     acc: number,
     isBg: boolean = false,
   ) {
-    if (!this.riderId || !this.authToken) return;
+    if (!this.shippingId || !this.authToken) {
+      console.log('⚠️ Cannot send location - missing shippingId or authToken');
+      return;
+    }
+
+    const mode = isBg ? 'BACKGROUND' : 'FOREGROUND';
+    console.log(`🌐 Sending ${mode} location to API...`);
+    console.log(`🌐 URL: ${API_BASE_URL}/api/track/rider/location`);
+    console.log(`🌐 Payload:`, {
+      shippingId: this.shippingId,
+      action: 'update',
+      latitude: lat,
+      longitude: lng,
+      accuracy: acc,
+      timestamp: new Date().toISOString(),
+      updateType: 'tracking',
+      batteryLevel: this.batteryLevel,
+      isBackground: isBg,
+    });
+
     try {
-      await fetch(`${API_BASE_URL}/api/shipping/rider/location`, {
+      const response = await fetch(`${API_BASE_URL}/api/track/rider/location`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${this.authToken}`,
         },
         body: JSON.stringify({
-          riderId: this.riderId,
+          shippingId: this.shippingId,
           action: 'update',
           latitude: lat,
           longitude: lng,
@@ -744,12 +858,22 @@ class LocationTracker {
           isBackground: isBg,
         }),
       });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        console.log(`✅ ${mode} location sent successfully!`);
+        console.log(`✅ Response:`, data);
+      } else {
+        console.log(`❌ ${mode} location send failed:`, data);
+      }
     } catch (error) {
-      Logger.logError('Send failed:', error);
+      console.log(`❌ ${mode} location network error:`, error);
     }
   }
 
   destroy() {
+    console.log('🗑️ Destroying LocationTracker');
     this.stopTracking();
     if (this.appStateSubscription) this.appStateSubscription.remove();
     if (this.batteryInterval) clearInterval(this.batteryInterval);
@@ -805,8 +929,162 @@ async function requestStoragePermission(): Promise<boolean> {
 }
 
 // ============================================================
-// BATTERY INFO CARD COMPONENT
+// FULL SCREEN LOADER COMPONENT
 // ============================================================
+const FullScreenLoader: React.FC<{ visible: boolean; message?: string }> = ({
+  visible,
+  message = 'Submitting your application...',
+}) => {
+  if (!visible) return null;
+
+  return (
+    <View style={styles.fullScreenLoader}>
+      <View style={styles.loaderCard}>
+        <ActivityIndicator size="large" color="#2563EB" />
+        <Text style={styles.loaderTitle}>Please Wait</Text>
+        <Text style={styles.loaderMessage}>{message}</Text>
+        <View style={styles.loaderDots}>
+          <View style={[styles.dot, styles.dot1]} />
+          <View style={[styles.dot, styles.dot2]} />
+          <View style={[styles.dot, styles.dot3]} />
+        </View>
+      </View>
+    </View>
+  );
+};
+
+// ============================================================
+// UI COMPONENTS - PURE BLUE THEME
+// ============================================================
+
+const FormCard: React.FC<{
+  title: string;
+  icon: string;
+  children: React.ReactNode;
+}> = ({ title, icon, children }) => (
+  <View style={styles.formCard}>
+    <View style={styles.formCardHeader}>
+      <Icon name={icon} size={22} color="#2563EB" />
+      <Text style={styles.formCardTitle}>{title}</Text>
+    </View>
+    <View style={styles.formCardContent}>{children}</View>
+  </View>
+);
+
+const InputField: React.FC<{
+  label: string;
+  value: string;
+  onChangeText: (text: string) => void;
+  placeholder: string;
+  icon: string;
+  required?: boolean;
+  keyboardType?: 'default' | 'numeric' | 'email-address';
+  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  maxLength?: number;
+}> = ({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  icon,
+  required = false,
+  keyboardType = 'default',
+  autoCapitalize = 'none',
+  maxLength,
+}) => (
+  <View style={styles.inputFieldContainer}>
+    <View style={styles.inputLabelRow}>
+      <Text style={styles.inputLabelText}>{label}</Text>
+      {required && <Text style={styles.requiredStar}>*</Text>}
+    </View>
+    <View style={styles.inputFieldWrapper}>
+      <Icon
+        name={icon}
+        size={20}
+        color="#2563EB"
+        style={styles.inputFieldIcon}
+      />
+      <TextInput
+        style={styles.inputField}
+        placeholder={placeholder}
+        placeholderTextColor="#94A3B8"
+        value={value}
+        onChangeText={onChangeText}
+        keyboardType={keyboardType}
+        autoCapitalize={autoCapitalize}
+        maxLength={maxLength}
+      />
+    </View>
+  </View>
+);
+
+const SelectField: React.FC<{
+  label: string;
+  value: string | null;
+  onPress: () => void;
+  placeholder: string;
+  icon: string;
+  required?: boolean;
+}> = ({ label, value, onPress, placeholder, icon, required = false }) => (
+  <View style={styles.inputFieldContainer}>
+    <View style={styles.inputLabelRow}>
+      <Text style={styles.inputLabelText}>{label}</Text>
+      {required && <Text style={styles.requiredStar}>*</Text>}
+    </View>
+    <TouchableOpacity style={styles.selectField} onPress={onPress}>
+      <Icon
+        name={value ? 'check-circle' : icon}
+        size={20}
+        color={value ? '#10B981' : '#2563EB'}
+        style={styles.selectFieldIcon}
+      />
+      <Text
+        style={[
+          styles.selectFieldText,
+          !value && styles.selectFieldPlaceholder,
+        ]}
+      >
+        {value || placeholder}
+      </Text>
+      <Icon name="keyboard-arrow-down" size={22} color="#2563EB" />
+    </TouchableOpacity>
+  </View>
+);
+
+const UploadField: React.FC<{
+  label: string;
+  imageUri: string | null;
+  onPress: () => void;
+  uploading: boolean;
+  required?: boolean;
+}> = ({ label, imageUri, onPress, uploading, required = false }) => (
+  <View style={styles.inputFieldContainer}>
+    <View style={styles.inputLabelRow}>
+      <Text style={styles.inputLabelText}>{label}</Text>
+      {required && <Text style={styles.requiredStar}>*</Text>}
+    </View>
+    <TouchableOpacity
+      style={[styles.uploadField, imageUri && styles.uploadFieldSuccess]}
+      onPress={onPress}
+      disabled={uploading}
+    >
+      {uploading ? (
+        <ActivityIndicator color="#FFFFFF" size="small" />
+      ) : (
+        <>
+          <Icon
+            name={imageUri ? 'check-circle' : 'cloud-upload'}
+            size={22}
+            color="#FFFFFF"
+          />
+          <Text style={styles.uploadFieldText}>
+            {imageUri ? 'Uploaded Successfully' : `Upload ${label}`}
+          </Text>
+        </>
+      )}
+    </TouchableOpacity>
+  </View>
+);
 
 const BatteryInfoCard: React.FC<{
   batteryLevel: number;
@@ -814,125 +1092,67 @@ const BatteryInfoCard: React.FC<{
   bgTimeout: number;
   interval: number;
   accuracyMode: string;
-}> = ({ batteryLevel, fgTimeout, bgTimeout, interval, accuracyMode }) => {
-  return (
-    <View style={styles.batteryCard}>
-      <View style={styles.batteryCardHeader}>
-        <Icon name="battery-charging-full" size={20} color="#4F46E5" />
-        <Text style={styles.batteryCardTitle}>Battery & Performance</Text>
-      </View>
-
-      <View style={styles.batteryStatsRow}>
-        <View style={styles.batteryStatItem}>
-          <Fontisto
-            name={BatteryTimeoutCalculator.getBatteryIconName(batteryLevel)}
-            size={28}
-            color={BatteryTimeoutCalculator.getBatteryColor(batteryLevel)}
-          />
-          <Text
-            style={[
-              styles.batteryStatValue,
-              { color: BatteryTimeoutCalculator.getBatteryColor(batteryLevel) },
-            ]}
-          >
-            {batteryLevel.toFixed(0)}%
-          </Text>
-          <Text style={styles.batteryStatLabel}>Battery Level</Text>
-        </View>
-
-        <View style={styles.batteryStatItem}>
-          <Icon
-            name={BatteryTimeoutCalculator.getAccuracyIconName(accuracyMode)}
-            size={28}
-            color={BatteryTimeoutCalculator.getAccuracyColor(accuracyMode)}
-          />
-          <Text
-            style={[
-              styles.batteryStatValue,
-              {
-                color: BatteryTimeoutCalculator.getAccuracyColor(accuracyMode),
-              },
-            ]}
-          >
-            {accuracyMode.toUpperCase()}
-          </Text>
-          <Text style={styles.batteryStatLabel}>Accuracy Mode</Text>
-        </View>
-      </View>
-
-      <View style={styles.batteryProgressBar}>
-        <View
-          style={[
-            styles.batteryProgressFill,
-            {
-              width: `${batteryLevel}%`,
-              backgroundColor:
-                BatteryTimeoutCalculator.getBatteryColor(batteryLevel),
-            },
-          ]}
-        />
-      </View>
-
-      <View style={styles.timeoutRow}>
-        <View style={styles.timeoutItem}>
-          <Icon name="gps-fixed" size={18} color="#6B7280" />
-          <Text style={styles.timeoutLabel}>FG Timeout</Text>
-          <Text style={styles.timeoutValue}>
-            {(fgTimeout / 1000).toFixed(0)}s
-          </Text>
-        </View>
-        <View style={styles.timeoutItem}>
-          <Icon name="nightlight-round" size={18} color="#6B7280" />
-          <Text style={styles.timeoutLabel}>BG Timeout</Text>
-          <Text style={styles.timeoutValue}>
-            {(bgTimeout / 1000).toFixed(0)}s
-          </Text>
-        </View>
-        <View style={styles.timeoutItem}>
-          <Icon name="update" size={18} color="#6B7280" />
-          <Text style={styles.timeoutLabel}>Interval</Text>
-          <Text style={styles.timeoutValue}>
-            {(interval / 1000).toFixed(0)}s
-          </Text>
-        </View>
-      </View>
-
-      <View
-        style={[
-          styles.batteryModeBadge,
-          {
-            backgroundColor:
-              BatteryTimeoutCalculator.getBatteryColor(batteryLevel) + '20',
-          },
-        ]}
-      >
-        <Icon
-          name={
-            batteryLevel > 50
-              ? 'speed'
-              : batteryLevel > 20
-              ? 'balance'
-              : 'battery-saver'
-          }
-          size={16}
+}> = ({ batteryLevel, fgTimeout, bgTimeout, interval, accuracyMode }) => (
+  <View style={styles.batteryCard}>
+    <View style={styles.batteryCardHeader}>
+      <Icon name="battery-charging-full" size={22} color="#2563EB" />
+      <Text style={styles.batteryCardTitle}>Battery & Performance</Text>
+    </View>
+    <View style={styles.batteryStatsRow}>
+      <View style={styles.batteryStatItem}>
+        <Fontisto
+          name={BatteryTimeoutCalculator.getBatteryIconName(batteryLevel)}
+          size={32}
           color={BatteryTimeoutCalculator.getBatteryColor(batteryLevel)}
         />
         <Text
           style={[
-            styles.batteryModeText,
+            styles.batteryStatValue,
             { color: BatteryTimeoutCalculator.getBatteryColor(batteryLevel) },
           ]}
         >
-          {batteryLevel > 50
-            ? 'High Performance Mode'
-            : batteryLevel > 20
-            ? 'Balanced Mode'
-            : 'Battery Saver Mode'}
+          {batteryLevel.toFixed(0)}%
         </Text>
+        <Text style={styles.batteryStatLabel}>Battery</Text>
+      </View>
+      <View style={styles.batteryStatItem}>
+        <Icon
+          name={BatteryTimeoutCalculator.getAccuracyIconName(accuracyMode)}
+          size={32}
+          color={BatteryTimeoutCalculator.getAccuracyColor(accuracyMode)}
+        />
+        <Text
+          style={[
+            styles.batteryStatValue,
+            { color: BatteryTimeoutCalculator.getAccuracyColor(accuracyMode) },
+          ]}
+        >
+          {accuracyMode.toUpperCase()}
+        </Text>
+        <Text style={styles.batteryStatLabel}>Accuracy</Text>
+      </View>
+      <View style={styles.batteryStatItem}>
+        <Icon name="speed" size={32} color="#2563EB" />
+        <Text style={[styles.batteryStatValue, { color: '#2563EB' }]}>
+          {Math.round(interval / 1000)}s
+        </Text>
+        <Text style={styles.batteryStatLabel}>Interval</Text>
       </View>
     </View>
-  );
-};
+    <View style={styles.batteryProgressBar}>
+      <View
+        style={[
+          styles.batteryProgressFill,
+          {
+            width: `${batteryLevel}%`,
+            backgroundColor:
+              BatteryTimeoutCalculator.getBatteryColor(batteryLevel),
+          },
+        ]}
+      />
+    </View>
+  </View>
+);
 
 // ============================================================
 // MAIN SCREEN COMPONENT
@@ -952,6 +1172,12 @@ interface ShippingData {
   isOnline: boolean;
   lastOnlineAt?: string;
   lastOfflineAt?: string;
+  shippingType?: string;
+  city?: string;
+  state?: string;
+  vehicleCategory?: string;
+  vehicleNumber?: string;
+  maxOrdersPerDay?: number;
   kyc?: {
     drivingLicenseNumber: string;
     drivingLicenseImage: string;
@@ -972,16 +1198,17 @@ const RiderRegistrationScreen: React.FC = () => {
   const navigation = useNavigation<RiderRegistrationScreenNavigationProp>();
   const isMounted = useRef(true);
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(50)).current;
+  const slideAnim = useRef(new Animated.Value(30)).current;
 
-  // Battery state
   const [batteryLevel, setBatteryLevel] = useState<number>(100);
   const [fgTimeout, setFgTimeout] = useState<number>(15000);
   const [bgTimeout, setBgTimeout] = useState<number>(20000);
   const [pollingInterval, setPollingInterval] = useState<number>(10000);
   const [accuracyMode, setAccuracyMode] = useState<string>('high');
 
-  // Form state
+  const [shippingType, setShippingType] = useState<ShippingType | null>(null);
+  const [city, setCity] = useState<string>('');
+  const [state, setState] = useState<string>('');
   const [name, setName] = useState<string>('');
   const [vehicleCategory, setVehicleCategory] =
     useState<VehicleCategory | null>(null);
@@ -1012,13 +1239,19 @@ const RiderRegistrationScreen: React.FC = () => {
   const [showBrandModal, setShowBrandModal] = useState<boolean>(false);
   const [showModelModal, setShowModelModal] = useState<boolean>(false);
   const [showIdentityModal, setShowIdentityModal] = useState<boolean>(false);
+  const [showShippingTypeModal, setShowShippingTypeModal] =
+    useState<boolean>(false);
   const [allModels, setAllModels] = useState<ModelItem[]>([]);
   const [allBrands, setAllBrands] = useState<ItemType<string>[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
+  const [loadingMessage, setLoadingMessage] = useState<string>(
+    'Submitting your application...',
+  );
   const [uploadingImage, setUploadingImage] = useState<string | null>(null);
   const [checkingExisting, setCheckingExisting] = useState<boolean>(true);
   const [shippingData, setShippingData] = useState<ShippingData | null>(null);
   const [shippingId, setShippingId] = useState<string | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(false);
 
   const vehicleCategories: ItemType<VehicleCategory>[] = [
     { label: 'Car', value: 'Car' },
@@ -1033,23 +1266,27 @@ const RiderRegistrationScreen: React.FC = () => {
     { label: 'Passport', value: 'Passport' },
     { label: 'PAN Card', value: 'PAN' },
   ];
+  const shippingTypes: ItemType<ShippingType>[] = [
+    { label: 'Truck / Heavy Vehicle', value: 'TRUCK' },
+    { label: 'Rider / Bike / Scooter', value: 'RIDER' },
+  ];
 
   const checkPermissionStatus = useCallback(async () => {
     const tracker = LocationTracker.getInstance();
-    setHasLocationPermission(await tracker.checkRealPermissions());
+    const hasPermission = await tracker.checkRealPermissions();
+    setHasLocationPermission(hasPermission);
+    console.log(`🔐 Permission status: ${hasPermission}`);
   }, []);
 
   const loadVehicleBrands = useCallback((category: VehicleCategory) => {
-    if (vehicleOptions[category]) {
+    if (vehicleOptions[category])
       setAllBrands(
         Object.keys(vehicleOptions[category]).map(b => ({
           label: b,
           value: b,
         })),
       );
-    } else {
-      setAllBrands([]);
-    }
+    else setAllBrands([]);
     setVehicleBrand(null);
     setVehicleModel(null);
     setAllModels([]);
@@ -1057,7 +1294,7 @@ const RiderRegistrationScreen: React.FC = () => {
 
   const loadVehicleModels = useCallback(
     (category: VehicleCategory, brand: string) => {
-      if (vehicleOptions[category]?.[brand]) {
+      if (vehicleOptions[category]?.[brand])
         setAllModels(
           vehicleOptions[category][brand].map((m: string, i: number) => ({
             label: m,
@@ -1065,9 +1302,7 @@ const RiderRegistrationScreen: React.FC = () => {
             originalIndex: i,
           })),
         );
-      } else {
-        setAllModels([]);
-      }
+      else setAllModels([]);
       setVehicleModel(null);
     },
     [],
@@ -1099,7 +1334,6 @@ const RiderRegistrationScreen: React.FC = () => {
       }),
     ]).start();
     checkPermissionStatus();
-
     const tracker = LocationTracker.getInstance();
     tracker.setBatteryUpdateCallback(info => {
       setBatteryLevel(info.level);
@@ -1108,7 +1342,6 @@ const RiderRegistrationScreen: React.FC = () => {
       setPollingInterval(info.interval);
       setAccuracyMode(info.accuracyMode);
     });
-
     return () => {
       isMounted.current = false;
       tracker.destroy();
@@ -1116,8 +1349,10 @@ const RiderRegistrationScreen: React.FC = () => {
   }, []);
 
   const handleRequestPermissions = async () => {
+    console.log('🔐 Requesting location permissions...');
     const granted = await requestLocationPermission();
     setHasLocationPermission(granted);
+    console.log(`🔐 Permission granted: ${granted}`);
     Toast.show({
       type: granted ? 'success' : 'error',
       text1: granted ? 'Permission Granted' : 'Permission Required',
@@ -1126,39 +1361,61 @@ const RiderRegistrationScreen: React.FC = () => {
   };
 
   const goOnlineWithLocation = async (
-    riderId: string,
+    shippingId: string,
     authToken: string,
   ): Promise<boolean> => {
+    console.log('🟢 GOING ONLINE WITH LOCATION 🟢');
+    console.log(`🟢 Shipping ID: ${shippingId}`);
+
     try {
+      console.log('📍 Getting initial location...');
       const { lat, lng } = await getLocationOnce();
-      await fetch(`${API_BASE_URL}/api/shipping/rider/location`, {
+      console.log(`📍 Initial location: ${lat}, ${lng}`);
+
+      console.log('🌐 Sending start action to backend...');
+      await fetch(`${API_BASE_URL}/api/track/rider/location`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${authToken}`,
         },
         body: JSON.stringify({
-          riderId,
+          shippingId: shippingId,
           action: 'start',
           latitude: lat,
           longitude: lng,
         }),
       });
-    } catch (error) {}
+      console.log('✅ Start action sent successfully');
+    } catch (error) {
+      console.log('⚠️ Error sending start action:', error);
+    }
+
+    console.log('🎯 Starting continuous tracking...');
     const success = await LocationTracker.getInstance().startTracking(
-      riderId,
+      shippingId,
       authToken,
     );
-    if (isMounted.current && success) setIsTrackingOn(true);
+
+    if (isMounted.current && success) {
+      setIsTrackingOn(true);
+      console.log('✅ Tracking started successfully');
+    } else {
+      console.log('❌ Failed to start tracking');
+    }
     return success;
   };
 
   const startLiveTracking = async (
-    riderId: string,
+    shippingId: string,
     authToken: string,
   ): Promise<boolean> => {
+    console.log('📍 START LIVE TRACKING 📍');
+    console.log(`📍 Shipping ID: ${shippingId}`);
+
     const tracker = LocationTracker.getInstance();
     if (!(await tracker.checkRealPermissions())) {
+      console.log('❌ No location permission');
       Toast.show({
         type: 'error',
         text1: 'Permission Required',
@@ -1166,9 +1423,11 @@ const RiderRegistrationScreen: React.FC = () => {
       });
       return false;
     }
-    const success = await tracker.startTracking(riderId, authToken);
+
+    const success = await tracker.startTracking(shippingId, authToken);
     if (success && isMounted.current) {
       setIsTrackingOn(true);
+      console.log('✅ Live tracking started');
       Toast.show({
         type: 'success',
         text1: 'Location Tracking Started',
@@ -1176,17 +1435,23 @@ const RiderRegistrationScreen: React.FC = () => {
       });
       return true;
     }
+    console.log('❌ Failed to start live tracking');
     return false;
   };
 
   const stopLiveTracking = async (): Promise<boolean> => {
+    console.log('📍 STOP LIVE TRACKING 📍');
     await LocationTracker.getInstance().stopTracking();
-    if (isMounted.current) setIsTrackingOn(false);
+    if (isMounted.current) {
+      setIsTrackingOn(false);
+      console.log('✅ Live tracking stopped');
+    }
     return true;
   };
 
   useFocusEffect(
     useCallback(() => {
+      console.log('📱 Screen focused - fetching shipping data');
       fetchShippingData();
       checkPermissionStatus();
     }, []),
@@ -1194,7 +1459,9 @@ const RiderRegistrationScreen: React.FC = () => {
 
   const getAuthToken = async (): Promise<string | null> => {
     try {
-      return await AsyncStorage.getItem('authToken');
+      const token = await AsyncStorage.getItem('authToken');
+      console.log(`🔑 Auth token present: ${!!token}`);
+      return token;
     } catch {
       return null;
     }
@@ -1206,9 +1473,13 @@ const RiderRegistrationScreen: React.FC = () => {
       setCheckingExisting(true);
       const token = await getAuthToken();
       if (!token) {
+        console.log('No auth token found');
         setCheckingExisting(false);
+        setShowOnboarding(true);
         return;
       }
+
+      console.log('Fetching shipping data from backend...');
       const res = await fetch(`${API_BASE_URL}/api/shipping/form/check`, {
         method: 'GET',
         headers: {
@@ -1216,15 +1487,19 @@ const RiderRegistrationScreen: React.FC = () => {
           Authorization: `Bearer ${token}`,
         },
       });
+
       if (res.ok) {
         const data = await res.json();
         if (data.exists && data.shippingData) {
           const reg = data.shippingData;
+          console.log(`✅ Shipping data found: ${reg._id}`);
           setShippingId(reg._id);
           setShippingData(reg);
           setIsOnline(reg.isOnline || false);
           setLastOnlineAt(reg.lastOnlineAt || null);
           setLastOfflineAt(reg.lastOfflineAt || null);
+          setShowOnboarding(false);
+
           if (reg.kyc && isMounted.current) {
             setDrivingLicenseNumber(reg.kyc.drivingLicenseNumber || '');
             setIdentityType((reg.kyc.identityType as IdentityType) || null);
@@ -1233,19 +1508,31 @@ const RiderRegistrationScreen: React.FC = () => {
               setDrivingLicenseImage(reg.kyc.drivingLicenseImage);
             if (reg.kyc.identityImage) setIdentityImage(reg.kyc.identityImage);
           }
+
           const approved = reg.status === 'approved';
           const kycVerified =
             reg.kyc?.status === 'verified' ||
             reg.kyc?.verified === true ||
             reg.kycVerified === true;
+
           if (approved && kycVerified && reg.isOnline) {
+            console.log('🔄 Restarting tracking for existing online session');
             await LocationTracker.getInstance().startTracking(reg._id, token);
             if (isMounted.current) setIsTrackingOn(true);
           }
+        } else {
+          console.log('No shipping data found');
+          setShowOnboarding(true);
         }
       } else if (res.status === 404) {
-        if (isMounted.current) setShippingData(null);
+        console.log('No shipping registration found (404)');
+        if (isMounted.current) {
+          setShippingData(null);
+          setShowOnboarding(true);
+        }
       }
+    } catch (error) {
+      console.log('Error fetching shipping data:', error);
     } finally {
       if (isMounted.current) setCheckingExisting(false);
     }
@@ -1260,11 +1547,13 @@ const RiderRegistrationScreen: React.FC = () => {
       });
       return;
     }
+
     const approved = shippingData.status === 'approved';
     const kycVerified =
       shippingData.kyc?.status === 'verified' ||
       shippingData.kyc?.verified === true ||
       shippingData.kycVerified === true;
+
     if (!approved || !kycVerified) {
       Toast.show({
         type: 'error',
@@ -1274,16 +1563,21 @@ const RiderRegistrationScreen: React.FC = () => {
       ReactNativeHapticFeedback.trigger('notificationError', hapticOptions);
       return;
     }
+
     if (isUpdatingOnlineStatus) return;
     setIsUpdatingOnlineStatus(true);
+
     try {
       const token = await getAuthToken();
       if (!token) {
         navigation.navigate('Login');
         return;
       }
+
       const newStatus = !isOnline;
+      console.log(`🔄 Toggling online status to: ${newStatus}`);
       setIsOnline(newStatus);
+
       const res = await fetch(`${API_BASE_URL}/api/shipper/online-status`, {
         method: 'POST',
         headers: {
@@ -1292,7 +1586,9 @@ const RiderRegistrationScreen: React.FC = () => {
         },
         body: JSON.stringify({ isOnline: newStatus }),
       });
+
       const data = await res.json();
+
       if (res.ok && data.success) {
         const now = new Date().toISOString();
         if (data.data) {
@@ -1302,11 +1598,14 @@ const RiderRegistrationScreen: React.FC = () => {
           if (newStatus) setLastOnlineAt(now);
           else setLastOfflineAt(now);
         }
+
         ReactNativeHapticFeedback.trigger(
           newStatus ? 'notificationSuccess' : 'notificationWarning',
           hapticOptions,
         );
+
         if (newStatus) {
+          console.log('🟢 Going online - starting location tracking');
           await goOnlineWithLocation(shippingData._id, token);
           Toast.show({
             type: 'success',
@@ -1314,6 +1613,7 @@ const RiderRegistrationScreen: React.FC = () => {
             text2: 'Location tracking enabled',
           });
         } else {
+          console.log('🔴 Going offline - stopping location tracking');
           await stopLiveTracking();
           Toast.show({
             type: 'info',
@@ -1326,6 +1626,7 @@ const RiderRegistrationScreen: React.FC = () => {
         throw new Error(data.message || 'Failed to update');
       }
     } catch (error: any) {
+      console.log('Error toggling online status:', error);
       Toast.show({
         type: 'error',
         text1: 'Update Failed',
@@ -1347,6 +1648,7 @@ const RiderRegistrationScreen: React.FC = () => {
       });
       return;
     }
+
     if (!isOnline) {
       Toast.show({
         type: 'error',
@@ -1355,15 +1657,19 @@ const RiderRegistrationScreen: React.FC = () => {
       });
       return;
     }
+
     if (isUpdatingTrackingStatus) return;
     setIsUpdatingTrackingStatus(true);
+
     try {
       const token = await getAuthToken();
       if (!token) {
         navigation.navigate('Login');
         return;
       }
+
       if (!isTrackingOn) {
+        console.log('📍 Starting location tracking');
         const success = await startLiveTracking(shippingData._id, token);
         if (success && isMounted.current) {
           ReactNativeHapticFeedback.trigger(
@@ -1377,6 +1683,7 @@ const RiderRegistrationScreen: React.FC = () => {
           });
         }
       } else {
+        console.log('📍 Stopping location tracking');
         const success = await stopLiveTracking();
         if (success && isMounted.current) {
           ReactNativeHapticFeedback.trigger(
@@ -1391,6 +1698,7 @@ const RiderRegistrationScreen: React.FC = () => {
         }
       }
     } catch (error: any) {
+      console.log('Error toggling tracking:', error);
       Toast.show({
         type: 'error',
         text1: 'Update Failed',
@@ -1461,7 +1769,10 @@ const RiderRegistrationScreen: React.FC = () => {
 
   const validateForm = (): boolean => {
     const checks: [boolean, string][] = [
-      [!name.trim(), 'Enter name'],
+      [!name.trim(), 'Enter full name'],
+      [!shippingType, 'Select shipping type'],
+      [!city.trim(), 'Enter city'],
+      [!state.trim(), 'Enter state'],
       [!vehicleCategory, 'Select vehicle category'],
       [!vehicleBrand, 'Select brand'],
       [!vehicleModel, 'Select model'],
@@ -1508,6 +1819,9 @@ const RiderRegistrationScreen: React.FC = () => {
   const proceedWithRegistration = async () => {
     const formData = {
       name: name.trim(),
+      shippingType: shippingType,
+      city: city.trim(),
+      state: state.trim(),
       vehicleCategory,
       vehicleBrand,
       vehicleModel,
@@ -1530,11 +1844,26 @@ const RiderRegistrationScreen: React.FC = () => {
     navigation.navigate('RegistrationSuccess', { shippingId: newId });
   };
 
+  const delay = (ms: number): Promise<void> => {
+    return new Promise(resolve => {
+      setTimeout(() => {
+        resolve();
+      }, ms);
+    });
+  };
+
   const handleSubmit = async () => {
     if (!validateForm()) return;
+
+    setLoadingMessage('Validating your information...');
     setLoading(true);
+
     try {
+      setLoadingMessage('Uploading documents to secure server...');
+      await delay(500);
+      setLoadingMessage('Submitting registration to authorities...');
       await proceedWithRegistration();
+      setLoadingMessage('Registration successful! Redirecting...');
     } catch (error: any) {
       if (error.message.includes('already'))
         Alert.alert('Duplicate', error.message);
@@ -1555,10 +1884,14 @@ const RiderRegistrationScreen: React.FC = () => {
   const handleViewStatus = () => {
     if (shippingId) navigation.navigate('RegistrationSuccess', { shippingId });
   };
+
   const handleNewRegistration = () => {
     setShippingData(null);
     setShippingId(null);
     setName('');
+    setShippingType(null);
+    setCity('');
+    setState('');
     setVehicleCategory(null);
     setVehicleBrand(null);
     setVehicleModel(null);
@@ -1579,12 +1912,19 @@ const RiderRegistrationScreen: React.FC = () => {
 
   if (checkingExisting) {
     return (
-      <SafeAreaView style={[styles.safeArea, styles.centerContent]}>
-        <ActivityIndicator size="large" color="#4F46E5" />
-        <Text style={styles.checkingText}>Checking registration status...</Text>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.centerContent}>
+          <ActivityIndicator size="large" color="#2563EB" />
+          <Text style={styles.checkingText}>
+            Checking registration status...
+          </Text>
+        </View>
       </SafeAreaView>
     );
   }
+
+  if (showOnboarding)
+    return <FWSOnboardingScreen onComplete={() => setShowOnboarding(false)} />;
 
   if (shippingData) {
     const isApproved = shippingData.status === 'approved';
@@ -1600,26 +1940,26 @@ const RiderRegistrationScreen: React.FC = () => {
           contentContainerStyle={styles.scrollContainer}
           showsVerticalScrollIndicator={false}
         >
-          {/* Status Header */}
-          <View style={styles.statusHeader}>
-            <View style={styles.statusHeaderIcon}>
-              <Icon
-                name={showSwiper ? 'verified' : 'pending'}
-                size={28}
-                color="#FFF"
-              />
-            </View>
-            <View>
-              <Text style={styles.statusHeaderTitle}>
-                Delivery Partner Dashboard
-              </Text>
-              <Text style={styles.statusHeaderSub}>
-                {showSwiper ? 'Account activated' : 'Complete verification'}
-              </Text>
+          <View style={styles.dashboardHeader}>
+            <View style={styles.dashboardHeaderContent}>
+              <View style={styles.dashboardHeaderIcon}>
+                <Icon
+                  name={showSwiper ? 'verified' : 'pending'}
+                  size={32}
+                  color="#FFFFFF"
+                />
+              </View>
+              <View>
+                <Text style={styles.dashboardHeaderTitle}>
+                  Delivery Partner
+                </Text>
+                <Text style={styles.dashboardHeaderSub}>
+                  {showSwiper ? '✓ Account Active' : '⏳ Awaiting Verification'}
+                </Text>
+              </View>
             </View>
           </View>
 
-          {/* Battery Info Card */}
           <BatteryInfoCard
             batteryLevel={batteryLevel}
             fgTimeout={fgTimeout}
@@ -1628,73 +1968,69 @@ const RiderRegistrationScreen: React.FC = () => {
             accuracyMode={accuracyMode}
           />
 
-          <View style={styles.statusCard}>
-            <View style={styles.profileSection}>
-              <Icon name="person" size={24} color="#4F46E5" />
+          <View style={styles.dashboardCard}>
+            <View style={styles.profileRow}>
+              <View style={styles.profileAvatar}>
+                <Text style={styles.profileAvatarText}>
+                  {shippingData.name.charAt(0).toUpperCase()}
+                </Text>
+              </View>
               <View style={styles.profileInfo}>
                 <Text style={styles.profileName}>{shippingData.name}</Text>
                 <Text style={styles.profileVehicle}>
-                  {shippingData.vehicleBrand} • {shippingData.vehicleModel}
+                  {shippingData.vehicleBrand} {shippingData.vehicleModel}
                 </Text>
               </View>
               <View
                 style={[
-                  styles.statusBadge,
+                  styles.statusChip,
                   shippingData.status === 'approved'
-                    ? styles.statusApproved
+                    ? styles.statusChipApproved
                     : shippingData.status === 'pending'
-                    ? styles.statusPending
-                    : styles.statusDeclined,
+                    ? styles.statusChipPending
+                    : styles.statusChipDeclined,
                 ]}
               >
-                <Text style={styles.statusBadgeText}>
+                <Text style={styles.statusChipText}>
                   {shippingData.status.toUpperCase()}
                 </Text>
               </View>
             </View>
 
             {shippingData.kyc && (
-              <View style={styles.kycCard}>
-                <View style={styles.kycHeader}>
+              <View style={styles.kycSection}>
+                <View style={styles.kycSectionHeader}>
                   <Icon
-                    name={isKycVerified ? 'verified-user' : 'pending-actions'}
-                    size={22}
+                    name="verified-user"
+                    size={20}
                     color={isKycVerified ? '#10B981' : '#F59E0B'}
                   />
-                  <Text style={styles.kycTitle}>KYC Status</Text>
+                  <Text style={styles.kycSectionTitle}>KYC Verification</Text>
                   <View
                     style={[
-                      styles.kycStatusBadge,
+                      styles.kycBadge,
                       isKycVerified
-                        ? styles.kycStatusVerified
-                        : styles.kycStatusPending,
+                        ? styles.kycBadgeVerified
+                        : styles.kycBadgePending,
                     ]}
                   >
-                    <Text style={styles.kycStatusText}>
+                    <Text style={styles.kycBadgeText}>
                       {isKycVerified ? 'VERIFIED' : 'PENDING'}
                     </Text>
                   </View>
                 </View>
-                <View style={styles.kycDetails}>
+                <View style={styles.kycDetailBox}>
                   <View style={styles.kycDetailRow}>
-                    <Text style={styles.kycDetailLabel}>Driving License:</Text>
+                    <Text style={styles.kycDetailLabel}>DL Number</Text>
                     <Text style={styles.kycDetailValue}>
                       {shippingData.kyc.drivingLicenseNumber}
                     </Text>
                   </View>
                   {shippingData.kyc.identityType && (
                     <View style={styles.kycDetailRow}>
-                      <Text style={styles.kycDetailLabel}>ID Type:</Text>
+                      <Text style={styles.kycDetailLabel}>ID Type</Text>
                       <Text style={styles.kycDetailValue}>
                         {shippingData.kyc.identityType}
-                      </Text>
-                    </View>
-                  )}
-                  {shippingData.kyc.identityNumber && (
-                    <View style={styles.kycDetailRow}>
-                      <Text style={styles.kycDetailLabel}>ID Number:</Text>
-                      <Text style={styles.kycDetailValue}>
-                        {shippingData.kyc.identityNumber}
                       </Text>
                     </View>
                   )}
@@ -1703,181 +2039,159 @@ const RiderRegistrationScreen: React.FC = () => {
             )}
 
             {!hasLocationPermission && (
-              <View style={styles.permissionWarningCard}>
-                <Icon name="location-disabled" size={32} color="#EF4444" />
-                <Text style={styles.permissionWarningTitle}>
-                  Location Permission Required
+              <View style={styles.permissionBox}>
+                <Icon name="location-disabled" size={28} color="#EF4444" />
+                <Text style={styles.permissionBoxTitle}>
+                  Location Access Required
                 </Text>
-                <Text style={styles.permissionWarningText}>
-                  To track deliveries, we need location access.
+                <Text style={styles.permissionBoxText}>
+                  To track deliveries, we need location permission
                 </Text>
                 <TouchableOpacity
-                  style={styles.permissionWarningButton}
+                  style={styles.permissionButton}
                   onPress={handleRequestPermissions}
                 >
-                  <Text style={styles.permissionWarningButtonText}>
-                    Grant Location Access
-                  </Text>
+                  <Text style={styles.permissionButtonText}>Grant Access</Text>
                 </TouchableOpacity>
-              </View>
-            )}
-
-            {hasLocationPermission && (
-              <View style={styles.permissionGrantedCard}>
-                <Icon name="location-on" size={24} color="#10B981" />
-                <Text style={styles.permissionGrantedText}>
-                  ✓ Location access granted
-                </Text>
               </View>
             )}
 
             {showSwiper ? (
               <>
-                <View style={styles.swiperCard}>
-                  <View style={styles.swiperHeader}>
+                <View style={styles.switchCard}>
+                  <View style={styles.switchCardHeader}>
                     <Icon
-                      name={isOnline ? 'wifi' : 'wifi-off'}
+                      name="wifi"
                       size={22}
-                      color={isOnline ? '#10B981' : '#6B7280'}
+                      color={isOnline ? '#10B981' : '#94A3B8'}
                     />
-                    <Text style={styles.swiperTitle}>Online Status</Text>
-                    <View style={styles.swiperStatus}>
+                    <Text style={styles.switchCardTitle}>Online Status</Text>
+                    <View
+                      style={[
+                        styles.switchStatusBadge,
+                        isOnline
+                          ? styles.switchStatusOnlineBadge
+                          : styles.switchStatusOfflineBadge,
+                      ]}
+                    >
                       <Text
                         style={[
-                          styles.swiperStatusText,
+                          styles.switchStatusText,
                           isOnline
-                            ? styles.swiperStatusOnline
-                            : styles.swiperStatusOffline,
+                            ? styles.switchStatusOnline
+                            : styles.switchStatusOffline,
                         ]}
                       >
                         {isOnline ? 'ONLINE' : 'OFFLINE'}
                       </Text>
                     </View>
                   </View>
-                  <View style={styles.swiperBody}>
-                    <Text style={styles.swiperDescription}>
-                      {isOnline
-                        ? 'Online & ready to accept orders'
-                        : 'Offline - will not receive orders'}
+                  <View style={styles.switchRow}>
+                    <Text style={styles.switchLabel}>
+                      Go {isOnline ? 'Offline' : 'Online'}
                     </Text>
-                    <View style={styles.swiperContainer}>
-                      <Text style={styles.swiperLabel}>
-                        Go {isOnline ? 'Offline' : 'Online'}
-                      </Text>
-                      <Switch
-                        value={isOnline}
-                        onValueChange={toggleOnlineStatus}
-                        disabled={isUpdatingOnlineStatus}
-                        trackColor={{ false: '#E5E7EB', true: '#10B981' }}
-                        thumbColor="#FFF"
-                      />
-                    </View>
-                    <View style={styles.lastStatusContainer}>
-                      <Icon name="access-time" size={16} color="#6B7280" />
-                      <Text style={styles.lastStatusText}>
-                        {isOnline
-                          ? `Online since: ${formatDate(lastOnlineAt)}`
-                          : `Last online: ${formatDate(lastOnlineAt)}`}
-                      </Text>
-                    </View>
+                    <Switch
+                      value={isOnline}
+                      onValueChange={toggleOnlineStatus}
+                      disabled={isUpdatingOnlineStatus}
+                      trackColor={{ false: '#CBD5E1', true: '#10B981' }}
+                      thumbColor="#FFFFFF"
+                    />
                   </View>
+                  <Text style={styles.switchDescription}>
+                    {isOnline
+                      ? 'Ready to accept orders'
+                      : 'Will not receive orders'}
+                  </Text>
                 </View>
 
                 {isOnline && hasLocationPermission && (
-                  <View style={styles.swiperCard}>
-                    <View style={styles.swiperHeader}>
+                  <View style={styles.switchCard}>
+                    <View style={styles.switchCardHeader}>
                       <Icon
-                        name={isTrackingOn ? 'location-on' : 'location-off'}
+                        name="location-on"
                         size={22}
-                        color={isTrackingOn ? '#3B82F6' : '#6B7280'}
+                        color={isTrackingOn ? '#2563EB' : '#94A3B8'}
                       />
-                      <Text style={styles.swiperTitle}>Location Tracking</Text>
-                      <View style={styles.swiperStatus}>
+                      <Text style={styles.switchCardTitle}>Live Tracking</Text>
+                      <View
+                        style={[
+                          styles.switchStatusBadge,
+                          isTrackingOn
+                            ? styles.switchStatusTrackingBadge
+                            : styles.switchStatusOfflineBadge,
+                        ]}
+                      >
                         <Text
                           style={[
-                            styles.swiperStatusText,
+                            styles.switchStatusText,
                             isTrackingOn
-                              ? styles.swiperStatusTracking
-                              : styles.swiperStatusNotTracking,
+                              ? styles.switchStatusTracking
+                              : styles.switchStatusOffline,
                           ]}
                         >
-                          {isTrackingOn ? 'ACTIVE' : 'STOPPED'}
+                          {isTrackingOn ? 'ACTIVE' : 'OFF'}
                         </Text>
                       </View>
                     </View>
-                    <View style={styles.swiperBody}>
-                      <Text style={styles.swiperDescription}>
-                        {isTrackingOn
-                          ? 'Tracking continuously (even when screen locked)'
-                          : 'Tracking turned off'}
+                    <View style={styles.switchRow}>
+                      <Text style={styles.switchLabel}>
+                        {isTrackingOn ? 'Stop Tracking' : 'Start Tracking'}
                       </Text>
-                      <View style={styles.swiperContainer}>
-                        <Text style={styles.swiperLabel}>
-                          {isTrackingOn ? 'Stop Tracking' : 'Start Tracking'}
-                        </Text>
-                        <Switch
-                          value={isTrackingOn}
-                          onValueChange={toggleLocationTracking}
-                          disabled={isUpdatingTrackingStatus || !isOnline}
-                          trackColor={{ false: '#E5E7EB', true: '#3B82F6' }}
-                          thumbColor="#FFF"
-                        />
-                      </View>
-                      {isTrackingOn && (
-                        <View style={styles.lastStatusContainer}>
-                          <Icon name="info" size={16} color="#3B82F6" />
-                          <Text
-                            style={[
-                              styles.lastStatusText,
-                              { color: '#3B82F6' },
-                            ]}
-                          >
-                            Tracking works in background & lock screen
-                          </Text>
-                        </View>
-                      )}
+                      <Switch
+                        value={isTrackingOn}
+                        onValueChange={toggleLocationTracking}
+                        disabled={isUpdatingTrackingStatus || !isOnline}
+                        trackColor={{ false: '#CBD5E1', true: '#2563EB' }}
+                        thumbColor="#FFFFFF"
+                      />
                     </View>
+                    <Text style={styles.switchDescription}>
+                      {isTrackingOn
+                        ? 'Tracking in background & lock screen'
+                        : 'Location sharing stopped'}
+                    </Text>
                   </View>
                 )}
               </>
             ) : (
-              <View style={styles.verificationCard}>
-                <View style={styles.verificationIconContainer}>
+              <View style={styles.pendingCard}>
+                <View style={styles.pendingCardInner}>
                   <Icon
                     name={isApproved ? 'pending-actions' : 'hourglass-empty'}
-                    size={32}
-                    color="#F59E0B"
+                    size={40}
+                    color="#D97706"
                   />
+                  <Text style={styles.pendingCardTitle}>
+                    {!isApproved
+                      ? 'Registration Under Review'
+                      : 'KYC Verification Pending'}
+                  </Text>
+                  <Text style={styles.pendingCardText}>
+                    {!isApproved
+                      ? 'We will notify you once approved'
+                      : 'Complete KYC to go online'}
+                  </Text>
                 </View>
-                <Text style={styles.verificationTitle}>
-                  {!isApproved
-                    ? 'Registration Pending'
-                    : 'KYC Verification Pending'}
-                </Text>
-                <Text style={styles.verificationText}>
-                  {!isApproved ? 'Under review' : 'KYC verification pending'}
-                </Text>
               </View>
             )}
 
             <TouchableOpacity
-              style={styles.viewStatusButton}
+              style={styles.viewStatusBtn}
               onPress={handleViewStatus}
             >
-              <View style={styles.buttonIconContainer}>
-                <Icon name="visibility" size={22} color="#FFF" />
-              </View>
-              <Text style={styles.viewStatusButtonText}>View Status</Text>
-              <Icon name="chevron-right" size={22} color="#FFF" />
+              <Text style={styles.viewStatusBtnText}>
+                View Application Status
+              </Text>
+              <Icon name="arrow-forward" size={20} color="#FFFFFF" />
             </TouchableOpacity>
+
             <TouchableOpacity
-              style={styles.newRegistrationButton}
+              style={styles.newRegBtn}
               onPress={handleNewRegistration}
             >
-              <Icon name="add-circle-outline" size={20} color="#4F46E5" />
-              <Text style={styles.newRegistrationButtonText}>
-                Register Another Vehicle
-              </Text>
+              <Icon name="add-circle-outline" size={20} color="#2563EB" />
+              <Text style={styles.newRegBtnText}>Register Another Vehicle</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -1894,391 +2208,184 @@ const RiderRegistrationScreen: React.FC = () => {
       >
         <ScrollView
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.formContainer}
+          contentContainerStyle={styles.formScrollContainer}
         >
           <Animated.View
             style={[
-              styles.header,
+              styles.formHeader,
               { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
             ]}
           >
-            <View style={styles.headerContent}>
-              <View style={styles.headerIconContainer}>
-                <Icon name="directions-bike" size={28} color="#FFF" />
-              </View>
-              <View>
-                <Text style={styles.title}>Become a Delivery Partner</Text>
-                <Text style={styles.subtitle}>Register your vehicle</Text>
-              </View>
-            </View>
-          </Animated.View>
-
-          <View style={styles.checkInfoCard}>
-            <Icon name="verified-user" size={20} color="#3b82f6" />
-            <View style={styles.checkInfoContent}>
-              <Text style={styles.checkInfoTitle}>New Registration</Text>
-              <Text style={styles.checkInfoText}>Fill details to register</Text>
-            </View>
-          </View>
-
-          <View style={styles.sectionHeader}>
-            <Icon
-              name="person"
-              size={20}
-              color="#2563EB"
-              style={styles.sectionIcon}
-            />
-            <Text style={styles.sectionHeaderText}>Personal Details</Text>
-          </View>
-          <Animated.View
-            style={[
-              styles.sectionCard,
-              { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
-            ]}
-          >
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Full Name *</Text>
-              <View style={styles.inputWrapper}>
-                <Icon
-                  name="person-outline"
-                  size={20}
-                  color="#6B7280"
-                  style={styles.inputIcon}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter full name"
-                  placeholderTextColor="#9CA3AF"
-                  value={name}
-                  onChangeText={setName}
-                  maxLength={100}
-                />
-              </View>
-            </View>
-          </Animated.View>
-
-          <View style={styles.sectionHeader}>
-            <Icon
-              name="verified-user"
-              size={20}
-              color="#2563EB"
-              style={styles.sectionIcon}
-            />
-            <Text style={styles.sectionHeaderText}>KYC Documents</Text>
-          </View>
-          <Animated.View
-            style={[
-              styles.sectionCard,
-              { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
-            ]}
-          >
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Driving License Number *</Text>
-              <View style={styles.inputWrapper}>
-                <Icon
-                  name="credit-card"
-                  size={20}
-                  color="#6B7280"
-                  style={styles.inputIcon}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="License number"
-                  placeholderTextColor="#9CA3AF"
-                  value={drivingLicenseNumber}
-                  onChangeText={setDrivingLicenseNumber}
-                  autoCapitalize="characters"
-                  maxLength={20}
-                />
-              </View>
-            </View>
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Driving License Image *</Text>
-              <TouchableOpacity
-                style={[
-                  styles.uploadButton,
-                  drivingLicenseImage && styles.uploadButtonSuccess,
-                ]}
-                onPress={() => pickImage('license')}
-                disabled={uploadingImage === 'license'}
-              >
-                {uploadingImage === 'license' ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <>
-                    <Icon
-                      name={drivingLicenseImage ? 'check-circle' : 'badge'}
-                      size={22}
-                      color="#fff"
-                      style={styles.uploadIcon}
-                    />
-                    <Text style={styles.uploadText}>
-                      {drivingLicenseImage ? 'Uploaded ✓' : 'Upload License'}
-                    </Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Identity Document Type</Text>
-              <TouchableOpacity
-                style={[
-                  styles.dropdownButton,
-                  identityType && styles.dropdownButtonSelected,
-                ]}
-                onPress={() => setShowIdentityModal(true)}
-              >
-                <View style={styles.dropdownButtonContent}>
-                  <Icon
-                    name={identityType ? 'check-circle' : 'fingerprint'}
-                    size={20}
-                    color={identityType ? '#10B981' : '#4F46E5'}
-                  />
-                  <Text
-                    style={[
-                      styles.dropdownButtonText,
-                      identityType
-                        ? styles.dropdownButtonTextSelected
-                        : styles.dropdownButtonTextPlaceholder,
-                    ]}
-                  >
-                    {identityType || 'Select identity type'}
-                  </Text>
-                  <Icon name="keyboard-arrow-down" size={22} color="#4F46E5" />
+            <View style={styles.formHeaderGradient}>
+              <View style={styles.formHeaderContent}>
+                <View style={styles.formHeaderIcon}>
+                  <Icon name="delivery-dining" size={32} color="#FFFFFF" />
                 </View>
-              </TouchableOpacity>
+                <View>
+                  <Text style={styles.formHeaderTitle}>Become a Partner</Text>
+                  <Text style={styles.formHeaderSubtitle}>
+                    Join India's fastest delivery network
+                  </Text>
+                </View>
+              </View>
             </View>
+          </Animated.View>
+
+          <View style={styles.progressSteps}>
+            <View style={styles.progressStepActive}>
+              <Text style={styles.progressStepText}>1</Text>
+            </View>
+            <View style={styles.progressLine} />
+            <View style={styles.progressStep}>
+              <Text style={styles.progressStepText}>2</Text>
+            </View>
+            <View style={styles.progressLine} />
+            <View style={styles.progressStep}>
+              <Text style={styles.progressStepText}>3</Text>
+            </View>
+          </View>
+          <Text style={styles.progressLabel}>Step 1 of 3: Basic Details</Text>
+
+          <FormCard title="Shipping Details" icon="local-shipping">
+            <SelectField
+              label="Shipping Type"
+              value={shippingType}
+              onPress={() => setShowShippingTypeModal(true)}
+              placeholder="Select shipping type"
+              icon="local-shipping"
+              required
+            />
+            <InputField
+              label="City"
+              value={city}
+              onChangeText={setCity}
+              placeholder="Enter your city"
+              icon="location-city"
+              required
+            />
+            <InputField
+              label="State"
+              value={state}
+              onChangeText={setState}
+              placeholder="Enter your state"
+              icon="map"
+              required
+            />
+          </FormCard>
+
+          <FormCard title="Personal Information" icon="person">
+            <InputField
+              label="Full Name"
+              value={name}
+              onChangeText={setName}
+              placeholder="Enter your full name"
+              icon="person-outline"
+              required
+            />
+          </FormCard>
+
+          <FormCard title="KYC Documents" icon="verified-user">
+            <InputField
+              label="Driving License Number"
+              value={drivingLicenseNumber}
+              onChangeText={setDrivingLicenseNumber}
+              placeholder="Enter license number"
+              icon="credit-card"
+              required
+              autoCapitalize="characters"
+            />
+            <UploadField
+              label="Driving License"
+              imageUri={drivingLicenseImage}
+              onPress={() => pickImage('license')}
+              uploading={uploadingImage === 'license'}
+              required
+            />
+            <SelectField
+              label="Identity Document"
+              value={identityType}
+              onPress={() => setShowIdentityModal(true)}
+              placeholder="Select identity type"
+              icon="fingerprint"
+            />
             {identityType && (
               <>
-                <View style={styles.inputContainer}>
-                  <Text style={styles.inputLabel}>{identityType} Number</Text>
-                  <View style={styles.inputWrapper}>
-                    <Icon
-                      name="fingerprint"
-                      size={20}
-                      color="#6B7280"
-                      style={styles.inputIcon}
-                    />
-                    <TextInput
-                      style={styles.input}
-                      placeholder={`Enter ${identityType} number`}
-                      placeholderTextColor="#9CA3AF"
-                      value={identityNumber}
-                      onChangeText={setIdentityNumber}
-                      maxLength={identityType === 'Aadhaar' ? 12 : 20}
-                    />
-                  </View>
-                </View>
-                <View style={styles.inputContainer}>
-                  <Text style={styles.inputLabel}>
-                    {identityType} Document Image
-                  </Text>
-                  <TouchableOpacity
-                    style={[
-                      styles.uploadButton,
-                      identityImage && styles.uploadButtonSuccess,
-                    ]}
-                    onPress={() => pickImage('identity')}
-                    disabled={uploadingImage === 'identity'}
-                  >
-                    {uploadingImage === 'identity' ? (
-                      <ActivityIndicator color="#fff" size="small" />
-                    ) : (
-                      <>
-                        <Icon
-                          name={identityImage ? 'check-circle' : 'description'}
-                          size={22}
-                          color="#fff"
-                          style={styles.uploadIcon}
-                        />
-                        <Text style={styles.uploadText}>
-                          {identityImage
-                            ? 'Uploaded ✓'
-                            : `Upload ${identityType}`}
-                        </Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                </View>
+                <InputField
+                  label={`${identityType} Number`}
+                  value={identityNumber}
+                  onChangeText={setIdentityNumber}
+                  placeholder={`Enter ${identityType} number`}
+                  icon="fingerprint"
+                />
+                <UploadField
+                  label={`${identityType} Document`}
+                  imageUri={identityImage}
+                  onPress={() => pickImage('identity')}
+                  uploading={uploadingImage === 'identity'}
+                />
               </>
             )}
-          </Animated.View>
+          </FormCard>
 
-          <View style={styles.sectionHeader}>
-            <Icon
-              name="directions-car"
-              size={20}
-              color="#2563EB"
-              style={styles.sectionIcon}
+          <FormCard title="Vehicle Information" icon="directions-car">
+            <InputField
+              label="Vehicle Number"
+              value={vehicleNumber}
+              onChangeText={setVehicleNumber}
+              placeholder="e.g., MH12AB1234"
+              icon="confirmation-number"
+              required
+              autoCapitalize="characters"
             />
-            <Text style={styles.sectionHeaderText}>Vehicle Information</Text>
-          </View>
-          <Animated.View
-            style={[
-              styles.sectionCard,
-              { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
-            ]}
-          >
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Vehicle Number *</Text>
-              <View style={styles.inputWrapper}>
-                <Icon
-                  name="confirmation-number"
-                  size={20}
-                  color="#6B7280"
-                  style={styles.inputIcon}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g., MH12AB1234"
-                  placeholderTextColor="#9CA3AF"
-                  value={vehicleNumber}
-                  onChangeText={setVehicleNumber}
-                  autoCapitalize="characters"
-                  maxLength={15}
-                />
-              </View>
-            </View>
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Vehicle Category *</Text>
-              <TouchableOpacity
-                style={[
-                  styles.dropdownButton,
-                  vehicleCategory && styles.dropdownButtonSelected,
-                ]}
-                onPress={() => setShowCategoryModal(true)}
-              >
-                <View style={styles.dropdownButtonContent}>
-                  <Icon
-                    name={vehicleCategory ? 'check-circle' : 'category'}
-                    size={20}
-                    color={vehicleCategory ? '#10B981' : '#4F46E5'}
-                  />
-                  <Text
-                    style={[
-                      styles.dropdownButtonText,
-                      vehicleCategory
-                        ? styles.dropdownButtonTextSelected
-                        : styles.dropdownButtonTextPlaceholder,
-                    ]}
-                  >
-                    {vehicleCategory || 'Select type'}
-                  </Text>
-                  <Icon name="keyboard-arrow-down" size={22} color="#4F46E5" />
-                </View>
-              </TouchableOpacity>
-            </View>
+            <SelectField
+              label="Vehicle Category"
+              value={vehicleCategory}
+              onPress={() => setShowCategoryModal(true)}
+              placeholder="Select category"
+              icon="category"
+              required
+            />
             {vehicleCategory && (
-              <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>Vehicle Brand *</Text>
-                <TouchableOpacity
-                  style={[
-                    styles.dropdownButton,
-                    vehicleBrand && styles.dropdownButtonSelected,
-                  ]}
-                  onPress={() => setShowBrandModal(true)}
-                >
-                  <View style={styles.dropdownButtonContent}>
-                    <Icon
-                      name={vehicleBrand ? 'check-circle' : 'directions-car'}
-                      size={20}
-                      color={vehicleBrand ? '#10B981' : '#4F46E5'}
-                    />
-                    <Text
-                      style={[
-                        styles.dropdownButtonText,
-                        vehicleBrand
-                          ? styles.dropdownButtonTextSelected
-                          : styles.dropdownButtonTextPlaceholder,
-                      ]}
-                    >
-                      {vehicleBrand || 'Select brand'}
-                    </Text>
-                    <Icon
-                      name="keyboard-arrow-down"
-                      size={22}
-                      color="#4F46E5"
-                    />
-                  </View>
-                </TouchableOpacity>
-              </View>
+              <SelectField
+                label="Vehicle Brand"
+                value={vehicleBrand}
+                onPress={() => setShowBrandModal(true)}
+                placeholder="Select brand"
+                icon="directions-car"
+                required
+              />
             )}
             {vehicleBrand && (
-              <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>Vehicle Model *</Text>
-                <TouchableOpacity
-                  style={[
-                    styles.dropdownButton,
-                    vehicleModel && styles.dropdownButtonSelected,
-                  ]}
-                  onPress={() => setShowModelModal(true)}
-                >
-                  <View style={styles.dropdownButtonContent}>
-                    <Icon
-                      name={vehicleModel ? 'check-circle' : 'directions-car'}
-                      size={20}
-                      color={vehicleModel ? '#10B981' : '#4F46E5'}
-                    />
-                    <Text
-                      style={[
-                        styles.dropdownButtonText,
-                        vehicleModel
-                          ? styles.dropdownButtonTextSelected
-                          : styles.dropdownButtonTextPlaceholder,
-                      ]}
-                    >
-                      {vehicleModel || 'Select model'}
-                    </Text>
-                    <Icon
-                      name="keyboard-arrow-down"
-                      size={22}
-                      color="#4F46E5"
-                    />
-                  </View>
-                </TouchableOpacity>
-              </View>
+              <SelectField
+                label="Vehicle Model"
+                value={vehicleModel}
+                onPress={() => setShowModelModal(true)}
+                placeholder="Select model"
+                icon="directions-car"
+                required
+              />
             )}
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Vehicle Image *</Text>
-              <TouchableOpacity
-                style={[
-                  styles.uploadButton,
-                  vehicleImage && styles.uploadButtonSuccess,
-                ]}
-                onPress={() => pickImage('vehicle')}
-                disabled={uploadingImage === 'vehicle'}
-              >
-                {uploadingImage === 'vehicle' ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <>
-                    <Icon
-                      name={vehicleImage ? 'check-circle' : 'add-a-photo'}
-                      size={22}
-                      color="#fff"
-                      style={styles.uploadIcon}
-                    />
-                    <Text style={styles.uploadText}>
-                      {vehicleImage ? 'Uploaded ✓' : 'Upload Vehicle'}
-                    </Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
-          </Animated.View>
+            <UploadField
+              label="Vehicle Image"
+              imageUri={vehicleImage}
+              onPress={() => pickImage('vehicle')}
+              uploading={uploadingImage === 'vehicle'}
+              required
+            />
+            <InputField
+              label="Max Orders Per Day"
+              value={maxOrdersPerDay}
+              onChangeText={setMaxOrdersPerDay}
+              placeholder="25"
+              icon="local-offer"
+              keyboardType="numeric"
+              maxLength={3}
+            />
+          </FormCard>
 
-          <Animated.View
-            style={[
-              styles.termsCard,
-              { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
-            ]}
-          >
-            <View style={styles.termsHeader}>
-              <Icon name="gavel" size={24} color="#7C3AED" />
-              <Text style={styles.termsTitle}>Terms & Conditions</Text>
-            </View>
+          <View style={styles.termsContainer}>
             <TouchableOpacity
-              style={styles.checkboxContainer}
+              style={styles.checkboxRow}
               onPress={() => {
                 ReactNativeHapticFeedback.trigger('impactLight', hapticOptions);
                 setAgreedToTerms(!agreedToTerms);
@@ -2286,69 +2393,125 @@ const RiderRegistrationScreen: React.FC = () => {
             >
               <View
                 style={[
-                  styles.checkbox,
-                  agreedToTerms && styles.checkboxChecked,
+                  styles.checkboxBox,
+                  agreedToTerms && styles.checkboxBoxChecked,
                 ]}
               >
-                {agreedToTerms && <Icon name="check" size={16} color="#fff" />}
+                {agreedToTerms && (
+                  <Icon name="check" size={14} color="#FFFFFF" />
+                )}
               </View>
               <View>
-                <Text style={styles.checkboxText}>I agree to the terms</Text>
-                <Text style={styles.checkboxSubtext}>Required to proceed</Text>
+                <Text style={styles.checkboxText}>
+                  I agree to the Terms & Conditions
+                </Text>
+                <Text style={styles.checkboxSubtext}>
+                  Read our terms and privacy policy
+                </Text>
               </View>
             </TouchableOpacity>
-          </Animated.View>
+          </View>
 
           <TouchableOpacity
             style={[
-              styles.submitButton,
-              (!agreedToTerms || loading) && styles.submitButtonDisabled,
+              styles.submitBtn,
+              (!agreedToTerms || loading) && styles.submitBtnDisabled,
             ]}
             onPress={handleSubmit}
             disabled={!agreedToTerms || loading}
           >
             {loading ? (
-              <ActivityIndicator color="#fff" size="small" />
+              <ActivityIndicator color="#FFFFFF" size="small" />
             ) : (
-              <View style={styles.buttonContent}>
-                <View style={styles.buttonIconContainer}>
-                  <Icon name="send" size={22} color="#fff" />
-                </View>
-                <View>
-                  <Text style={styles.submitButtonText}>
-                    Submit Registration
-                  </Text>
-                  <Text style={styles.submitButtonSubtext}>
-                    Reviewed within 24 hours
-                  </Text>
-                </View>
+              <View style={styles.submitBtnContent}>
+                <Text style={styles.submitBtnText}>Submit Registration</Text>
+                <Icon name="arrow-forward" size={20} color="#FFFFFF" />
               </View>
             )}
           </TouchableOpacity>
+          <Text style={styles.noteText}>
+            Application reviewed within 24 hours
+          </Text>
         </ScrollView>
       </KeyboardAvoidingView>
 
+      {/* Full Screen Loader */}
+      <FullScreenLoader visible={loading} message={loadingMessage} />
+
       {/* Modals */}
+      <Modal
+        visible={showShippingTypeModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowShippingTypeModal(false)}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity
+              onPress={() => setShowShippingTypeModal(false)}
+              style={styles.modalClose}
+            >
+              <Icon name="close" size={24} color="#1E293B" />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Select Shipping Type</Text>
+          </View>
+          <FlatList
+            data={shippingTypes}
+            keyExtractor={item => item.value}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                style={[
+                  styles.modalItem,
+                  shippingType === item.value && styles.modalItemSelected,
+                ]}
+                onPress={() => {
+                  setShippingType(item.value);
+                  setShowShippingTypeModal(false);
+                  ReactNativeHapticFeedback.trigger(
+                    'impactMedium',
+                    hapticOptions,
+                  );
+                }}
+              >
+                <Icon
+                  name={
+                    item.value === 'TRUCK' ? 'local-shipping' : 'motorcycle'
+                  }
+                  size={24}
+                  color={shippingType === item.value ? '#2563EB' : '#64748B'}
+                />
+                <Text
+                  style={[
+                    styles.modalItemText,
+                    shippingType === item.value && styles.modalItemTextSelected,
+                  ]}
+                >
+                  {item.label}
+                </Text>
+                {shippingType === item.value && (
+                  <Icon name="check-circle" size={22} color="#10B981" />
+                )}
+              </TouchableOpacity>
+            )}
+          />
+        </SafeAreaView>
+      </Modal>
+
       <Modal
         visible={showCategoryModal}
         animationType="slide"
         presentationStyle="pageSheet"
         onRequestClose={() => setShowCategoryModal(false)}
       >
-        <SafeAreaView style={styles.modalSafeArea}>
+        <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <View style={styles.modalTitleRow}>
-              <TouchableOpacity
-                onPress={() => setShowCategoryModal(false)}
-                style={styles.modalBackButton}
-              >
-                <Icon name="arrow-back" size={24} color="#4F46E5" />
-              </TouchableOpacity>
-              <View>
-                <Text style={styles.modalTitle}>Select Category</Text>
-                <Text style={styles.modalSubtitle}>Choose vehicle type</Text>
-              </View>
-            </View>
+            <TouchableOpacity
+              onPress={() => setShowCategoryModal(false)}
+              style={styles.modalClose}
+            >
+              <Icon name="close" size={24} color="#1E293B" />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Select Vehicle Category</Text>
           </View>
           <FlatList
             data={vehicleCategories}
@@ -2357,7 +2520,7 @@ const RiderRegistrationScreen: React.FC = () => {
               <TouchableOpacity
                 style={[
                   styles.modalItem,
-                  vehicleCategory === item.value && styles.selectedModalItem,
+                  vehicleCategory === item.value && styles.modalItemSelected,
                 ]}
                 onPress={() => {
                   setVehicleCategory(item.value);
@@ -2368,42 +2531,35 @@ const RiderRegistrationScreen: React.FC = () => {
                   );
                 }}
               >
-                <View style={styles.modalItemContent}>
-                  <View style={styles.modalIconContainer}>
-                    <Icon
-                      name={
-                        item.value === 'Car'
-                          ? 'directions-car'
-                          : item.value === 'Bike'
-                          ? 'directions-bike'
-                          : item.value === 'Scooter'
-                          ? 'scooter'
-                          : item.value === 'Auto'
-                          ? 'local-taxi'
-                          : 'local-shipping'
-                      }
-                      size={20}
-                      color={
-                        vehicleCategory === item.value ? '#4F46E5' : '#6B7280'
-                      }
-                    />
-                  </View>
-                  <Text
-                    style={[
-                      styles.modalItemText,
-                      vehicleCategory === item.value &&
-                        styles.selectedModalItemText,
-                    ]}
-                  >
-                    {item.label}
-                  </Text>
-                  {vehicleCategory === item.value && (
-                    <Icon name="check-circle" size={20} color="#10B981" />
-                  )}
-                </View>
+                <Icon
+                  name={
+                    item.value === 'Car'
+                      ? 'directions-car'
+                      : item.value === 'Bike'
+                      ? 'directions-bike'
+                      : item.value === 'Scooter'
+                      ? 'scooter'
+                      : item.value === 'Auto'
+                      ? 'local-taxi'
+                      : 'local-shipping'
+                  }
+                  size={24}
+                  color={vehicleCategory === item.value ? '#2563EB' : '#64748B'}
+                />
+                <Text
+                  style={[
+                    styles.modalItemText,
+                    vehicleCategory === item.value &&
+                      styles.modalItemTextSelected,
+                  ]}
+                >
+                  {item.label}
+                </Text>
+                {vehicleCategory === item.value && (
+                  <Icon name="check-circle" size={22} color="#10B981" />
+                )}
               </TouchableOpacity>
             )}
-            contentContainerStyle={styles.modalList}
           />
         </SafeAreaView>
       </Modal>
@@ -2414,22 +2570,16 @@ const RiderRegistrationScreen: React.FC = () => {
         presentationStyle="pageSheet"
         onRequestClose={() => setShowBrandModal(false)}
       >
-        <SafeAreaView style={styles.modalSafeArea}>
+        <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <View style={styles.modalTitleRow}>
-              <TouchableOpacity
-                onPress={() => setShowBrandModal(false)}
-                style={styles.modalBackButton}
-              >
-                <Icon name="arrow-back" size={24} color="#4F46E5" />
-              </TouchableOpacity>
-              <View>
-                <Text style={styles.modalTitle}>Select Brand</Text>
-                <Text style={styles.modalSubtitle}>
-                  {vehicleCategory} brands
-                </Text>
-              </View>
-            </View>
+            <TouchableOpacity
+              onPress={() => setShowBrandModal(false)}
+              style={styles.modalClose}
+            >
+              <Icon name="close" size={24} color="#1E293B" />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Select Brand</Text>
+            <Text style={styles.modalSubtitle}>{vehicleCategory}</Text>
           </View>
           <FlatList
             data={allBrands}
@@ -2438,7 +2588,7 @@ const RiderRegistrationScreen: React.FC = () => {
               <TouchableOpacity
                 style={[
                   styles.modalItem,
-                  vehicleBrand === item.value && styles.selectedModalItem,
+                  vehicleBrand === item.value && styles.modalItemSelected,
                 ]}
                 onPress={() => {
                   setVehicleBrand(item.value);
@@ -2449,32 +2599,24 @@ const RiderRegistrationScreen: React.FC = () => {
                   );
                 }}
               >
-                <View style={styles.modalItemContent}>
-                  <View style={styles.modalIconContainer}>
-                    <Icon
-                      name="directions-car"
-                      size={20}
-                      color={
-                        vehicleBrand === item.value ? '#4F46E5' : '#6B7280'
-                      }
-                    />
-                  </View>
-                  <Text
-                    style={[
-                      styles.modalItemText,
-                      vehicleBrand === item.value &&
-                        styles.selectedModalItemText,
-                    ]}
-                  >
-                    {item.label}
-                  </Text>
-                  {vehicleBrand === item.value && (
-                    <Icon name="check-circle" size={20} color="#10B981" />
-                  )}
-                </View>
+                <Icon
+                  name="directions-car"
+                  size={24}
+                  color={vehicleBrand === item.value ? '#2563EB' : '#64748B'}
+                />
+                <Text
+                  style={[
+                    styles.modalItemText,
+                    vehicleBrand === item.value && styles.modalItemTextSelected,
+                  ]}
+                >
+                  {item.label}
+                </Text>
+                {vehicleBrand === item.value && (
+                  <Icon name="check-circle" size={22} color="#10B981" />
+                )}
               </TouchableOpacity>
             )}
-            contentContainerStyle={styles.modalList}
           />
         </SafeAreaView>
       </Modal>
@@ -2485,20 +2627,16 @@ const RiderRegistrationScreen: React.FC = () => {
         presentationStyle="pageSheet"
         onRequestClose={() => setShowModelModal(false)}
       >
-        <SafeAreaView style={styles.modalSafeArea}>
+        <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <View style={styles.modalTitleRow}>
-              <TouchableOpacity
-                onPress={() => setShowModelModal(false)}
-                style={styles.modalBackButton}
-              >
-                <Icon name="arrow-back" size={24} color="#4F46E5" />
-              </TouchableOpacity>
-              <View>
-                <Text style={styles.modalTitle}>Select Model</Text>
-                <Text style={styles.modalSubtitle}>{vehicleBrand} models</Text>
-              </View>
-            </View>
+            <TouchableOpacity
+              onPress={() => setShowModelModal(false)}
+              style={styles.modalClose}
+            >
+              <Icon name="close" size={24} color="#1E293B" />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Select Model</Text>
+            <Text style={styles.modalSubtitle}>{vehicleBrand}</Text>
           </View>
           <FlatList
             data={allModels}
@@ -2507,7 +2645,7 @@ const RiderRegistrationScreen: React.FC = () => {
               <TouchableOpacity
                 style={[
                   styles.modalItem,
-                  vehicleModel === item.value && styles.selectedModalItem,
+                  vehicleModel === item.value && styles.modalItemSelected,
                 ]}
                 onPress={() => {
                   setVehicleModel(item.value);
@@ -2518,32 +2656,24 @@ const RiderRegistrationScreen: React.FC = () => {
                   );
                 }}
               >
-                <View style={styles.modalItemContent}>
-                  <View style={styles.modalIconContainer}>
-                    <Icon
-                      name="directions-car"
-                      size={20}
-                      color={
-                        vehicleModel === item.value ? '#4F46E5' : '#6B7280'
-                      }
-                    />
-                  </View>
-                  <Text
-                    style={[
-                      styles.modalItemText,
-                      vehicleModel === item.value &&
-                        styles.selectedModalItemText,
-                    ]}
-                  >
-                    {item.label}
-                  </Text>
-                  {vehicleModel === item.value && (
-                    <Icon name="check-circle" size={20} color="#10B981" />
-                  )}
-                </View>
+                <Icon
+                  name="directions-car"
+                  size={24}
+                  color={vehicleModel === item.value ? '#2563EB' : '#64748B'}
+                />
+                <Text
+                  style={[
+                    styles.modalItemText,
+                    vehicleModel === item.value && styles.modalItemTextSelected,
+                  ]}
+                >
+                  {item.label}
+                </Text>
+                {vehicleModel === item.value && (
+                  <Icon name="check-circle" size={22} color="#10B981" />
+                )}
               </TouchableOpacity>
             )}
-            contentContainerStyle={styles.modalList}
           />
         </SafeAreaView>
       </Modal>
@@ -2554,20 +2684,15 @@ const RiderRegistrationScreen: React.FC = () => {
         presentationStyle="pageSheet"
         onRequestClose={() => setShowIdentityModal(false)}
       >
-        <SafeAreaView style={styles.modalSafeArea}>
+        <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <View style={styles.modalTitleRow}>
-              <TouchableOpacity
-                onPress={() => setShowIdentityModal(false)}
-                style={styles.modalBackButton}
-              >
-                <Icon name="arrow-back" size={24} color="#4F46E5" />
-              </TouchableOpacity>
-              <View>
-                <Text style={styles.modalTitle}>Select Identity</Text>
-                <Text style={styles.modalSubtitle}>Choose document type</Text>
-              </View>
-            </View>
+            <TouchableOpacity
+              onPress={() => setShowIdentityModal(false)}
+              style={styles.modalClose}
+            >
+              <Icon name="close" size={24} color="#1E293B" />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Select Identity Type</Text>
           </View>
           <FlatList
             data={identityTypes}
@@ -2576,7 +2701,7 @@ const RiderRegistrationScreen: React.FC = () => {
               <TouchableOpacity
                 style={[
                   styles.modalItem,
-                  identityType === item.value && styles.selectedModalItem,
+                  identityType === item.value && styles.modalItemSelected,
                 ]}
                 onPress={() => {
                   setIdentityType(item.value);
@@ -2587,40 +2712,32 @@ const RiderRegistrationScreen: React.FC = () => {
                   );
                 }}
               >
-                <View style={styles.modalItemContent}>
-                  <View style={styles.modalIconContainer}>
-                    <Icon
-                      name={
-                        item.value === 'Aadhaar'
-                          ? 'badge'
-                          : item.value === 'VoterID'
-                          ? 'how-to-vote'
-                          : item.value === 'Passport'
-                          ? 'card-travel'
-                          : 'credit-card'
-                      }
-                      size={20}
-                      color={
-                        identityType === item.value ? '#4F46E5' : '#6B7280'
-                      }
-                    />
-                  </View>
-                  <Text
-                    style={[
-                      styles.modalItemText,
-                      identityType === item.value &&
-                        styles.selectedModalItemText,
-                    ]}
-                  >
-                    {item.label}
-                  </Text>
-                  {identityType === item.value && (
-                    <Icon name="check-circle" size={20} color="#10B981" />
-                  )}
-                </View>
+                <Icon
+                  name={
+                    item.value === 'Aadhaar'
+                      ? 'badge'
+                      : item.value === 'VoterID'
+                      ? 'how-to-vote'
+                      : item.value === 'Passport'
+                      ? 'card-travel'
+                      : 'credit-card'
+                  }
+                  size={24}
+                  color={identityType === item.value ? '#2563EB' : '#64748B'}
+                />
+                <Text
+                  style={[
+                    styles.modalItemText,
+                    identityType === item.value && styles.modalItemTextSelected,
+                  ]}
+                >
+                  {item.label}
+                </Text>
+                {identityType === item.value && (
+                  <Icon name="check-circle" size={22} color="#10B981" />
+                )}
               </TouchableOpacity>
             )}
-            contentContainerStyle={styles.modalList}
           />
         </SafeAreaView>
       </Modal>
@@ -2631,8 +2748,14 @@ const RiderRegistrationScreen: React.FC = () => {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F8FAFC' },
   container: { flex: 1 },
-  scrollContainer: { paddingHorizontal: 20, paddingBottom: 40, paddingTop: 20 },
+  scrollContainer: { paddingHorizontal: 16, paddingBottom: 40, paddingTop: 16 },
+  formScrollContainer: {
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+    paddingTop: 8,
+  },
   centerContent: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
@@ -2640,30 +2763,476 @@ const styles = StyleSheet.create({
   checkingText: {
     marginTop: 16,
     fontSize: 16,
-    color: '#6b7280',
+    color: '#64748B',
     textAlign: 'center',
   },
 
-  // Battery Card Styles
-  batteryCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    marginBottom: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    elevation: 2,
+  // Full Screen Loader Styles
+  fullScreenLoader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
   },
-  batteryCardHeader: {
+  loaderCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 32,
+    alignItems: 'center',
+    width: width - 80,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  loaderTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  loaderMessage: {
+    fontSize: 14,
+    color: '#64748B',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  loaderDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#2563EB',
+    marginHorizontal: 4,
+  },
+  dot1: { opacity: 0.4 },
+  dot2: { opacity: 0.7 },
+  dot3: { opacity: 1 },
+
+  // Form Header - Pure Blue
+  formHeader: { marginBottom: 24, marginTop: 8 },
+  formHeaderGradient: {
+    backgroundColor: '#2563EB',
+    borderRadius: 20,
+    padding: 20,
+  },
+  formHeaderContent: { flexDirection: 'row', alignItems: 'center' },
+  formHeaderIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  formHeaderTitle: { fontSize: 20, fontWeight: '700', color: '#FFFFFF' },
+  formHeaderSubtitle: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.9)',
+    marginTop: 2,
+  },
+
+  // Progress Steps
+  progressSteps: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  progressStepActive: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#2563EB',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  progressStep: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#E2E8F0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  progressStepText: { fontSize: 14, fontWeight: '600', color: '#FFFFFF' },
+  progressLine: {
+    width: 40,
+    height: 2,
+    backgroundColor: '#CBD5E1',
+    marginHorizontal: 8,
+  },
+  progressLabel: {
+    textAlign: 'center',
+    fontSize: 12,
+    color: '#2563EB',
+    fontWeight: '500',
+    marginBottom: 20,
+  },
+
+  // Form Card
+  formCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    marginBottom: 20,
+    overflow: 'hidden',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+  },
+  formCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  formCardTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#2563EB',
+    marginLeft: 10,
+  },
+  formCardContent: { padding: 20 },
+
+  // Input Fields
+  inputFieldContainer: { marginBottom: 18 },
+  inputLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  inputLabelText: { fontSize: 13, fontWeight: '600', color: '#334155' },
+  requiredStar: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#EF4444',
+    marginLeft: 4,
+  },
+  inputFieldWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    height: 52,
+  },
+  inputFieldIcon: { marginLeft: 16 },
+  inputField: {
+    flex: 1,
+    fontSize: 15,
+    color: '#1E293B',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  selectField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 16,
+    height: 52,
+  },
+  selectFieldIcon: { marginRight: 12 },
+  selectFieldText: { flex: 1, fontSize: 15, color: '#1E293B' },
+  selectFieldPlaceholder: { color: '#94A3B8' },
+  uploadField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#2563EB',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+  },
+  uploadFieldSuccess: { backgroundColor: '#10B981' },
+  uploadFieldText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 10,
+  },
+
+  // Terms
+  termsContainer: { marginVertical: 16 },
+  checkboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+  },
+  checkboxBox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
+    marginRight: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  checkboxBoxChecked: { backgroundColor: '#2563EB', borderColor: '#2563EB' },
+  checkboxText: { fontSize: 14, fontWeight: '600', color: '#1E293B' },
+  checkboxSubtext: { fontSize: 11, color: '#64748B', marginTop: 2 },
+
+  // Submit Button
+  submitBtn: {
+    marginTop: 12,
+    marginBottom: 12,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  submitBtnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#2563EB',
+    paddingVertical: 16,
+    gap: 12,
+  },
+  submitBtnText: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
+  submitBtnDisabled: { opacity: 0.6 },
+  noteText: {
+    textAlign: 'center',
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 20,
+  },
+
+  // Dashboard Styles
+  dashboardHeader: {
+    backgroundColor: '#2563EB',
+    borderRadius: 20,
+    marginBottom: 16,
+    padding: 20,
+  },
+  dashboardHeaderContent: { flexDirection: 'row', alignItems: 'center' },
+  dashboardHeaderIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  dashboardHeaderTitle: { fontSize: 20, fontWeight: '700', color: '#FFFFFF' },
+  dashboardHeaderSub: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.9)',
+    marginTop: 2,
+  },
+  dashboardCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    marginBottom: 20,
+    overflow: 'hidden',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+  },
+  profileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  profileAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#2563EB',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  profileAvatarText: { fontSize: 24, fontWeight: '700', color: '#FFFFFF' },
+  profileInfo: { flex: 1, marginLeft: 14 },
+  profileName: { fontSize: 18, fontWeight: '700', color: '#1E293B' },
+  profileVehicle: { fontSize: 13, color: '#64748B', marginTop: 2 },
+  statusChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  statusChipApproved: { backgroundColor: '#D1FAE5' },
+  statusChipPending: { backgroundColor: '#FEF3C7' },
+  statusChipDeclined: { backgroundColor: '#FEE2E2' },
+  statusChipText: { fontSize: 11, fontWeight: '700' },
+  kycSection: {
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  kycSectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 12,
   },
-  batteryCardTitle: {
-    fontSize: 16,
+  kycSectionTitle: {
+    fontSize: 15,
     fontWeight: '600',
-    color: '#1F2937',
-    marginLeft: 8,
+    color: '#1E293B',
+    marginLeft: 10,
+    flex: 1,
+  },
+  kycBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
+  kycBadgeVerified: { backgroundColor: '#D1FAE5' },
+  kycBadgePending: { backgroundColor: '#FEF3C7' },
+  kycBadgeText: { fontSize: 11, fontWeight: '700' },
+  kycDetailBox: { backgroundColor: '#F8FAFC', borderRadius: 12, padding: 14 },
+  kycDetailRow: { flexDirection: 'row', marginBottom: 8 },
+  kycDetailLabel: { fontSize: 12, color: '#64748B', width: 100 },
+  kycDetailValue: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#1E293B',
+    flex: 1,
+  },
+  permissionBox: {
+    margin: 20,
+    padding: 20,
+    backgroundColor: '#FEF2F2',
+    borderRadius: 16,
+    alignItems: 'center',
+  },
+  permissionBoxTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#991B1B',
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  permissionBoxText: {
+    fontSize: 13,
+    color: '#7F1D1D',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  permissionButton: {
+    backgroundColor: '#EF4444',
+    paddingVertical: 12,
+    paddingHorizontal: 28,
+    borderRadius: 12,
+  },
+  permissionButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
+  switchCard: {
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  switchCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  switchCardTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1E293B',
+    marginLeft: 10,
+    flex: 1,
+  },
+  switchStatusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  switchStatusOnlineBadge: { backgroundColor: '#D1FAE5' },
+  switchStatusOfflineBadge: { backgroundColor: '#F1F5F9' },
+  switchStatusTrackingBadge: { backgroundColor: '#DBEAFE' },
+  switchStatusText: { fontSize: 11, fontWeight: '700' },
+  switchStatusOnline: { color: '#10B981' },
+  switchStatusOffline: { color: '#64748B' },
+  switchStatusTracking: { color: '#2563EB' },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  switchLabel: { fontSize: 14, fontWeight: '500', color: '#334155' },
+  switchDescription: { fontSize: 12, color: '#64748B' },
+  pendingCard: { margin: 20 },
+  pendingCardInner: {
+    padding: 24,
+    borderRadius: 16,
+    alignItems: 'center',
+    backgroundColor: '#FFFBEB',
+  },
+  pendingCardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#92400E',
+    marginTop: 14,
+    marginBottom: 6,
+  },
+  pendingCardText: { fontSize: 13, color: '#92400E', textAlign: 'center' },
+  viewStatusBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#2563EB',
+    margin: 20,
+    marginTop: 0,
+    paddingVertical: 14,
+    borderRadius: 14,
+    gap: 10,
+  },
+  viewStatusBtnText: { fontSize: 15, fontWeight: '600', color: '#FFFFFF' },
+  newRegBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 20,
+    marginBottom: 20,
+    paddingVertical: 14,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#2563EB',
+    backgroundColor: '#FFFFFF',
+    gap: 10,
+  },
+  newRegBtnText: { fontSize: 14, fontWeight: '600', color: '#2563EB' },
+
+  // Battery Card
+  batteryCard: {
+    backgroundColor: '#1E293B',
+    borderRadius: 20,
+    marginBottom: 16,
+    padding: 16,
+  },
+  batteryCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  batteryCardTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginLeft: 10,
   },
   batteryStatsRow: {
     flexDirection: 'row',
@@ -2671,508 +3240,39 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   batteryStatItem: { alignItems: 'center' },
-  batteryStatValue: { fontSize: 20, fontWeight: '700', marginTop: 4 },
-  batteryStatLabel: { fontSize: 12, color: '#6B7280', marginTop: 2 },
+  batteryStatValue: { fontSize: 16, fontWeight: '700', marginTop: 4 },
+  batteryStatLabel: { fontSize: 11, color: '#94A3B8', marginTop: 2 },
   batteryProgressBar: {
     height: 6,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: '#334155',
     borderRadius: 3,
     overflow: 'hidden',
-    marginBottom: 16,
   },
   batteryProgressFill: { height: '100%', borderRadius: 3 },
-  timeoutRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginBottom: 16,
-    paddingVertical: 8,
-    backgroundColor: '#F9FAFB',
-    borderRadius: 12,
-  },
-  timeoutItem: { alignItems: 'center' },
-  timeoutLabel: { fontSize: 11, color: '#6B7280', marginTop: 4 },
-  timeoutValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1F2937',
-    marginTop: 2,
-  },
-  batteryModeBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  batteryModeText: { fontSize: 12, fontWeight: '500', marginLeft: 6 },
 
-  // Status Card Styles
-  statusHeader: {
-    backgroundColor: '#4F46E5',
-    padding: 20,
-    borderRadius: 16,
-    marginBottom: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    elevation: 6,
-  },
-  statusHeaderIcon: {
-    width: 52,
-    height: 52,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 14,
-  },
-  statusHeaderTitle: { fontSize: 18, fontWeight: '600', color: '#FFFFFF' },
-  statusHeaderSub: { fontSize: 14, color: 'rgba(255,255,255,0.9)' },
-  statusCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    elevation: 3,
-    overflow: 'hidden',
-  },
-  profileSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-    backgroundColor: '#FAFAFA',
-  },
-  profileInfo: { flex: 1, marginLeft: 12 },
-  profileName: { fontSize: 18, fontWeight: '600', color: '#1F2937' },
-  profileVehicle: { fontSize: 14, color: '#6B7280' },
-  statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    marginLeft: 8,
-  },
-  statusBadgeText: { fontSize: 12, fontWeight: '700', color: '#FFFFFF' },
-  statusApproved: { backgroundColor: '#10B981' },
-  statusPending: { backgroundColor: '#F59E0B' },
-  statusDeclined: { backgroundColor: '#EF4444' },
-  kycCard: { padding: 20, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
-  kycHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
-  kycTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1F2937',
-    marginLeft: 10,
-    flex: 1,
-  },
-  kycStatusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  kycStatusVerified: { backgroundColor: '#D1FAE5' },
-  kycStatusPending: { backgroundColor: '#FEF3C7' },
-  kycStatusText: { fontSize: 12, fontWeight: '700' },
-  kycDetails: { backgroundColor: '#F9FAFB', borderRadius: 8, padding: 12 },
-  kycDetailRow: { flexDirection: 'row', marginBottom: 8 },
-  kycDetailLabel: { fontSize: 13, color: '#6B7280', width: 120 },
-  kycDetailValue: {
-    fontSize: 13,
-    color: '#1F2937',
-    fontWeight: '600',
-    flex: 1,
-  },
-  permissionWarningCard: {
-    margin: 20,
-    padding: 20,
-    backgroundColor: '#FEF2F2',
-    borderRadius: 16,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#FEE2E2',
-  },
-  permissionWarningTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#991B1B',
-    marginTop: 12,
-    marginBottom: 8,
-  },
-  permissionWarningText: {
-    fontSize: 14,
-    color: '#7F1D1D',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  permissionWarningButton: {
-    backgroundColor: '#EF4444',
-    paddingVertical: 12,
-    paddingHorizontal: 28,
-    borderRadius: 12,
-  },
-  permissionWarningButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  permissionGrantedCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    margin: 20,
-    padding: 12,
-    backgroundColor: '#D1FAE5',
-    borderRadius: 12,
-  },
-  permissionGrantedText: {
-    fontSize: 14,
-    color: '#065F46',
-    fontWeight: '600',
-    marginLeft: 8,
-  },
-  verificationCard: {
-    padding: 24,
-    margin: 20,
-    backgroundColor: '#FFFBEB',
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  verificationIconContainer: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#FEF3C7',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  verificationTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#92400E',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  verificationText: { fontSize: 14, color: '#92400E', textAlign: 'center' },
-  swiperCard: {
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  swiperHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  swiperTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1F2937',
-    marginLeft: 10,
-    flex: 1,
-  },
-  swiperStatus: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    backgroundColor: '#F3F4F6',
-  },
-  swiperStatusText: { fontSize: 12, fontWeight: '700' },
-  swiperStatusOnline: { color: '#10B981' },
-  swiperStatusOffline: { color: '#6B7280' },
-  swiperStatusTracking: { color: '#3B82F6' },
-  swiperStatusNotTracking: { color: '#6B7280' },
-  swiperBody: { marginTop: 4 },
-  swiperDescription: { fontSize: 14, color: '#6B7280', marginBottom: 16 },
-  swiperContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  swiperLabel: { fontSize: 15, fontWeight: '600', color: '#374151' },
-  lastStatusContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-  },
-  lastStatusText: { fontSize: 12, color: '#6B7280', marginLeft: 6 },
-  viewStatusButton: {
-    backgroundColor: '#4F46E5',
-    margin: 20,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    elevation: 3,
-  },
-  buttonIconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  viewStatusButtonText: {
-    flex: 1,
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  newRegistrationButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-    marginHorizontal: 20,
-    marginBottom: 20,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#4F46E5',
-    backgroundColor: '#FFFFFF',
-  },
-  newRegistrationButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#4F46E5',
-    marginLeft: 10,
-  },
-
-  // Form Styles
-  header: {
-    backgroundColor: '#4F46E5',
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 16,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    elevation: 8,
-  },
-  headerContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  headerIconContainer: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 14,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.3)',
-  },
-  title: { fontSize: 22, fontWeight: '700', color: '#FFFFFF' },
-  subtitle: { fontSize: 14, color: 'rgba(255,255,255,0.9)' },
-  formContainer: { paddingHorizontal: 20, paddingBottom: 40, paddingTop: 8 },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 28,
-    marginBottom: 12,
-    paddingHorizontal: 4,
-  },
-  sectionIcon: {
-    marginRight: 10,
-    backgroundColor: '#EDE9FE',
-    padding: 6,
-    borderRadius: 8,
-  },
-  sectionHeaderText: { fontSize: 18, fontWeight: '700', color: '#1F2937' },
-  sectionCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    elevation: 3,
-  },
-  checkInfoCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f0f9ff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#bae6fd',
-  },
-  checkInfoContent: { flex: 1, marginLeft: 12 },
-  checkInfoTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#0369a1',
-    marginBottom: 4,
-  },
-  checkInfoText: { fontSize: 12, color: '#0c4a6e' },
-  inputContainer: { marginBottom: 20 },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 8,
-  },
-  inputWrapper: { position: 'relative' },
-  inputIcon: {
-    position: 'absolute',
-    left: 16,
-    top: '50%',
-    marginTop: -10,
-    zIndex: 1,
-  },
-  input: {
-    backgroundColor: '#F9FAFB',
-    borderWidth: 1.5,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingLeft: 48,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: '#111827',
-    height: 48,
-  },
-  dropdownButton: {
-    backgroundColor: '#F9FAFB',
-    borderWidth: 1.5,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    height: 48,
-    justifyContent: 'center',
-  },
-  dropdownButtonSelected: {
-    borderColor: '#4F46E5',
-    backgroundColor: '#F0F9FF',
-  },
-  dropdownButtonContent: { flexDirection: 'row', alignItems: 'center' },
-  dropdownButtonText: { flex: 1, fontSize: 15, marginLeft: 12 },
-  dropdownButtonTextSelected: { color: '#111827', fontWeight: '500' },
-  dropdownButtonTextPlaceholder: { color: '#9CA3AF' },
-  uploadButton: {
-    backgroundColor: '#4F46E5',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 2,
-  },
-  uploadButtonSuccess: { backgroundColor: '#10B981' },
-  uploadIcon: { marginRight: 12 },
-  uploadText: { color: '#FFFFFF', fontSize: 15, fontWeight: '600' },
-  termsCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 20,
-    marginTop: 8,
-    marginBottom: 20,
-    borderWidth: 1.5,
-    borderColor: '#E5E7EB',
-    elevation: 3,
-  },
-  termsHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
-  termsTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1F2937',
-    marginLeft: 12,
-  },
-  checkboxContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    backgroundColor: '#F9FAFB',
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#E5E7EB',
-  },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: '#9CA3AF',
-    marginRight: 14,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-  },
-  checkboxChecked: { backgroundColor: '#4F46E5', borderColor: '#4F46E5' },
-  checkboxText: { fontSize: 15, fontWeight: '600', color: '#1F2937' },
-  checkboxSubtext: { fontSize: 12, color: '#6B7280' },
-  submitButton: {
-    backgroundColor: '#4F46E5',
-    paddingVertical: 18,
-    borderRadius: 14,
-    marginBottom: 16,
-    elevation: 6,
-  },
-  submitButtonDisabled: { backgroundColor: '#A5B4FC', opacity: 0.7 },
-  buttonContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  submitButtonText: {
-    color: '#FFFFFF',
-    fontSize: 17,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  submitButtonSubtext: {
-    color: 'rgba(255,255,255,0.9)',
-    fontSize: 12,
-    textAlign: 'center',
-  },
-
-  // Modal Styles
-  modalSafeArea: { flex: 1, backgroundColor: '#FFFFFF' },
+  // Modals
+  modalContainer: { flex: 1, backgroundColor: '#FFFFFF' },
   modalHeader: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  modalTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
   },
-  modalBackButton: { padding: 4, marginRight: 12 },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: '#1F2937' },
-  modalSubtitle: { fontSize: 13, color: '#6B7280', marginTop: 2 },
-  modalList: { paddingBottom: 16 },
+  modalClose: { marginRight: 16 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#1E293B', flex: 1 },
+  modalSubtitle: { fontSize: 13, color: '#64748B', marginLeft: 8 },
   modalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingVertical: 16,
     paddingHorizontal: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: '#F1F5F9',
   },
-  selectedModalItem: { backgroundColor: '#F0F9FF' },
-  modalItemContent: { flexDirection: 'row', alignItems: 'center' },
-  modalIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: '#F3F4F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  modalItemText: { flex: 1, fontSize: 16, color: '#1F2937', fontWeight: '500' },
-  selectedModalItemText: { color: '#4F46E5', fontWeight: '600' },
+  modalItemSelected: { backgroundColor: '#EFF6FF' },
+  modalItemText: { flex: 1, fontSize: 15, color: '#1E293B', marginLeft: 14 },
+  modalItemTextSelected: { color: '#2563EB', fontWeight: '600' },
 });
 
 export default RiderRegistrationScreen;

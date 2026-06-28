@@ -1,5 +1,5 @@
 import react from "react";
-import ApplySection from "../../core/components/shipping/Apply/Register";
+import ApplySection from "../../core/components/shipping/onboarding/Apply/Register";
 import { useNavigation } from "@react-navigation/native";
 
 export default function RegisterScreen() {

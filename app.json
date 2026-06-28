@@ -1,4 +1,8 @@
 {
   "name": "TizzyOS",
-  "displayName": "TizzyOS"
+  "displayName": "TizzyOS",
+
+    "react-native-google-mobile-ads": {
+      "android_app_id": "ca-app-pub-3901529039906994~4348600236"
+    }
 }

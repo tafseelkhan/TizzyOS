@@ -1,6 +1,11 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
+import {
+  NavigationContainer,
+  NavigationContainerRef,
+} from '@react-navigation/native';
+import { AdsSDK } from '../api/ads';
+import { handleNavigationStateChange } from './navigation';
 import { createStackNavigator } from '@react-navigation/stack';
-import { NavigationContainer } from '@react-navigation/native';
 import TizzyGo from '../screens/animations/splashScreen';
 import LoginScreen from '../screens/auth/loginScreen';
 import SignupScreen from '../screens/auth/signupScreen';
@@ -8,14 +13,8 @@ import HomeScreen from '../screens/home/homeScreen';
 import ProfileScreen from '../screens/profile/profileScreen';
 import EditProfileScreen from '../screens/profile/profileEditScreen';
 import SettingsScreen from '../screens/settings/settingScreen';
-import ShipperScreen from '../screens/shipping/menuScreen';
-import ApplyShippingScreen from '../screens/shipping/applyShippingScreen';
-import RegistrationSuccess from '../screens/shipping/registrationSuccessScreen';
-// import AddShipmentScreen from '../screens/shipping/AddShipmentScreen';
-// import MyShipmentsScreen from '../screens/shipping/MyShipmentsScreen';
-// import TrackingScreen from '../screens/shipping/TrackingScreen';
-import ShippingOrdersScreen from '../screens/shipping/shippingOrderScreen';
-// import ShippingReviewsScreen from '../screens/shipping/ShippingReviewsScreen';
+
+// Seller Imports*
 import ShopScreen from '../screens/shop/menuScreen';
 import ApplySellerScreen from '../screens/shop/appleSellerScreen';
 import SellerStatus from '../screens/shop/statusApplicationScreen';
@@ -26,6 +25,35 @@ import SellerOrdersScreen from '../screens/shop/sellerOrderScreen';
 import SellerPayoutPortalScreen from '../screens/shop/sellerPayoutPortalScreen';
 import SetupWallet from '../screens/shop/setupWalletScreen';
 // import SellerReviewsScreen from "../screens/shop/SellerReviewsScreen";
+
+// Shippings Imports*
+import ShipperScreen from '../screens/shipping/menuScreen';
+import ApplyShippingScreen from '../screens/shipping/applyShippingScreen';
+import RegistrationSuccess from '../screens/shipping/registrationSuccessScreen';
+// import AddShipmentScreen from '../screens/shipping/AddShipmentScreen';
+// import MyShipmentsScreen from '../screens/shipping/MyShipmentsScreen';
+// import TrackingScreen from '../screens/shipping/TrackingScreen';
+import ShippingOrdersScreen from '../screens/shipping/shippingOrderScreen';
+// import ShippingReviewsScreen from '../screens/shipping/ShippingReviewsScreen';
+
+// FWS Imports*
+import ApplyFWSScreen from '../screens/fws/applyFwsScreen';
+// import MyFWSScreen from '../screens/fws/myFWSSrceen';
+// import FWSOrderScreen from '../screens/fws/fwsOrderScreen';
+// import fwsReviewScreen from '../screens/fws/fwsReviewScreen';
+
+// Employee Imports*
+import CreateEmployee from '../screens/fws/appleEmployeeScreen';
+import EmployeeList from '../screens/fws/employeeList';
+import EmployeeDetail from '../screens/fws/employeeDetail';
+import HandoverScanner from '../screens/fws/handoverScanner/scanner';
+import VerifyForDispatch from '../screens/fws/verifyForDispatch/verifyForDispatch';
+import FWSMenuScreen from '../screens/fws/menu/fwsMenu';
+import FWSScannedOrders from '../screens/fws/scannedOrders/scannedOrders';
+// import EmployeeAttendance from '../screens/employee/EmployeeAttendance';
+// import EmployeeLeave from '../screens/employee/EmployeeLeave';
+// import EmployeePayroll from '../screens/employee/EmployeePayroll';
+// import EmployeeManagement from '../screens/employee/EmployeeManagement';
 
 // ✅ Complete RootStackParamList with all screens
 export type RootStackParamList = {
@@ -59,13 +87,55 @@ export type RootStackParamList = {
   // ShippingReviews: undefined;
   // ProtectionPlans: undefined;
   // SellerReviews: undefined;
+
+  // Fws Screens
+  ApplyFWS: undefined;
+  MyFWS: undefined;
+  FWSOrders: undefined;
+  FWSReviews: undefined;
+
+  // Employee Screens
+  FWS: undefined;
+  CreateEmployee: undefined;
+  FWSScannedOrders: undefined;
+  EmployeeList: undefined;
+  EmployeeDetail: { name: string; role?: string | null };
+  HandoverScanner: undefined;
+  VerifyForDispatch: undefined;
+  EmployeeAttendance: undefined;
+  EmployeeLeave: undefined;
+  EmployeePayroll: undefined;
+  EmployeeManagement: undefined;
 };
 
 const Stack = createStackNavigator<RootStackParamList>();
 
-export default function AppNavigator() {
+export default function AppNavigator(): React.ReactElement {
+  const navigationRef =
+    useRef<NavigationContainerRef<RootStackParamList>>(null);
+
+  // Register navigation ref for Ads SDK
+  useEffect(() => {
+    if (navigationRef.current) {
+      AdsSDK.registerNavigationContainer(navigationRef.current);
+    }
+  }, [navigationRef.current]);
+
   return (
-    <NavigationContainer>
+    <NavigationContainer
+      ref={navigationRef}
+      onStateChange={state => {
+        // Handle navigation state changes for ad tracking
+        handleNavigationStateChange(state);
+      }}
+      onReady={() => {
+        // Register navigation ref when ready
+        if (navigationRef.current) {
+          AdsSDK.registerNavigationContainer(navigationRef.current);
+        }
+      }}
+    >
+      {' '}
       <Stack.Navigator
         initialRouteName="Splash"
         screenOptions={{ headerShown: false }}
@@ -94,12 +164,33 @@ export default function AppNavigator() {
         {/* Commented Shipping Screens - Add when needed */}
         <Stack.Screen name="Shipper" component={ShipperScreen} />
         <Stack.Screen name="ApplyShipping" component={ApplyShippingScreen} />
-        <Stack.Screen name="RegistrationSuccess" component={RegistrationSuccess} />
+        <Stack.Screen
+          name="RegistrationSuccess"
+          component={RegistrationSuccess}
+        />
         {/* <Stack.Screen name="MyShipments" component={MyShipmentsScreen} />  */}
         <Stack.Screen name="ShippingOrders" component={ShippingOrdersScreen} />
-        {/* <Stack.Screen name="ShippingReviews" component={ShippingReviewsScreen} /> */}
         {/* <Stack.Screen name="ProtectionPlans" component={ProtectionPlansScreen} /> */}
         {/* <Stack.Screen name="SellerReviews" component={SellerReviewsScreen} /> */}
+
+        {/* FWS Screens - Add when needed */}
+        <Stack.Screen name="ApplyFWS" component={ApplyFWSScreen} />
+        {/* <Stack.Screen name="MyFWS" component={MyFWSScreen} /> */}
+        {/* <Stack.Screen name="FWSOrders" component={FWSOrderScreen} /> */}
+        {/* <Stack.Screen name="FWSReviews" component={fwsReviewScreen} /> */}
+
+        {/* Employee Screen - Add when needed */}
+        <Stack.Screen name="CreateEmployee" component={CreateEmployee} />
+        <Stack.Screen name="EmployeeList" component={EmployeeList} />
+        <Stack.Screen name="EmployeeDetail" component={EmployeeDetail} />
+        <Stack.Screen name="HandoverScanner" component={HandoverScanner} />
+        <Stack.Screen name="VerifyForDispatch" component={VerifyForDispatch} />
+        <Stack.Screen name="FWS" component={FWSMenuScreen} />
+        <Stack.Screen name="FWSScannedOrders" component={FWSScannedOrders} />
+        {/* <Stack.Screen name="EmployeeAttendance" component={EmployeeAttendance} />
+        <Stack.Screen name="EmployeeLeave" component={EmployeeLeave} />
+        <Stack.Screen name="EmployeePayroll" component={EmployeePayroll} />
+        <Stack.Screen name="EmployeeManagement" component={EmployeeManagement} /> */}
       </Stack.Navigator>
     </NavigationContainer>
   );

@@ -12,18 +12,13 @@ import {
   SafeAreaView,
   Platform,
   UIManager,
+  StatusBar,
 } from 'react-native';
-import { useTheme } from '../../../contexts/theme/ThemeContext';
-import BottomNavigation from '../../home/BottomNavigation';
+import Icon from 'react-native-vector-icons/Ionicons';
 import { useNavigation, NavigationProp } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
-// Import vector icons from react-native-vector-icons
-import Ionicons from 'react-native-vector-icons/Ionicons';
-import Foundation from 'react-native-vector-icons/Foundation';
-
-// Import LinearGradient from react-native-linear-gradient
-import LinearGradient from 'react-native-linear-gradient';
+import BottomNavigation from '../../home/BottomNavigation';
+import LottieView from 'lottie-react-native';
 
 // Enable LayoutAnimation for Android
 if (
@@ -42,11 +37,12 @@ type RootStackParamList = {
   ProductListing: { shouldRequestLocation: boolean };
   MyProducts: undefined;
   SetupWallet: undefined;
-  ProtectionPlans: undefined;
   SellerOrders: undefined;
+  ProtectionPlans: undefined;
   SellerReviews: undefined;
   Home: undefined;
   Login: undefined;
+  [key: string]: undefined | object;
 };
 
 // Types
@@ -68,36 +64,69 @@ interface SellerProfile {
 interface MenuItem {
   segment: string;
   title: string;
-  icon: React.ReactNode;
-  badge?: number;
+  iconName: string;
+  iconColor: string;
 }
 
 interface MenuSection {
   segment: string;
   title: string;
-  icon: React.ReactNode;
+  iconName: string;
+  iconColor: string;
   children: MenuItem[];
 }
 
-// Mock API Service
+// Helper function to get image URL
+const getImageUrl = (image?: string): string => {
+  if (!image) return 'https://via.placeholder.com/150';
+  if (image.startsWith('http')) return image;
+  return 'https://via.placeholder.com/150';
+};
+
+// Seller API Service
 const sellerApi = {
-  getSellerProfile: async (): Promise<SellerProfile> => {
-    return new Promise(resolve => {
-      setTimeout(() => {
-        resolve({
-          id: 'seller_123',
-          name: 'John Electronics',
-          image: 'https://via.placeholder.com/150',
-          isActive: true,
+  getSellerProfile: async (token: string): Promise<SellerProfile> => {
+    try {
+      const response = await fetch(`${BASE_URL}/api/seller`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        return {
+          id: data._id || 'seller_123',
+          name: data.name || 'John Electronics',
+          image: getImageUrl(data.image),
+          isActive: data.isActive || true,
           stats: {
-            revenue: 42500,
-            likes: 1250,
-            comments: 320,
-            orders: 48,
+            revenue: data.stats?.revenue || 42500,
+            likes: data.stats?.likes || 1250,
+            comments: data.stats?.comments || 320,
+            orders: data.stats?.orders || 48,
           },
-        });
-      }, 1000);
-    });
+        };
+      }
+    } catch (error) {
+      console.error('Error fetching seller profile:', error);
+    }
+
+    // Return mock data if API fails
+    return {
+      id: 'seller_123',
+      name: 'John Electronics',
+      image: 'https://via.placeholder.com/150',
+      isActive: true,
+      stats: {
+        revenue: 42500,
+        likes: 1250,
+        comments: 320,
+        orders: 48,
+      },
+    };
   },
 
   getSellerMenu: async (): Promise<MenuSection[]> => {
@@ -105,52 +134,63 @@ const sellerApi = {
       {
         segment: 'seller',
         title: 'Seller Dashboard',
-        icon: <Ionicons name="storefront" size={24} color="#FFFFFF" />,
+        iconName: 'storefront-outline',
+        iconColor: '#8B5CF6',
         children: [
           {
             segment: 'apply-seller',
             title: 'Apply for Seller ID',
-            icon: <Ionicons name="person-add" size={22} color="#8B5CF6" />,
-            badge: 2,
+            iconName: 'person-add-outline',
+            iconColor: '#8B5CF6',
           },
           {
             segment: 'add-product',
             title: 'Add Products',
-            icon: <Ionicons name="add-circle" size={22} color="#10B981" />,
+            iconName: 'add-circle-outline',
+            iconColor: '#10B981',
           },
           {
             segment: 'products',
             title: 'My Products',
-            icon: <Ionicons name="cube" size={22} color="#F59E0B" />,
-            badge: 15,
-          },
-          {
-            segment: 'ttm/protection',
-            title: 'Protection Plans',
-            icon: (
-              <Ionicons name="shield-checkmark" size={22} color="#3B82F6" />
-            ),
+            iconName: 'cube-outline',
+            iconColor: '#F59E0B',
           },
           {
             segment: 'payout-portal',
             title: 'Payout Portal',
-            icon: <Foundation name="dollar" size={35} color="#10B981" />,
+            iconName: 'wallet-outline',
+            iconColor: '#10B981',
           },
           {
             segment: 'seller-orders',
             title: 'Orders & Sales',
-            icon: <Ionicons name="cart" size={22} color="#EF4444" />,
-            badge: 8,
+            iconName: 'cart-outline',
+            iconColor: '#EF4444',
           },
-          {
-            segment: 'reviews',
-            title: 'Customer Reviews',
-            icon: <Ionicons name="star" size={22} color="#F59E0B" />,
-          },
+          // {
+          //   segment: 'protection-plans',
+          //   title: 'Protection Plans',
+          //   iconName: 'shield-checkmark-outline',
+          //   iconColor: '#3B82F6',
+          // },
+          // {
+          //   segment: 'seller-reviews',
+          //   title: 'Customer Reviews',
+          //   iconName: 'star-outline',
+          //   iconColor: '#F59E0B',
+          // },
         ],
       },
     ];
   },
+};
+
+// Custom hook for theme
+const useTheme = () => {
+  const [isDark, setIsDark] = useState(false);
+  const resolvedTheme = isDark ? 'dark' : 'light';
+
+  return { isDark, resolvedTheme };
 };
 
 const SidebarWithSeller: React.FC = () => {
@@ -166,36 +206,29 @@ const SidebarWithSeller: React.FC = () => {
   const [sellerProfile, setSellerProfile] = useState<SellerProfile | null>(
     null,
   );
-
-  const getImageUrl = (image?: string): string => {
-    if (!image) return 'https://via.placeholder.com/150';
-    if (image.startsWith('http')) return image;
-    return 'https://via.placeholder.com/150';
-  };
-
-  const [previewImage, setPreviewImage] = useState(
-    'https://via.placeholder.com/150',
-  );
   const [menuData, setMenuData] = useState<MenuSection[]>([]);
   const [loading, setLoading] = useState(true);
+  const [imageError, setImageError] = useState(false);
   const [profileData, setProfileData] = useState({
     _id: '',
     name: 'User',
+    email: '',
+    phone: '',
     image: 'https://via.placeholder.com/150',
   });
 
-  // Colors
+  // Colors - Premium Modern Minimalist Theme (same as shipping)
   const colors = {
-    background: isDark ? '#0F172A' : '#F8FAFC',
-    card: isDark ? '#1E293B' : '#FFFFFF',
-    textPrimary: isDark ? '#F1F5F9' : '#1E293B',
-    textSecondary: isDark ? '#94A3B8' : '#64748B',
-    textMuted: isDark ? '#64748B' : '#94A3B8',
-    border: isDark ? '#334155' : '#E2E8F0',
-    accent: '#7C3AED',
-    accentLight: isDark ? '#8B5CF6' : '#7C3AED',
-    gradientStart: isDark ? '#7C3AED' : '#6366F1',
-    gradientEnd: isDark ? '#4C1D95' : '#4338CA',
+    background: isDark ? '#0F0F12' : '#F8F9FC',
+    card: isDark ? '#16161D' : '#FFFFFF',
+    textPrimary: isDark ? '#F3F4F6' : '#111827',
+    textSecondary: isDark ? '#9CA3AF' : '#4B5563',
+    textMuted: isDark ? '#6B7280' : '#9CA3AF',
+    border: isDark ? '#22222B' : '#E5E7EB',
+    accent: '#8B5CF6',
+    accentLight: '#A78BFA',
+    gradientStart: isDark ? '#8B5CF6' : '#8B5CF6',
+    gradientEnd: isDark ? '#6D28D9' : '#7C3AED',
     badge: '#EF4444',
     success: '#10B981',
     warning: '#F59E0B',
@@ -206,32 +239,28 @@ const SidebarWithSeller: React.FC = () => {
   useEffect(() => {
     const fetchProfile = async () => {
       try {
-        setLoading(true);
         const token = await AsyncStorage.getItem('authToken');
+        if (!token) return;
 
-        const response = await fetch(
-          'http://172.20.10.12:5000/api/profile/me',
-          {
-            method: 'GET',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
-            },
+        const response = await fetch(`${BASE_URL}/api/profile/me`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
           },
-        );
+        });
 
         const data = await response.json();
 
         if (response.ok) {
           const normalized = getImageUrl(data?.image);
-
           setProfileData({
             _id: data?._id ?? '',
             name: data?.name ?? 'User',
+            email: data?.email ?? 'user@example.com',
+            phone: data?.phone ?? '+91 9876543210',
             image: normalized,
           });
-
-          setPreviewImage(normalized);
         } else {
           console.error(
             'Error fetching profile:',
@@ -240,8 +269,6 @@ const SidebarWithSeller: React.FC = () => {
         }
       } catch (error) {
         console.error('Error fetching profile:', error);
-      } finally {
-        setLoading(false);
       }
     };
 
@@ -256,8 +283,9 @@ const SidebarWithSeller: React.FC = () => {
   const loadSellerData = async () => {
     try {
       setLoading(true);
+      const token = await AsyncStorage.getItem('authToken');
       const [profile, menu] = await Promise.all([
-        sellerApi.getSellerProfile(),
+        sellerApi.getSellerProfile(token || ''),
         sellerApi.getSellerMenu(),
       ]);
       setSellerProfile(profile);
@@ -269,12 +297,11 @@ const SidebarWithSeller: React.FC = () => {
     }
   };
 
-  // ✅ FIXED: Navigation handler with proper typing
+  // Navigation handler
   const handleItemPress = (segment: string) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setActiveItem(segment);
 
-    // Navigation logic - using proper navigation without 'as any'
     switch (segment) {
       case 'apply-seller':
         navigation.navigate('ApplySeller');
@@ -288,13 +315,13 @@ const SidebarWithSeller: React.FC = () => {
       case 'payout-portal':
         navigation.navigate('SetupWallet');
         break;
-      case 'ttm/protection':
-        navigation.navigate('ProtectionPlans');
-        break;
       case 'seller-orders':
         navigation.navigate('SellerOrders');
         break;
-      case 'reviews':
+      case 'protection-plans':
+        navigation.navigate('ProtectionPlans');
+        break;
+      case 'seller-reviews':
         navigation.navigate('SellerReviews');
         break;
       default:
@@ -313,15 +340,25 @@ const SidebarWithSeller: React.FC = () => {
   if (loading) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
+        <StatusBar
+          barStyle={isDark ? 'light-content' : 'dark-content'}
+          backgroundColor={colors.background}
+          translucent={false}
+        />
         <View
           style={[
             styles.loadingContainer,
             { backgroundColor: colors.background },
           ]}
         >
-          <ActivityIndicator size="large" color={colors.accentLight} />
-          <Text style={[styles.loadingText, { color: colors.textPrimary }]}>
-            Loading Business Hub...
+          <LottieView
+            source={require('../../animations/lotties/Loading animation blue.json')}
+            autoPlay
+            loop
+            style={styles.lottieLoading}
+          />
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+            Loading Business Hub.....
           </Text>
         </View>
       </SafeAreaView>
@@ -329,223 +366,257 @@ const SidebarWithSeller: React.FC = () => {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-      <ScrollView
-        style={[styles.container, { backgroundColor: colors.background }]}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-      >
-        {/* Header Section with Seller Profile */}
-        <View style={styles.header}>
-          <LinearGradient
-            colors={[colors.gradientStart, colors.gradientEnd]}
-            style={styles.headerGradient}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <StatusBar
+        barStyle={isDark ? 'light-content' : 'dark-content'}
+        backgroundColor={colors.background}
+        translucent={false}
+      />
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
+        <ScrollView
+          style={[styles.container, { backgroundColor: colors.background }]}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
+        >
+          {/* Simple User Profile Section - Same as shipping */}
+          <View
+            style={[
+              styles.userProfileContainer,
+              { backgroundColor: colors.card },
+            ]}
           >
-            <View style={styles.headerContent}>
-              {/* Seller Profile Image and Name */}
-              <View style={styles.sellerProfileContainer}>
-                <Image
-                  source={{ uri: profileData.image }}
-                  style={styles.sellerImage}
-                  defaultSource={require('../../../../assets/images/default-profile.png')}
+            {/* Profile Image with Lottie fallback */}
+            {imageError ? (
+              <View
+                style={[
+                  styles.userLottieContainer,
+                  { borderColor: colors.border },
+                ]}
+              >
+                <LottieView
+                  source={require('../../animations/lotties/Login icon (1).json')}
+                  autoPlay
+                  loop
+                  style={styles.userProfileLottie}
                 />
-                <View style={styles.sellerInfo}>
-                  <Text style={styles.sellerName}>{profileData.name}</Text>
-                </View>
               </View>
+            ) : (
+              <Image
+                source={{ uri: profileData.image }}
+                style={[
+                  styles.userProfileImage,
+                  { borderColor: colors.border },
+                ]}
+                onError={() => setImageError(true)}
+              />
+            )}
 
-              <Text style={styles.headerTitle}>Business Hub</Text>
-              <Text style={styles.headerSubtitle}>
-                Manage your business efficiently
+            <View style={styles.userInfo}>
+              <Text style={[styles.userName, { color: colors.textPrimary }]}>
+                {profileData.name}
+              </Text>
+              {/* Email */}
+              <View style={styles.userDetailRow}>
+                <Icon
+                  name="mail-outline"
+                  size={14}
+                  color={colors.textSecondary}
+                />
+                <Text
+                  style={[
+                    styles.userDetailText,
+                    { color: colors.textSecondary },
+                  ]}
+                >
+                  {profileData.email}
+                </Text>
+              </View>
+              {/* Phone */}
+              <View style={styles.userDetailRow}>
+                <Icon
+                  name="call-outline"
+                  size={14}
+                  color={colors.textSecondary}
+                />
+                <Text
+                  style={[
+                    styles.userDetailText,
+                    { color: colors.textSecondary },
+                  ]}
+                >
+                  {profileData.phone}
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Stats Cards - COMMENTED OUT */}
+          {/*
+          <View style={styles.statsContainer}>
+            <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+              <View style={[styles.statIconBg, { backgroundColor: '#FEF3C7' }]}>
+                <Icon name="cart-outline" size={18} color={colors.warning} />
+              </View>
+              <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
+                {sellerProfile?.stats.orders || 0}
+              </Text>
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                Orders
               </Text>
             </View>
-          </LinearGradient>
-        </View>
 
-        {/* Stats Cards */}
-        <View style={styles.statsContainer}>
-          <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-            <Ionicons name="cart" size={20} color={colors.warning} />
-            <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
-              48
-            </Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-              Orders
-            </Text>
-          </View>
-          <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-            <Ionicons name="heart" size={20} color={colors.info} />
-            <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
-              {sellerProfile?.stats.likes.toLocaleString()}
-            </Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-              Likes
-            </Text>
-          </View>
-          <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-            <Ionicons name="chatbubble" size={20} color={colors.warning} />
-            <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
-              {sellerProfile?.stats.comments.toLocaleString()}
-            </Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-              Comments
-            </Text>
-          </View>
-        </View>
+            <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+              <View style={[styles.statIconBg, { backgroundColor: '#DBEAFE' }]}>
+                <Icon name="heart-outline" size={18} color={colors.info} />
+              </View>
+              <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
+                {sellerProfile?.stats.likes.toLocaleString() || 0}
+              </Text>
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                Likes
+              </Text>
+            </View>
 
-        {/* Seller Menu Sections */}
-        {menuData.map(section => (
-          <View key={section.segment} style={styles.section}>
-            <TouchableOpacity
-              style={styles.sectionHeader}
-              onPress={() => toggleSection(section.segment)}
-              activeOpacity={0.8}
-            >
-              <LinearGradient
-                colors={
-                  expandedSections[section.segment]
-                    ? [colors.gradientStart, colors.gradientEnd]
-                    : [colors.card, colors.card]
-                }
-                style={styles.sectionHeaderGradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
+            <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+              <View style={[styles.statIconBg, { backgroundColor: '#D1FAE5' }]}>
+                <Icon
+                  name="chatbubble-outline"
+                  size={18}
+                  color={colors.success}
+                />
+              </View>
+              <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
+                {sellerProfile?.stats.comments.toLocaleString() || 0}
+              </Text>
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                Comments
+              </Text>
+            </View>
+          </View>
+          */}
+
+          {/* Seller Menu Sections - Same style as shipping */}
+          {menuData.map(section => (
+            <View key={section.segment} style={styles.section}>
+              <TouchableOpacity
+                style={styles.sectionHeader}
+                onPress={() => toggleSection(section.segment)}
+                activeOpacity={0.7}
               >
                 <View style={styles.sectionHeaderContent}>
                   <View style={styles.sectionHeaderLeft}>
                     <View
                       style={[
                         styles.iconContainer,
-                        expandedSections[section.segment] &&
-                          styles.iconContainerActive,
+                        {
+                          backgroundColor: isDark
+                            ? 'rgba(139, 92, 246, 0.15)'
+                            : 'rgba(139, 92, 246, 0.08)',
+                        },
                       ]}
                     >
-                      {section.icon}
+                      <Icon
+                        name={section.iconName}
+                        size={18}
+                        color={section.iconColor}
+                      />
                     </View>
                     <Text
                       style={[
                         styles.sectionTitle,
-                        {
-                          color: expandedSections[section.segment]
-                            ? '#FFF'
-                            : colors.textPrimary,
-                        },
+                        { color: colors.textPrimary },
                       ]}
                     >
                       {section.title}
                     </Text>
                   </View>
-                  <Ionicons
+                  <Icon
                     name={
                       expandedSections[section.segment]
                         ? 'chevron-up'
                         : 'chevron-down'
                     }
-                    size={20}
-                    color={
-                      expandedSections[section.segment]
-                        ? '#FFF'
-                        : colors.textSecondary
-                    }
+                    size={18}
+                    color={colors.textSecondary}
                   />
                 </View>
-              </LinearGradient>
-            </TouchableOpacity>
+              </TouchableOpacity>
 
-            {expandedSections[section.segment] && (
-              <View style={[styles.subMenu, { backgroundColor: colors.card }]}>
-                {section.children.map((item, index) => (
-                  <TouchableOpacity
-                    key={item.segment}
-                    style={[
-                      styles.subMenuItem,
-                      { borderBottomColor: colors.border },
-                      activeItem === item.segment && [
-                        styles.subMenuItemActive,
-                        { backgroundColor: isDark ? '#1E1B4B' : '#F5F3FF' },
-                      ],
-                      index === section.children.length - 1 &&
-                        styles.lastSubMenuItem,
-                    ]}
-                    onPress={() => handleItemPress(item.segment)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.subMenuItemLeft}>
-                      <View
-                        style={[
-                          styles.itemIconContainer,
-                          { backgroundColor: isDark ? '#1E1B4B' : '#F5F3FF' },
-                          activeItem === item.segment && {
-                            backgroundColor: colors.accent + '20',
-                          },
-                        ]}
-                      >
-                        {item.icon}
-                      </View>
-                      <View style={styles.textContainer}>
-                        <Text
+              {expandedSections[section.segment] && (
+                <View
+                  style={[
+                    styles.subMenu,
+                    {
+                      backgroundColor: colors.card,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                >
+                  {section.children.map((item, index) => (
+                    <TouchableOpacity
+                      key={item.segment}
+                      style={[
+                        styles.subMenuItem,
+                        activeItem === item.segment && styles.subMenuItemActive,
+                      ]}
+                      onPress={() => handleItemPress(item.segment)}
+                      activeOpacity={0.6}
+                    >
+                      <View style={styles.subMenuItemLeft}>
+                        <View
                           style={[
-                            styles.subMenuText,
+                            styles.itemIconContainer,
                             {
-                              color:
-                                activeItem === item.segment
-                                  ? colors.accentLight
-                                  : colors.textPrimary,
+                              backgroundColor: isDark
+                                ? 'rgba(255,255,255,0.03)'
+                                : '#F3F4F6',
                             },
                           ]}
                         >
-                          {item.title}
-                        </Text>
-                        {item.badge && (
-                          <View style={styles.badge}>
-                            <Text style={styles.badgeText}>{item.badge}</Text>
-                          </View>
-                        )}
-                      </View>
-                    </View>
-                    <View style={styles.rightContent}>
-                      {item.badge && activeItem !== item.segment && (
-                        <View style={styles.badge}>
-                          <Text style={styles.badgeText}>{item.badge}</Text>
+                          <Icon
+                            name={item.iconName}
+                            size={20}
+                            color={item.iconColor}
+                          />
                         </View>
-                      )}
-                      <Ionicons
-                        name="chevron-forward"
-                        size={16}
-                        color={
-                          activeItem === item.segment
-                            ? colors.accentLight
-                            : colors.textMuted
-                        }
-                      />
-                    </View>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-          </View>
-        ))}
+                        <View style={styles.itemTextContainer}>
+                          <Text
+                            style={[
+                              styles.subMenuText,
+                              {
+                                color:
+                                  activeItem === item.segment
+                                    ? colors.accent
+                                    : colors.textPrimary,
+                              },
+                            ]}
+                          >
+                            {item.title}
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={styles.rightContent}>
+                        <Icon
+                          name="chevron-forward"
+                          size={14}
+                          color={colors.textMuted}
+                        />
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+          ))}
 
-        {/* Refresh Button */}
-        <TouchableOpacity
-          style={[styles.refreshButton, { backgroundColor: colors.card }]}
-          onPress={loadSellerData}
-        >
-          <Ionicons name="refresh" size={20} color={colors.accentLight} />
-          <Text style={[styles.refreshText, { color: colors.accentLight }]}>
-            Refresh Data
-          </Text>
-        </TouchableOpacity>
+          {/* Extra space for bottom navigation */}
+          <View style={styles.bottomSpacer} />
+        </ScrollView>
 
-        {/* Extra space for bottom navigation */}
-        <View style={styles.bottomSpacer} />
-      </ScrollView>
-
-      {/* Bottom Navigation */}
-      <BottomNavigation activeTab={activeTab} setActiveTab={setActiveTab} />
-    </SafeAreaView>
+        {/* Bottom Navigation */}
+        <BottomNavigation activeTab={activeTab} setActiveTab={setActiveTab} />
+      </SafeAreaView>
+    </View>
   );
 };
 
@@ -563,123 +634,110 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   loadingText: {
-    marginTop: 12,
+    marginTop: 16,
     fontSize: 16,
-    fontWeight: '500',
+    fontFamily: Platform.OS === 'ios' ? 'System' : 'Poppins-Medium',
+    letterSpacing: 0.3,
   },
-  header: {
-    borderRadius: 20,
-    margin: 16,
-    marginBottom: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.1,
-    shadowRadius: 20,
-    elevation: 10,
+  lottieLoading: {
+    width: 120,
+    height: 120,
   },
-  headerGradient: {
-    borderRadius: 20,
-    padding: 24,
-  },
-  headerContent: {
-    alignItems: 'center',
-  },
-  sellerProfileContainer: {
+  // Premium Modern Header Structure (same as shipping)
+  userProfileContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    padding: 16,
-    borderRadius: 20,
-    marginBottom: 16,
-    width: '100%',
+    marginHorizontal: 16,
+    borderRadius: 24,
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+    marginTop: Platform.OS === 'ios' ? 20 : 16,
+    marginBottom: 20,
+    shadowColor: '#8B5CF6',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.04,
+    shadowRadius: 16,
+    elevation: 4,
   },
-  sellerImage: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.3)',
+  userProfileImage: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    borderWidth: 2.5,
   },
-  sellerInfo: {
-    marginLeft: 12,
+  userLottieContainer: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    overflow: 'hidden',
+    borderWidth: 2.5,
+  },
+  userProfileLottie: {
+    width: 68,
+    height: 68,
+  },
+  userInfo: {
+    marginLeft: 18,
     flex: 1,
   },
-  sellerName: {
-    color: '#FFF',
-    fontSize: 18,
+  userName: {
+    fontSize: 20,
     fontWeight: '700',
-    marginBottom: 4,
+    marginBottom: 6,
+    letterSpacing: -0.4,
   },
-  activeStatus: {
+  userDetailRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginTop: 3,
   },
-  activeDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  activeText: {
-    color: 'rgba(255,255,255,0.8)',
-    fontSize: 14,
+  userDetailText: {
+    fontSize: 13,
+    marginLeft: 8,
     fontWeight: '500',
-  },
-  headerTitle: {
-    color: '#FFF',
-    fontSize: 28,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  headerSubtitle: {
-    color: 'rgba(255,255,255,0.8)',
-    fontSize: 16,
-    fontWeight: '500',
-    textAlign: 'center',
+    fontFamily: Platform.OS === 'ios' ? 'System' : 'Roboto',
   },
   statsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    marginBottom: 24,
+    marginBottom: 16,
+    gap: 12,
   },
   statCard: {
     borderRadius: 16,
-    padding: 16,
+    padding: 14,
     alignItems: 'center',
     flex: 1,
-    marginHorizontal: 4,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 5,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  statIconBg: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
   },
   statNumber: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '700',
-    marginTop: 8,
+    marginBottom: 2,
   },
   statLabel: {
-    fontSize: 12,
-    marginTop: 4,
+    fontSize: 11,
   },
   section: {
     marginBottom: 16,
     marginHorizontal: 16,
   },
   sectionHeader: {
-    borderRadius: 16,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 5,
-  },
-  sectionHeaderGradient: {
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
   },
   sectionHeaderContent: {
     flexDirection: 'row',
@@ -691,44 +749,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   iconContainer: {
-    width: 40,
-    height: 40,
+    width: 36,
+    height: 36,
     borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
-  },
-  iconContainerActive: {
-    backgroundColor: 'rgba(255,255,255,0.3)',
+    marginRight: 14,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: -0.2,
   },
   subMenu: {
-    borderRadius: 16,
+    borderRadius: 20,
     marginTop: 8,
-    paddingVertical: 8,
+    paddingVertical: 6,
+    borderWidth: 1,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.03,
     shadowRadius: 12,
-    elevation: 5,
+    elevation: 2,
   },
   subMenuItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginHorizontal: 6,
+    borderRadius: 14,
   },
   subMenuItemActive: {
-    borderLeftWidth: 4,
-  },
-  lastSubMenuItem: {
-    borderBottomWidth: 0,
+    backgroundColor: 'rgba(139, 92, 246, 0.08)',
   },
   subMenuItemLeft: {
     flexDirection: 'row',
@@ -736,63 +790,31 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   itemIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    marginRight: 14,
   },
-  textContainer: {
+  itemTextContainer: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
+    gap: 8,
   },
   subMenuText: {
-    fontSize: 16,
-    fontWeight: '500',
+    fontSize: 15,
+    fontWeight: '600',
+    letterSpacing: -0.1,
     flex: 1,
   },
   rightContent: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  badge: {
-    backgroundColor: '#EF4444',
-    borderRadius: 12,
-    minWidth: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 8,
-  },
-  badgeText: {
-    color: '#FFF',
-    fontSize: 10,
-    fontWeight: '700',
-    paddingHorizontal: 6,
-  },
-  refreshButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    margin: 16,
-    marginTop: 8,
-    padding: 16,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  refreshText: {
-    fontWeight: '600',
-    marginLeft: 8,
-    fontSize: 16,
-  },
   bottomSpacer: {
-    height: 80,
+    height: 90,
   },
 });
 
