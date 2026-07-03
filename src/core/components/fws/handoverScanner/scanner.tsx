@@ -1,5 +1,5 @@
-// screens/QRScannerScreen.js
-import React, { useState, useEffect } from 'react';
+// screens/QRScannerScreen.tsx
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -13,16 +13,19 @@ import {
   Vibration,
   Linking,
 } from 'react-native';
-import {
-  Camera,
-  useCameraDevice,
-  useCodeScanner,
-} from 'react-native-vision-camera';
 import { useNavigation } from '@react-navigation/native';
+import type { StackNavigationProp } from '@react-navigation/stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { PERMISSIONS, request, check, RESULTS } from 'react-native-permissions';
 import axios from 'axios';
+
+// ✅ CORRECT: Import Camera and CameraType from react-native-camera-kit v18
+import { Camera, CameraType } from 'react-native-camera-kit';
+import type { CameraApi } from 'react-native-camera-kit';
+
+// ✅ Types
+type QRScannerNavigationProp = StackNavigationProp<any>;
 
 // ✅ API Base URL
 const API_BASE_URL = 'http://172.20.10.12:5000';
@@ -38,8 +41,19 @@ const QRScannerScreen = () => {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
 
-  const navigation = useNavigation();
-  const device = useCameraDevice('back');
+  const navigation = useNavigation<QRScannerNavigationProp>();
+
+  // ✅ Ref for camera kit - use CameraApi type
+  const cameraRef = useRef<CameraApi>(null);
+
+  // ✅ Safe navigation function
+  const safeGoBack = () => {
+    if (navigation?.goBack) {
+      navigation.goBack();
+    } else {
+      console.warn('Navigation is not available');
+    }
+  };
 
   // ✅ Camera Permission Check
   const checkCameraPermission = async () => {
@@ -78,7 +92,7 @@ const QRScannerScreen = () => {
             {
               text: 'Cancel',
               style: 'cancel',
-              onPress: () => navigation.goBack(),
+              onPress: () => safeGoBack(),
             },
             { text: 'Open Settings', onPress: () => Linking.openSettings() },
           ],
@@ -94,20 +108,7 @@ const QRScannerScreen = () => {
     checkCameraPermission();
   }, []);
 
-  // ✅ QR Code Scanner
-  const codeScanner = useCodeScanner({
-    codeTypes: ['qr', 'ean-13', 'code-128'],
-    onCodeScanned: codes => {
-      if (isScanning && !loading && codes.length > 0 && codes[0].value) {
-        setIsScanning(false);
-        Vibration.vibrate(100);
-        console.log('📸 QR Code Scanned:', codes[0].value);
-        handoverViaQrApi(codes[0].value);
-      }
-    },
-  });
-
-  // ✅ HANDOVER API - COMPLETE FIXED WITH DUPLICATE DETECTION
+  // ✅ HANDOVER API (UNCHANGED)
   const handoverViaQrApi = async (qrData: string) => {
     setLoading(true);
     setError('');
@@ -118,7 +119,6 @@ const QRScannerScreen = () => {
         throw new Error('Please login first to scan QR code');
       }
 
-      // Parse if JSON
       let actualToken = qrData;
       try {
         const parsed = JSON.parse(qrData);
@@ -146,13 +146,11 @@ const QRScannerScreen = () => {
 
       console.log('📦 API Response:', response.data);
 
-      // ✅ Check for duplicate scan response (FROM BACKEND)
-      // Backend returns: { duplicate: true, code: "DUPLICATE_SCAN", message: "...", details: "..." }
       if (
         response.data.duplicate === true ||
         response.data.code === 'DUPLICATE_SCAN'
       ) {
-        console.log('⚠️ Duplicate scan detected by backend');
+        console.log('⚠️ Duplicate scan detected');
         Vibration.vibrate(100);
         Alert.alert(
           '⚠️ Duplicate Scan',
@@ -164,7 +162,7 @@ const QRScannerScreen = () => {
               text: 'OK',
               onPress: () => {
                 setIsScanning(true);
-                navigation.goBack();
+                safeGoBack();
               },
             },
           ],
@@ -172,9 +170,8 @@ const QRScannerScreen = () => {
         return;
       }
 
-      // ✅ Check for alreadyScanned (backward compatibility)
       if (response.data.alreadyScanned === true) {
-        console.log('⚠️ Already scanned (backward compatibility)');
+        console.log('⚠️ Already scanned');
         Vibration.vibrate(100);
         Alert.alert(
           '⚠️ Already Scanned',
@@ -185,7 +182,7 @@ const QRScannerScreen = () => {
               text: 'OK',
               onPress: () => {
                 setIsScanning(true);
-                navigation.goBack();
+                safeGoBack();
               },
             },
           ],
@@ -193,7 +190,6 @@ const QRScannerScreen = () => {
         return;
       }
 
-      // ✅ Check for success
       if (response.data.success) {
         Vibration.vibrate(200);
         Alert.alert(
@@ -206,7 +202,7 @@ const QRScannerScreen = () => {
               text: 'OK',
               onPress: () => {
                 setIsScanning(true);
-                navigation.goBack();
+                safeGoBack();
               },
             },
           ],
@@ -217,14 +213,12 @@ const QRScannerScreen = () => {
     } catch (error: any) {
       console.error('❌ QR Processing Error:', error);
 
-      // ✅ Check if error response contains duplicate data
       const errorData = error.response?.data;
       const errorMessage =
         errorData?.message ||
         error.message ||
         'Something went wrong. Please try again.';
 
-      // ✅ Check for duplicate scan in error response
       if (
         errorData?.duplicate === true ||
         errorData?.code === 'DUPLICATE_SCAN' ||
@@ -243,7 +237,7 @@ const QRScannerScreen = () => {
               text: 'OK',
               onPress: () => {
                 setIsScanning(true);
-                navigation.goBack();
+                safeGoBack();
               },
             },
           ],
@@ -266,13 +260,30 @@ const QRScannerScreen = () => {
           style: 'cancel',
           onPress: () => {
             setIsScanning(true);
-            navigation.goBack();
+            safeGoBack();
           },
         },
       ]);
     } finally {
       setLoading(false);
     }
+  };
+
+  // ✅ Handle QR code scan from CameraKit
+  const onReadCode = (event: any) => {
+    // Stop scanning immediately
+    if (!isScanning || loading) return;
+
+    // CameraKit v18 returns QR data in event.nativeEvent.codeStringValue
+    const qrData = event?.nativeEvent?.codeStringValue || event?.data || event;
+
+    if (!qrData || typeof qrData !== 'string') return;
+
+    console.log('📸 QR Code Scanned:', qrData);
+
+    setIsScanning(false);
+    Vibration.vibrate(100);
+    handoverViaQrApi(qrData);
   };
 
   // ✅ Loading/Error States
@@ -300,42 +311,35 @@ const QRScannerScreen = () => {
     );
   }
 
-  if (!device) {
-    return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#3B82F6" />
-        <Text style={styles.loadingText}>Loading camera...</Text>
-      </View>
-    );
-  }
-
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
 
       <View style={styles.cameraContainer}>
+        {/* ✅ CameraKit v18 - ONLY QR CODES */}
         <Camera
+          ref={cameraRef}
           style={styles.camera}
-          device={device}
-          isActive={true}
-          codeScanner={isScanning && !loading ? codeScanner : undefined}
-        >
-          <View style={styles.overlay}>
-            <TouchableOpacity
-              style={styles.backButton}
-              onPress={() => navigation.goBack()}
-            >
-              <Icon name="close" size={28} color="#FFFFFF" />
-            </TouchableOpacity>
+          cameraType={CameraType.Back}
+          scanBarcode={isScanning && !loading}
+          // surfaceColor REMOVED - doesn't exist in v18
+          onReadCode={onReadCode}
+        />
 
-            <View style={styles.scanAreaContainer}>
-              <View style={styles.scanArea} />
-              <Text style={styles.scanText}>
-                Align QR code within the frame
-              </Text>
-            </View>
+        {/* ✅ Overlay on top of camera */}
+        <View style={styles.overlay} pointerEvents="none">
+          <TouchableOpacity
+            style={[styles.backButton, { pointerEvents: 'auto' }]}
+            onPress={() => safeGoBack()}
+          >
+            <Icon name="close" size={28} color="#FFFFFF" />
+          </TouchableOpacity>
+
+          <View style={styles.scanAreaContainer}>
+            <View style={styles.scanArea} />
+            <Text style={styles.scanText}>Align QR code within the frame</Text>
           </View>
-        </Camera>
+        </View>
 
         {loading && (
           <View style={styles.loadingOverlay}>
@@ -353,7 +357,7 @@ const QRScannerScreen = () => {
                 setError('');
                 setIsScanning(true);
               }}
-              style={styles.tryAgainButton}
+              style={[styles.tryAgainButton, { pointerEvents: 'auto' }]}
             >
               <Text style={styles.tryAgainText}>Try Again</Text>
             </TouchableOpacity>
@@ -362,7 +366,7 @@ const QRScannerScreen = () => {
 
         {!isScanning && !loading && !error && (
           <TouchableOpacity
-            style={styles.rescanButton}
+            style={[styles.rescanButton, { pointerEvents: 'auto' }]}
             onPress={() => setIsScanning(true)}
           >
             <Icon name="scan-outline" size={20} color="#FFFFFF" />
@@ -383,15 +387,20 @@ const styles = StyleSheet.create({
   cameraContainer: {
     flex: 1,
     position: 'relative',
+    backgroundColor: '#000',
   },
   camera: {
     flex: 1,
   },
   overlay: {
-    flex: 1,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.4)',
   },
   backButton: {
     position: 'absolute',

@@ -55,6 +55,11 @@ import FWSScannedOrders from '../screens/fws/scannedOrders/scannedOrders';
 // import EmployeePayroll from '../screens/employee/EmployeePayroll';
 // import EmployeeManagement from '../screens/employee/EmployeeManagement';
 
+// CabDriver Imports*
+import CabDriverScreen from '../screens/cab/menuScreen';
+import DriverRegistrationScreen from '../screens/cab/driver/driverRegistration';
+import DriverStatusScreen from '../screens/cab/driver/driverStatus';
+
 // ✅ Complete RootStackParamList with all screens
 export type RootStackParamList = {
   // Auth & Splash
@@ -106,6 +111,11 @@ export type RootStackParamList = {
   EmployeeLeave: undefined;
   EmployeePayroll: undefined;
   EmployeeManagement: undefined;
+
+  // CabDriver Screens
+  CabDriver: undefined;
+  DriverRegistration: undefined;
+  DriverStatus: undefined;
 };
 
 const Stack = createStackNavigator<RootStackParamList>();
@@ -135,7 +145,6 @@ export default function AppNavigator(): React.ReactElement {
         }
       }}
     >
-      {' '}
       <Stack.Navigator
         initialRouteName="Splash"
         screenOptions={{ headerShown: false }}
@@ -179,7 +188,7 @@ export default function AppNavigator(): React.ReactElement {
         {/* <Stack.Screen name="FWSOrders" component={FWSOrderScreen} /> */}
         {/* <Stack.Screen name="FWSReviews" component={fwsReviewScreen} /> */}
 
-        {/* Employee Screen - Add when needed */}
+        {/* Employee Screens - Add when needed */}
         <Stack.Screen name="CreateEmployee" component={CreateEmployee} />
         <Stack.Screen name="EmployeeList" component={EmployeeList} />
         <Stack.Screen name="EmployeeDetail" component={EmployeeDetail} />
@@ -191,6 +200,14 @@ export default function AppNavigator(): React.ReactElement {
         <Stack.Screen name="EmployeeLeave" component={EmployeeLeave} />
         <Stack.Screen name="EmployeePayroll" component={EmployeePayroll} />
         <Stack.Screen name="EmployeeManagement" component={EmployeeManagement} /> */}
+
+        {/* CabDriver Screens - Add when needed */}
+        <Stack.Screen name="CabDriver" component={CabDriverScreen} />
+        <Stack.Screen
+          name="DriverRegistration"
+          component={DriverRegistrationScreen}
+        />
+        <Stack.Screen name="DriverStatus" component={DriverStatusScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

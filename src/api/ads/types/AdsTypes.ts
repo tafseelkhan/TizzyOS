@@ -59,6 +59,7 @@ export interface AppStateFSMResult {
   isReal: boolean;
   previousState: AppStateValue;
   newState: AppStateValue;
+  isAdTransition: boolean; // ✅ Added to fix TypeScript error
 }
 
 /**

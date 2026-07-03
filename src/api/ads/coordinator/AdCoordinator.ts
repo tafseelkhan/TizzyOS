@@ -1,10 +1,11 @@
 /**
- * Ad Coordinator - Central Orchestrator
+ * Ad Coordinator - With Minimal Pending Support
  *
- * Receives events, decides which ad to show, prevents race conditions.
- * No loading logic, only orchestration.
- *
- * @module AdCoordinator
+ * Rules:
+ * 1. App Open = ONLY on REAL foreground (background → foreground)
+ * 2. Interstitial = Navigation trigger, shows immediately if loaded,
+ *    otherwise loads and shows when ready
+ * 3. Minimal pending trigger for reliability
  */
 
 import { AppState, AppStateStatus } from 'react-native';
@@ -14,7 +15,6 @@ import { AppStateFSM } from '../fsm/AppStateFSM';
 import { NavigationFSM } from '../fsm/NavigationFSM';
 import { AdStatus, AdType } from '../types/AdsTypes';
 import { AdsEventEmitter } from '../events/AdsEventEmitter';
-import AdsConfig from '../config/AdsConfig';
 import Logger from '../utils/Logger';
 import {
   getCurrentRouteName,
@@ -23,9 +23,13 @@ import {
 
 const TAG = 'AdCoordinator';
 
-/**
- * Ad Coordinator - Singleton
- */
+interface PendingTrigger {
+  id: string;
+  type: 'navigation' | 'manual';
+  routeName?: string;
+  createdAt: number;
+}
+
 export class AdCoordinator {
   private static _instance: AdCoordinator | null = null;
 
@@ -39,11 +43,8 @@ export class AdCoordinator {
   private _isForeground: boolean = false;
   private _isInitialized: boolean = false;
 
-  // ✅ App Open flag - only one per REAL foreground session
   private _appOpenShownOnForeground: boolean = false;
-
-  // ✅ Track if we've already processed a foreground event
-  private _foregroundProcessed: boolean = false;
+  private _pendingTrigger: PendingTrigger | null = null;
 
   private _appStateSubscription: any = null;
   private _navigationUnsubscribe: (() => void) | null = null;
@@ -61,11 +62,6 @@ export class AdCoordinator {
 
     this._isForeground = AppState.currentState === 'active';
     this._appStateFSM.initialize(this._isForeground);
-
-    Logger.debug(
-      TAG,
-      `📱 Initial foreground state: ${this._isForeground ? 'FOREGROUND' : 'BACKGROUND'}`,
-    );
 
     this._setupAppStateListener();
     this._setupNavigationListener();
@@ -93,7 +89,7 @@ export class AdCoordinator {
       onFailed: error => this._onInterstitialFailed(error),
       onOpened: () => this._onInterstitialOpened(),
       onClosed: () => this._onInterstitialClosed(),
-      onCooldownEnded: () => this._onInterstitialCooldownEnded(), // ✅ ADDED
+      onCooldownEnded: () => this._onInterstitialCooldownEnded(),
     });
   }
 
@@ -104,50 +100,71 @@ export class AdCoordinator {
       const result = this._appStateFSM.handleAppStateChange(nextAppState);
 
       const wasForeground = this._isForeground;
-      const wasAppOpenShown = this._appOpenShownOnForeground;
-
-      // Always update foreground state
       this._isForeground = result.newState === 'foreground';
 
       Logger.debug(
         TAG,
         `📱 AppState: ${nextAppState} | Transition: ${result.transition} | IsReal: ${result.isReal}`,
       );
-      Logger.debug(
-        TAG,
-        `📊 State before: FG=${wasForeground}, AppOpenShown=${wasAppOpenShown}`,
-      );
-      Logger.debug(
-        TAG,
-        `📊 State after: FG=${this._isForeground}, AppOpenShown=${this._appOpenShownOnForeground}`,
-      );
 
-      // ✅ Reset flag on REAL background
+      // ✅ REAL BACKGROUND: Reset App Open flag, clear pending
       if (result.transition === 'background' && result.isReal) {
         this._appOpenShownOnForeground = false;
-        this._foregroundProcessed = false;
+        this._pendingTrigger = null;
         Logger.debug(TAG, '🔴 REAL BACKGROUND: Reset flags');
+        this._appOpenManager.pause();
+        this._interstitialManager.pause();
       }
 
-      // ✅ Only process REAL foreground
+      // ✅ REAL FOREGROUND: Show App Open ONLY here
       if (result.transition === 'foreground' && result.isReal) {
-        this._appOpenShownOnForeground = false;
-        this._foregroundProcessed = false;
-        Logger.debug(TAG, '🟢 REAL FOREGROUND: Reset flags');
-        this._onForeground();
+        Logger.debug(TAG, `🟢 REAL FOREGROUND`);
+        this._appOpenManager.resume();
+        this._interstitialManager.resume();
+
+        // ✅ FIX: If state is 'closed', force reset to 'idle' before checking
+        if (this._appOpenManager.getState() === 'closed') {
+          Logger.debug(TAG, '🔄 App Open state is "closed", resetting to idle');
+          this._appOpenManager.resetState();
+        }
+
+        if (
+          !this._appOpenShownOnForeground &&
+          this._appOpenManager.isLoaded()
+        ) {
+          Logger.debug(TAG, '✅ REAL FOREGROUND: Showing App Open');
+          this._showAppOpen();
+        } else {
+          // ✅ If not loaded, start loading on REAL foreground
+          if (!this._appOpenManager.isLoaded()) {
+            Logger.debug(
+              TAG,
+              '⏳ App Open not loaded, starting load on REAL foreground',
+            );
+            this._appOpenManager.startLoading();
+          }
+        }
       }
 
-      // ✅ Handle suppressed foreground (ad closing)
+      // ✅ SUPPRESSED FOREGROUND (ad closed): Just resume
       if (
         result.transition === 'none' &&
         !result.isReal &&
         this._isForeground &&
         !wasForeground
       ) {
-        Logger.debug(TAG, '⚠️ SUPPRESSED FOREGROUND: NOT showing App Open');
+        Logger.debug(TAG, `⚠️ SUPPRESSED FOREGROUND: No App Open, just resume`);
         this._appOpenManager.resume();
         this._interstitialManager.resume();
-        Logger.debug(TAG, '✅ Managers resumed after suppressed foreground');
+
+        // ✅ Check pending after suppressed foreground
+        if (this._pendingTrigger) {
+          Logger.debug(
+            TAG,
+            `🔄 PENDING EXISTS: Checking after suppressed foreground`,
+          );
+          this._showWithPending();
+        }
       }
     };
 
@@ -168,7 +185,7 @@ export class AdCoordinator {
     this._navigationFSM.addListener((event, data) => {
       Logger.debug(TAG, `🚦 Navigation FSM event: ${event}`, data);
       if (event === 'THRESHOLD_REACHED') {
-        Logger.debug(TAG, `🎯 THRESHOLD_REACHED with count: ${data.count}`);
+        Logger.debug(TAG, `🎯 THRESHOLD_REACHED - Showing Interstitial`);
         this._onNavigationThresholdReached();
       }
     });
@@ -182,58 +199,22 @@ export class AdCoordinator {
     Logger.debug(TAG, '✅ Navigation listener registered');
   }
 
-  public async initialize(): Promise<void> {
-    if (this._isInitialized) {
-      Logger.debug(TAG, '⚠️ Already initialized, skipping');
-      return;
-    }
-
-    Logger.debug(TAG, '🚀 Starting initialization...');
-
-    const { validateConfig } = require('../config/AdsConfig');
-    const errors = validateConfig();
-    if (errors.length > 0) {
-      Logger.error(TAG, '⚠️ Configuration errors:', errors);
-    }
-
-    Logger.debug(TAG, '📦 Loading App Open and Interstitial...');
-    await Promise.all([
-      this._appOpenManager.startLoading(),
-      this._interstitialManager.startLoading(),
-    ]);
-
-    this._isInitialized = true;
-    AdsEventEmitter.emit('ADS_INITIALIZED', { success: true });
-
-    Logger.debug(TAG, '✅ Initialized successfully');
-    Logger.debug(TAG, `📊 App Open state: ${this._appOpenManager.getState()}`);
-    Logger.debug(
-      TAG,
-      `📊 Interstitial state: ${this._interstitialManager.getState()}`,
-    );
-    Logger.debug(TAG, `📊 isForeground: ${this._isForeground}`);
-  }
-
   // ============ APP OPEN EVENTS ============
 
   private _onAppOpenLoaded(): void {
     Logger.debug(TAG, '📦 App Open loaded');
-    AdsEventEmitter.emit('APP_OPEN_LOADED', {});
-
     Logger.debug(
       TAG,
-      `🔍 Checking App Open: isForeground=${this._isForeground}, isAdShowing=${this._isAdShowing}, alreadyShown=${this._appOpenShownOnForeground}`,
+      `📊 isForeground: ${this._isForeground}, isAdShowing: ${this._isAdShowing}`,
     );
+    AdsEventEmitter.emit('APP_OPEN_LOADED', {});
 
-    if (
-      this._isForeground &&
-      !this._isAdShowing &&
-      !this._appOpenShownOnForeground
-    ) {
-      Logger.debug(TAG, '✅ App Open loaded, showing');
+    // ✅ FIX: Only check foreground and ad showing
+    if (this._isForeground && !this._isAdShowing) {
+      Logger.debug(TAG, '✅ App Open loaded, showing on foreground');
       this._showAppOpen();
     } else {
-      Logger.debug(TAG, '❌ App Open loaded but NOT showing');
+      Logger.debug(TAG, `⏭️ App Open loaded but conditions not met`);
     }
   }
 
@@ -248,223 +229,176 @@ export class AdCoordinator {
     this._currentAdType = 'appOpen';
     this._appStateFSM.setAdShowing(true);
     this._appOpenShownOnForeground = true;
-    Logger.debug(TAG, '✅ App Open shown, flag set to true');
+    Logger.debug(
+      TAG,
+      `✅ App Open shown, flag set to: ${this._appOpenShownOnForeground}`,
+    );
     AdsEventEmitter.emit('APP_OPEN_OPENED', {});
     this._interstitialManager.pause();
-    Logger.debug(TAG, '⏸️ Interstitial paused');
   }
 
   private _onAppOpenClosed(): void {
     Logger.debug(TAG, '🚪 App Open closed');
-    Logger.debug(TAG, `📊 Before close: isAdShowing=${this._isAdShowing}`);
+
+    // ✅ CRITICAL FIX: Reset flag when ad closes
+    this._appOpenShownOnForeground = false;
+    Logger.debug(
+      TAG,
+      `🔄 App Open flag reset to: ${this._appOpenShownOnForeground}`,
+    );
 
     this._isAdShowing = false;
     this._currentAdType = null;
     this._appStateFSM.setAdShowing(false);
     this._appStateFSM.setAdJustClosed();
-
-    Logger.debug(TAG, `📊 After close: isAdShowing=${this._isAdShowing}`);
-
     AdsEventEmitter.emit('APP_OPEN_CLOSED', {});
-
     this._interstitialManager.resume();
-    Logger.debug(TAG, '▶️ Interstitial resumed');
-
-    // ✅ Try pending interstitial after App Open closes
-    if (this._isForeground && !this._isAdShowing) {
-      Logger.debug(
-        TAG,
-        '🔍 After App Open close, checking pending interstitial',
-      );
-      this._tryShowPendingInterstitial();
-    }
   }
 
-  // ============ INTERSTITIAL EVENTS ============
+  // ============ INTERSTITIAL EVENTS (NO CHANGES) ============
 
   private _onInterstitialLoaded(): void {
-    Logger.debug(TAG, '📦 Interstitial loaded successfully');
+    Logger.debug(TAG, '📦 Interstitial loaded');
     AdsEventEmitter.emit('INTERSTITIAL_LOADED', {});
 
-    Logger.debug(
-      TAG,
-      `🔍 Checking interstitial: hasPending=${this._interstitialManager.hasPendingTrigger()}, isForeground=${this._isForeground}, isAdShowing=${this._isAdShowing}`,
-    );
-
-    // ✅ If pending trigger exists and foreground, show immediately
-    if (
-      this._interstitialManager.hasPendingTrigger() &&
-      this._isForeground &&
-      !this._isAdShowing
-    ) {
-      Logger.debug(TAG, '✅ Pending trigger exists, showing interstitial');
-      this._tryShowPendingInterstitial();
-    } else if (
-      this._interstitialManager.hasPendingTrigger() &&
-      this._isForeground &&
-      !this._isAdShowing
-    ) {
-      Logger.debug(TAG, '⏭️ Not showing interstitial');
+    // ✅ Check if pending trigger exists
+    if (this._pendingTrigger && !this._isAdShowing && this._isForeground) {
+      Logger.debug(TAG, `🎯 PENDING EXISTS: Showing interstitial immediately`);
+      this._showWithPending();
+      return;
     }
+
+    Logger.debug(TAG, `⏸️ Interstitial preloaded, waiting for trigger`);
   }
 
-  // ✅ NEW: Cooldown ended callback
   private _onInterstitialCooldownEnded(): void {
-    Logger.debug(TAG, '🔥 Interstitial cooldown ended');
-
-    // ✅ If we have a pending trigger, show immediately
-    if (this._interstitialManager.hasPendingTrigger()) {
-      Logger.debug(
-        TAG,
-        '🎯 Pending trigger exists after cooldown, showing now',
-      );
-      this._tryShowPendingInterstitial();
-    } else {
-      Logger.debug(TAG, '📝 No pending trigger after cooldown');
-    }
+    Logger.debug(TAG, '🔥 Interstitial cooldown ended - Preloading...');
+    this._interstitialManager.startLoading().catch(error => {
+      Logger.error(TAG, '❌ Failed to preload:', error);
+    });
   }
 
   private _onInterstitialFailed(error: Error): void {
     Logger.error(TAG, '❌ Interstitial failed:', error);
     AdsEventEmitter.emit('INTERSTITIAL_FAILED', { error });
-    this._interstitialManager.clearPendingTrigger();
-    Logger.debug(TAG, '🧹 Pending trigger cleared after failure');
+    this._pendingTrigger = null; // Clear pending on failure
   }
 
   private _onInterstitialOpened(): void {
     Logger.debug(TAG, '👁️ Interstitial opened');
-    Logger.debug(TAG, `📊 Before open: isAdShowing=${this._isAdShowing}`);
-
     this._isAdShowing = true;
     this._currentAdType = 'interstitial';
     this._appStateFSM.setAdShowing(true);
-
-    Logger.debug(
-      TAG,
-      `📊 After open: isAdShowing=${this._isAdShowing}, currentAdType=${this._currentAdType}`,
-    );
-
     AdsEventEmitter.emit('INTERSTITIAL_OPENED', {});
     this._appOpenManager.pause();
-    Logger.debug(TAG, '⏸️ App Open paused');
   }
 
   private _onInterstitialClosed(): void {
     Logger.debug(TAG, '🚪 Interstitial closed');
-    Logger.debug(TAG, `📊 Before close: isAdShowing=${this._isAdShowing}`);
-
     this._isAdShowing = false;
     this._currentAdType = null;
     this._appStateFSM.setAdShowing(false);
     this._appStateFSM.setAdJustClosed();
-
-    Logger.debug(TAG, `📊 After close: isAdShowing=${this._isAdShowing}`);
-
     AdsEventEmitter.emit('INTERSTITIAL_CLOSED', {});
     this._appOpenManager.resume();
-    Logger.debug(TAG, '▶️ App Open resumed');
 
-    // ✅ Start preloading next interstitial
+    // ✅ Clear any stale pending
+    this._pendingTrigger = null;
+
+    // ✅ Preload next
     this._interstitialManager.startLoading().catch(error => {
-      Logger.error(TAG, '❌ Failed to preload interstitial:', error);
+      Logger.error(TAG, '❌ Failed to preload:', error);
     });
   }
 
-  // ============ APP STATE EVENTS ============
-
-  private _onForeground(): void {
-    Logger.debug(TAG, '🟢 REAL Foreground callback');
-    Logger.debug(
-      TAG,
-      `📊 Before: appOpenShownOnForeground=${this._appOpenShownOnForeground}`,
-    );
-
-    // ✅ Reset flags - this is a real user returning
-    this._appOpenShownOnForeground = false;
-    this._foregroundProcessed = false;
-
-    this._appOpenManager.resume();
-    this._interstitialManager.resume();
-    AdsEventEmitter.emit('APP_FOREGROUND', {});
-
-    Logger.debug(
-      TAG,
-      `📊 After reset: appOpenShownOnForeground=${this._appOpenShownOnForeground}`,
-    );
-
-    // ✅ Show App Open
-    if (
-      !this._appOpenShownOnForeground &&
-      !this._isAdShowing &&
-      this._appOpenManager.isLoaded()
-    ) {
-      Logger.debug(TAG, '✅ Real foreground, showing App Open');
-      this._showAppOpen();
-    }
-  }
-
-  private _onBackground(): void {
-    Logger.debug(TAG, '🔴 REAL Background callback');
-    Logger.debug(
-      TAG,
-      `📊 appOpenShownOnForeground before: ${this._appOpenShownOnForeground}`,
-    );
-
-    this._appOpenManager.pause();
-    this._interstitialManager.pause();
-    AdsEventEmitter.emit('APP_BACKGROUND', {});
-  }
-
-  // ============ NAVIGATION EVENTS ============
+  // ============ NAVIGATION EVENTS (NO CHANGES) ============
 
   private _onNavigationThresholdReached(): void {
-    Logger.debug(
-      TAG,
-      `🎯 Navigation threshold reached (isForeground: ${this._isForeground})`,
-    );
-    Logger.debug(
-      TAG,
-      `📊 State: isAdShowing=${this._isAdShowing}, currentAdType=${this._currentAdType}`,
-    );
+    Logger.debug(TAG, `🎯 Navigation threshold reached`);
 
-    AdsEventEmitter.emit('NAVIGATION_THRESHOLD_REACHED', {
-      count: this._navigationFSM.getCount(),
-    });
+    if (this._isAdShowing) {
+      Logger.debug(TAG, `⏸️ Ad already showing, skipping`);
+      return;
+    }
 
     if (!this._isForeground) {
-      Logger.debug(TAG, '❌ Interstitial: not foreground, storing pending');
-      this._interstitialManager.setPendingTrigger();
+      Logger.debug(TAG, `❌ Not foreground, skipping`);
       return;
     }
 
-    if (this._isAdShowing && this._currentAdType === 'appOpen') {
-      Logger.debug(TAG, '⏸️ App Open showing, storing interstitial pending');
-      this._interstitialManager.setPendingTrigger();
+    // ✅ Create pending trigger
+    this._pendingTrigger = {
+      id: `pending_${Date.now()}`,
+      type: 'navigation',
+      routeName: getCurrentRouteName() || 'unknown',
+      createdAt: Date.now(),
+    };
+    Logger.debug(TAG, `📝 PENDING CREATED: ${this._pendingTrigger.id}`);
+
+    // ✅ If loaded, show immediately
+    if (this._interstitialManager.isLoaded()) {
+      Logger.debug(TAG, '✅ Interstitial loaded, showing IMMEDIATELY');
+      this._showWithPending();
       return;
     }
 
-    const isLoaded = this._interstitialManager.isLoaded();
-    Logger.debug(TAG, `📊 Interstitial isLoaded: ${isLoaded}`);
-
-    if (isLoaded) {
-      Logger.debug(TAG, '✅ Interstitial loaded, showing immediately');
-      this._tryShowPendingInterstitial();
-    } else {
-      Logger.debug(
-        TAG,
-        '⚠️ Interstitial NOT loaded, storing pending and starting load',
-      );
-      this._interstitialManager.setPendingTrigger();
-      this._interstitialManager.startLoading().catch(error => {
-        Logger.error(TAG, '❌ Failed to start interstitial loading:', error);
-      });
-    }
+    // ✅ Not loaded, start loading
+    Logger.debug(TAG, `⚠️ Interstitial NOT loaded, loading...`);
+    this._interstitialManager.startLoading().catch(error => {
+      Logger.error(TAG, '❌ Failed to load interstitial:', error);
+    });
   }
 
-  // ============ SHOW LOGIC ============
+  // ============ SHOW WITH PENDING (NO CHANGES) ============
+
+  private _showWithPending(): void {
+    if (!this._pendingTrigger) {
+      Logger.debug(TAG, '❌ No pending trigger');
+      return;
+    }
+
+    if (!this._interstitialManager.isLoaded()) {
+      Logger.debug(TAG, '❌ Interstitial not loaded');
+      return;
+    }
+
+    if (this._isAdShowing) {
+      Logger.debug(TAG, '❌ Ad already showing');
+      return;
+    }
+
+    if (!this._isForeground) {
+      Logger.debug(TAG, '❌ Not foreground');
+      return;
+    }
+
+    const pendingId = this._pendingTrigger.id;
+    Logger.debug(TAG, `✅ Showing interstitial (pending: ${pendingId})`);
+
+    this._interstitialManager.show().then(result => {
+      if (result) {
+        Logger.debug(TAG, '✅ Interstitial shown successfully');
+        AdsEventEmitter.emit('INTERSTITIAL_SHOWN', { success: true });
+      } else {
+        Logger.debug(TAG, '❌ Interstitial show failed');
+        AdsEventEmitter.emit('INTERSTITIAL_SHOWN', { success: false });
+      }
+      // ✅ Clear pending after show attempt
+      this._pendingTrigger = null;
+    });
+  }
+
+  // ============ SHOW APP OPEN ============
 
   private async _showAppOpen(): Promise<boolean> {
     Logger.debug(TAG, '🔍 _showAppOpen() called');
+    Logger.debug(
+      TAG,
+      `📊 appOpenShownOnForeground: ${this._appOpenShownOnForeground}`,
+    );
+    Logger.debug(TAG, `📊 isForeground: ${this._isForeground}`);
+    Logger.debug(TAG, `📊 isAdShowing: ${this._isAdShowing}`);
+    Logger.debug(TAG, `📊 isLoaded: ${this._appOpenManager.isLoaded()}`);
 
     if (this._appOpenShownOnForeground) {
       Logger.debug(TAG, '❌ App Open: already shown this session');
@@ -477,12 +411,10 @@ export class AdCoordinator {
     }
 
     if (this._isAdShowing) {
-      Logger.debug(TAG, '❌ App Open: ad already showing');
-      return false;
-    }
-
-    if (this._appOpenManager.isPaused()) {
-      Logger.debug(TAG, '❌ App Open: paused');
+      Logger.debug(
+        TAG,
+        `❌ App Open: ad already showing (${this._currentAdType})`,
+      );
       return false;
     }
 
@@ -496,7 +428,10 @@ export class AdCoordinator {
 
     if (result) {
       this._appOpenShownOnForeground = true;
-      Logger.debug(TAG, '✅ App Open shown successfully');
+      Logger.debug(
+        TAG,
+        `✅ App Open shown, flag set to: ${this._appOpenShownOnForeground}`,
+      );
     } else {
       Logger.debug(TAG, '❌ App Open show failed');
     }
@@ -505,132 +440,52 @@ export class AdCoordinator {
     return result;
   }
 
-  private async _tryShowPendingInterstitial(): Promise<boolean> {
-    Logger.debug(
-      TAG,
-      `🔍 _tryShowPendingInterstitial() called (isForeground: ${this._isForeground})`,
-    );
-    Logger.debug(
-      TAG,
-      `📊 State: isAdShowing=${this._isAdShowing}, isPaused=${this._interstitialManager.isPaused()}, isLoaded=${this._interstitialManager.isLoaded()}, hasPending=${this._interstitialManager.hasPendingTrigger()}`,
-    );
+  // ============ PUBLIC API ============
 
-    if (!this._isForeground) {
-      Logger.debug(TAG, '❌ Interstitial: not foreground');
-      return false;
+  public async initialize(): Promise<void> {
+    if (this._isInitialized) {
+      Logger.debug(TAG, '⚠️ Already initialized');
+      return;
     }
 
-    if (this._isAdShowing) {
-      Logger.debug(TAG, '❌ Interstitial: ad already showing');
-      return false;
-    }
+    Logger.debug(TAG, '🚀 Starting initialization...');
 
-    if (this._interstitialManager.isPaused()) {
-      Logger.debug(TAG, '❌ Interstitial: paused');
-      return false;
-    }
+    await Promise.all([
+      this._appOpenManager.startLoading(),
+      this._interstitialManager.startLoading(),
+    ]);
 
-    if (!this._interstitialManager.isLoaded()) {
-      Logger.debug(TAG, '❌ Interstitial: not loaded');
-      if (!this._interstitialManager.hasPendingTrigger()) {
-        Logger.debug(TAG, '📝 No pending trigger, setting one');
-        this._interstitialManager.setPendingTrigger();
-      }
-      this._interstitialManager.startLoading().catch(error => {
-        Logger.error(TAG, '❌ Failed to start interstitial loading:', error);
-      });
-      return false;
-    }
-
-    // ✅ Set pending trigger if not already
-    if (!this._interstitialManager.hasPendingTrigger()) {
-      Logger.debug(TAG, '📝 No pending trigger, setting one to show');
-      this._interstitialManager.setPendingTrigger();
-    }
-
-    Logger.debug(TAG, '✅ All conditions met, showing Interstitial');
-    const result = await this._interstitialManager.show();
-
-    if (result) {
-      Logger.debug(TAG, '✅ Interstitial shown successfully');
-    } else {
-      Logger.debug(TAG, '❌ Interstitial show failed');
-    }
-
-    AdsEventEmitter.emit('INTERSTITIAL_SHOWN', { success: result });
-    return result;
+    this._isInitialized = true;
+    AdsEventEmitter.emit('ADS_INITIALIZED', { success: true });
+    Logger.debug(TAG, '✅ Initialized');
   }
 
   public async showInterstitial(): Promise<boolean> {
-    Logger.debug(
-      TAG,
-      `🔍 Manual interstitial request (isForeground: ${this._isForeground})`,
-    );
+    Logger.debug(TAG, `🔍 Manual interstitial request`);
 
     if (!this._isForeground) {
-      Logger.debug(TAG, '❌ Manual interstitial: not foreground');
+      Logger.debug(TAG, '❌ Manual: not foreground');
       return false;
     }
 
     if (this._isAdShowing) {
-      Logger.debug(TAG, '❌ Manual interstitial: ad already showing');
-      return false;
-    }
-
-    if (this._interstitialManager.isPaused()) {
-      Logger.debug(TAG, '❌ Manual interstitial: paused');
+      Logger.debug(TAG, `❌ Manual: ad showing`);
       return false;
     }
 
     if (!this._interstitialManager.isLoaded()) {
-      Logger.debug(TAG, '📝 Manual: not loaded, storing pending');
-      this._interstitialManager.setPendingTrigger();
-      this._interstitialManager.startLoading().catch(error => {
-        Logger.error(TAG, '❌ Failed to start interstitial loading:', error);
-      });
+      Logger.debug(TAG, '📝 Manual: not loaded, loading...');
+      await this._interstitialManager.startLoading();
       return false;
     }
 
-    Logger.debug(TAG, '✅ All conditions met, showing Interstitial (manual)');
+    Logger.debug(TAG, '✅ Manual: showing interstitial');
     const result = await this._interstitialManager.show();
-
-    if (result) {
-      Logger.debug(TAG, '✅ Manual interstitial shown successfully');
-    } else {
-      Logger.debug(TAG, '❌ Manual interstitial show failed');
-    }
-
     AdsEventEmitter.emit('INTERSTITIAL_SHOWN', {
       success: result,
       source: 'manual',
     });
     return result;
-  }
-
-  // ============ PUBLIC API ============
-
-  public getState(): {
-    isAdShowing: boolean;
-    currentAdType: AdType;
-    isForeground: boolean;
-  } {
-    return {
-      isAdShowing: this._isAdShowing,
-      currentAdType: this._currentAdType,
-      isForeground: this._isForeground,
-    };
-  }
-
-  public getAppOpenManager(): AppOpenManager {
-    return this._appOpenManager;
-  }
-
-  public getInterstitialManager(): InterstitialManager {
-    return this._interstitialManager;
-  }
-
-  public getNavigationFSM(): NavigationFSM {
-    return this._navigationFSM;
   }
 
   public getStatus(): AdStatus {
@@ -645,31 +500,28 @@ export class AdCoordinator {
       interstitial: {
         state: this._interstitialManager.getState(),
         isLoaded: this._interstitialManager.isLoaded(),
-        hasPendingTrigger: this._interstitialManager.hasPendingTrigger(),
+        hasPendingTrigger: !!this._pendingTrigger,
       },
       navigationCount: this._navigationFSM.getCount(),
     };
   }
 
   public cleanUp(): void {
-    Logger.debug(TAG, '🧹 Cleaning up AdCoordinator...');
+    Logger.debug(TAG, '🧹 Cleaning up...');
 
     if (this._appStateSubscription) {
       this._appStateSubscription.remove();
       this._appStateSubscription = null;
-      Logger.debug(TAG, '✅ AppState subscription removed');
     }
 
     if (this._navigationUnsubscribe) {
       this._navigationUnsubscribe();
       this._navigationUnsubscribe = null;
-      Logger.debug(TAG, '✅ Navigation subscription removed');
     }
 
     if (this._appStateListenerUnsubscribe) {
       this._appStateListenerUnsubscribe();
       this._appStateListenerUnsubscribe = null;
-      Logger.debug(TAG, '✅ AppState FSM listener removed');
     }
 
     this._appOpenManager.cleanUp();
@@ -680,10 +532,9 @@ export class AdCoordinator {
     this._isAdShowing = false;
     this._currentAdType = null;
     this._appOpenShownOnForeground = false;
-    this._foregroundProcessed = false;
+    this._pendingTrigger = null;
 
     AdsEventEmitter.removeAllListeners();
-
     Logger.debug(TAG, '✅ Cleanup complete');
   }
 }

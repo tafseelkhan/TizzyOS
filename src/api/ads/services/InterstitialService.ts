@@ -163,29 +163,42 @@ export class InterstitialService {
   }
 
   public async showAd(): Promise<boolean> {
+    Logger.debug(TAG, `#${this._instanceId} showAd() called`);
+    Logger.debug(TAG, `#${this._instanceId} adInstance: ${!!this._adInstance}`);
+    Logger.debug(
+      TAG,
+      `#${this._instanceId} isCooldownActive: ${this._isCooldownActive}`,
+    );
+
     if (!this._adInstance) {
-      Logger.debug(TAG, `#${this._instanceId} No ad instance`);
+      Logger.debug(TAG, `#${this._instanceId} ❌ No ad instance`);
       return false;
     }
 
     if (this._isCooldownActive) {
-      Logger.debug(TAG, `#${this._instanceId} Cooldown active, cannot show`);
+      Logger.debug(TAG, `#${this._instanceId} ❌ Cooldown active, cannot show`);
       return false;
     }
 
     try {
-      Logger.debug(TAG, `#${this._instanceId} Showing ad...`);
+      Logger.debug(TAG, `#${this._instanceId} ✅ Showing ad...`);
       await this._adInstance.show();
       Logger.debug(TAG, `#${this._instanceId} ✅ Show succeeded`);
       return true;
     } catch (error) {
-      Logger.error(TAG, `#${this._instanceId} Show failed:`, error);
+      Logger.error(TAG, `#${this._instanceId} ❌ Show failed:`, error);
       return false;
     }
   }
 
   public isAvailable(): boolean {
-    return !!this._adInstance && !this._isLoading && !this._isCooldownActive;
+    const available =
+      !!this._adInstance && !this._isLoading && !this._isCooldownActive;
+    Logger.debug(
+      TAG,
+      `#${this._instanceId} isAvailable(): ${available} (adInstance: ${!!this._adInstance}, isLoading: ${this._isLoading}, isCooldownActive: ${this._isCooldownActive})`,
+    );
+    return available;
   }
 
   public isCooldownActive(): boolean {

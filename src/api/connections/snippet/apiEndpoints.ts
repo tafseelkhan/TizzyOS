@@ -41,6 +41,11 @@ export const API_ENDPOINTS = {
   FWS_ASSIGN_ORDER: '/api/delivery/tracking/shipping/fws/assign',
   GET_FWS_ORDER: '/api/delivery/tracking/shipping/fws/orders',
   GET_ORDER_BY_ID: '/api/delivery/tracking/shipping/order',
+
+  // Cab driver endpoints
+  REGISTER_DRIVER: '/api/cab/driver/register',
+  GET_DRIVER_STATUS: '/api/cab/driver',
+  GET_VEHICLE_CATEGORIES: '/api/driver/vehicle-categories',
 };
 
 /**

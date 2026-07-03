@@ -58,7 +58,7 @@ export const AdsConfig: AdsConfigType = {
     Config.INTERSTITIAL_NAVIGATION_THRESHOLD || '1',
     10,
   ),
-  interstitialCooldownMs: parseInt(Config.ADS_COOLDOWN_MS || '30000', 10),
+  interstitialCooldownMs: parseInt(Config.ADS_COOLDOWN_MS || '' ),
 
   productionMode: Config.ADS_PRODUCTION_MODE === 'true',
 

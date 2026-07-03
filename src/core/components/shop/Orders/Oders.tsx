@@ -365,7 +365,7 @@ const getDeliveryStatusText = (order: Order): string => {
   if (hasAssignmentSent(trackingHistory)) return 'Assignment Sent';
   if (hasSellerAccepted(trackingHistory)) return 'Accepted';
 
-  return 'Pending ⏳';
+  return 'Pending';
 };
 
 // ✅ FIXED: Get Delivery Status Color - DELIVERED FIRST PRIORITY
@@ -1905,7 +1905,6 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
 
           <View style={styles.priceSection}>
             <View style={styles.amountRow}>
-              <FontAwesome name="rupee" size={16} color={colors.success} />
               <Text style={[styles.orderAmount, { color: colors.success }]}>
                 ₹{displayAmount.toFixed(2)}
               </Text>

@@ -32,11 +32,9 @@ import {
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import {
-  Camera,
-  useCameraDevice,
-  useCodeScanner,
-} from 'react-native-vision-camera';
+// ✅ With these imports
+import { Camera, CameraType } from 'react-native-camera-kit';
+import type { CameraApi } from 'react-native-camera-kit';
 import { PERMISSIONS, request, check, RESULTS } from 'react-native-permissions';
 import Icon from 'react-native-vector-icons/Ionicons';
 import MaterialIcon from 'react-native-vector-icons/MaterialIcons';
@@ -687,10 +685,6 @@ const QRScanSelectionModal: React.FC<QRScanSelectionModalProps> = ({
   );
 };
 
-// ============================================
-// CAMERA QR SCANNER MODAL
-// ============================================
-
 interface CameraQRScannerProps {
   visible: boolean;
   onClose: () => void;
@@ -708,11 +702,12 @@ const CameraQRScanner: React.FC<CameraQRScannerProps> = ({
 }) => {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [scanned, setScanned] = useState(false);
-  const device = useCameraDevice('back');
+  const cameraRef = useRef<CameraApi>(null);
 
   useEffect(() => {
     if (visible) {
       checkCameraPermission();
+      setScanned(false);
     }
   }, [visible]);
 
@@ -760,17 +755,20 @@ const CameraQRScanner: React.FC<CameraQRScannerProps> = ({
     }
   };
 
-  const codeScanner = useCodeScanner({
-    codeTypes: ['qr', 'ean-13', 'code-128'],
-    onCodeScanned: codes => {
-      if (scanned || loading) return;
-      if (codes.length > 0 && codes[0].value) {
-        setScanned(true);
-        Vibration.vibrate(100);
-        onScan(codes[0].value);
-      }
-    },
-  });
+  // ✅ Handle QR code scan from CameraKit v18
+  const onReadCode = (event: any) => {
+    if (scanned || loading) return;
+
+    // CameraKit v18 returns QR data in event.nativeEvent.codeStringValue
+    const qrData = event?.nativeEvent?.codeStringValue || event?.data || event;
+
+    if (!qrData || typeof qrData !== 'string') return;
+
+    console.log('📸 QR Code Scanned:', qrData);
+    setScanned(true);
+    Vibration.vibrate(100);
+    onScan(qrData);
+  };
 
   const handleClose = () => {
     setScanned(false);
@@ -798,20 +796,24 @@ const CameraQRScanner: React.FC<CameraQRScannerProps> = ({
           <View style={{ width: 40 }} />
         </View>
 
-        {hasPermission === true && device ? (
-          <Camera
-            style={cameraStyles.camera}
-            device={device}
-            isActive={true}
-            codeScanner={!scanned && !loading ? codeScanner : undefined}
-          >
-            <View style={cameraStyles.overlay}>
-              <View style={cameraStyles.scanArea} />
+        {hasPermission === true ? (
+          <View style={{ flex: 1 }}>
+            {/* ✅ CameraKit v18 for QR scanning - ONLY QR CODES */}
+            <Camera
+              ref={cameraRef}
+              style={cameraStyles.camera}
+              cameraType={CameraType.Back}
+              scanBarcode={!scanned && !loading}
+              onReadCode={onReadCode}
+            />
+            
+            {/* Overlay text on top of camera */}
+            <View style={cameraStyles.overlayTextContainer} pointerEvents="none">
               <Text style={cameraStyles.scanText}>
                 Align QR code within the frame
               </Text>
             </View>
-          </Camera>
+          </View>
         ) : hasPermission === false ? (
           <View style={cameraStyles.noPermissionContainer}>
             <Icon name="camera-outline" size={60} color="#9CA3AF" />
@@ -846,7 +848,9 @@ const CameraQRScanner: React.FC<CameraQRScannerProps> = ({
             <Icon name="alert-circle" size={20} color="#EF4444" />
             <Text style={cameraStyles.errorText}>{error}</Text>
             <TouchableOpacity
-              onPress={() => setScanned(false)}
+              onPress={() => {
+                setScanned(false);
+              }}
               style={cameraStyles.tryAgainButton}
             >
               <Text style={cameraStyles.tryAgainText}>Try Again</Text>
@@ -867,7 +871,6 @@ const CameraQRScanner: React.FC<CameraQRScannerProps> = ({
     </Modal>
   );
 };
-
 // ============================================
 // GOOGLE MAPS NAVIGATION ENGINE
 // ============================================
@@ -2862,6 +2865,7 @@ const cameraStyles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 20,
     backgroundColor: 'rgba(0,0,0,0.8)',
+    zIndex: 10,
   },
   closeButton: {
     width: 40,
@@ -2871,25 +2875,21 @@ const cameraStyles = StyleSheet.create({
   },
   headerTitle: { fontSize: 18, fontWeight: '600', color: '#FFFFFF' },
   camera: { flex: 1 },
-  overlay: {
-    flex: 1,
-    justifyContent: 'center',
+  overlayTextContainer: {
+    position: 'absolute',
+    bottom: 100,
+    left: 0,
+    right: 0,
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  scanArea: {
-    width: width * 0.7,
-    height: width * 0.7,
-    borderWidth: 2,
-    borderColor: '#3B82F6',
-    borderRadius: 12,
-    backgroundColor: 'transparent',
   },
   scanText: {
     color: '#FFFFFF',
     fontSize: 14,
-    marginTop: 20,
     textAlign: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
   },
   noPermissionContainer: {
     flex: 1,

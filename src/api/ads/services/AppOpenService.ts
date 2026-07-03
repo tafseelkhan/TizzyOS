@@ -32,6 +32,9 @@ export class AppOpenService {
   private _callbacks: AppOpenServiceCallbacks | null = null;
   private _instanceId: number;
   private static _counter: number = 0;
+  private _loadTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  private _retryCount: number = 0;
+  private _maxRetries: number = 2;
 
   constructor() {
     AppOpenService._counter++;
@@ -52,7 +55,10 @@ export class AppOpenService {
       return;
     }
 
-    Logger.debug(TAG, `#${this._instanceId} Loading ad...`);
+    Logger.debug(
+      TAG,
+      `#${this._instanceId} Loading ad... (Attempt ${this._retryCount + 1})`,
+    );
     this._isLoading = true;
 
     return new Promise((resolve, reject) => {
@@ -61,6 +67,16 @@ export class AppOpenService {
 
         const adUnitId = this._getAdUnitId();
         Logger.debug(TAG, `#${this._instanceId} Ad unit: ${adUnitId}`);
+
+        // ✅ Check if ad unit ID is empty
+        if (!adUnitId || adUnitId === '') {
+          Logger.error(TAG, `#${this._instanceId} ❌ Ad unit ID is empty!`);
+          this._isLoading = false;
+          const error = new Error('Ad unit ID is empty');
+          this._callbacks?.onFailed(error);
+          reject(error);
+          return;
+        }
 
         this._adInstance = AppOpenAd.createForAdRequest(adUnitId, {
           requestNonPersonalizedAdsOnly: !AdsConfig.productionMode,
@@ -73,19 +89,48 @@ export class AppOpenService {
 
         this._setupEventListeners();
 
-        // Timeout
-        setTimeout(() => {
+        // ✅ Clear previous timeout
+        if (this._loadTimeoutId) {
+          clearTimeout(this._loadTimeoutId);
+          this._loadTimeoutId = null;
+        }
+
+        // ✅ Timeout with retry
+        const timeoutMs = AdsConstants.AD_LOAD_TIMEOUT_MS || 15000;
+        this._loadTimeoutId = setTimeout(() => {
           if (this._isLoading) {
             this._isLoading = false;
-            const error = new Error('Ad load timeout exceeded');
-            Logger.error(TAG, `#${this._instanceId} ⏰ Load timeout`);
-            this._callbacks?.onFailed(error);
-            reject(error);
-          }
-        }, AdsConstants.AD_LOAD_TIMEOUT_MS);
+            Logger.error(
+              TAG,
+              `#${this._instanceId} ⏰ Load timeout (${timeoutMs}ms)`,
+            );
 
+            // ✅ Retry logic
+            if (this._retryCount < this._maxRetries) {
+              this._retryCount++;
+              Logger.debug(
+                TAG,
+                `#${this._instanceId} 🔄 Retry ${this._retryCount}/${this._maxRetries}`,
+              );
+              setTimeout(() => {
+                this.loadAd();
+              }, 2000);
+            } else {
+              this._retryCount = 0;
+              const error = new Error(
+                `Ad load timeout exceeded after ${this._maxRetries} retries`,
+              );
+              this._callbacks?.onFailed(error);
+              reject(error);
+            }
+          }
+        }, timeoutMs);
+
+        Logger.debug(
+          TAG,
+          `#${this._instanceId} load() called with timeout ${timeoutMs}ms`,
+        );
         this._adInstance.load();
-        Logger.debug(TAG, `#${this._instanceId} load() called`);
         resolve();
       } catch (error) {
         this._isLoading = false;
@@ -102,13 +147,32 @@ export class AppOpenService {
     this._adInstance.addAdEventListener(AdEventType.LOADED, () => {
       Logger.debug(TAG, `#${this._instanceId} ✅ Ad loaded`);
       this._isLoading = false;
+      this._retryCount = 0; // ✅ Reset retry count on success
+      if (this._loadTimeoutId) {
+        clearTimeout(this._loadTimeoutId);
+        this._loadTimeoutId = null;
+      }
       this._callbacks?.onLoaded();
     });
 
     this._adInstance.addAdEventListener(AdEventType.ERROR, (error: AdError) => {
       Logger.error(TAG, `#${this._instanceId} ❌ Ad error:`, error);
       this._isLoading = false;
-      this._callbacks?.onFailed(error);
+
+      // ✅ Retry on error too
+      if (this._retryCount < this._maxRetries) {
+        this._retryCount++;
+        Logger.debug(
+          TAG,
+          `#${this._instanceId} 🔄 Retry on error ${this._retryCount}/${this._maxRetries}`,
+        );
+        setTimeout(() => {
+          this.loadAd();
+        }, 2000);
+      } else {
+        this._retryCount = 0;
+        this._callbacks?.onFailed(error);
+      }
     });
 
     this._adInstance.addAdEventListener(AdEventType.OPENED, () => {
@@ -155,6 +219,10 @@ export class AppOpenService {
   public cleanUp(): void {
     Logger.debug(TAG, `#${this._instanceId} Cleaning up`);
     this._isDestroyed = true;
+    if (this._loadTimeoutId) {
+      clearTimeout(this._loadTimeoutId);
+      this._loadTimeoutId = null;
+    }
     this._cleanupAdInstance();
     this._callbacks = null;
   }

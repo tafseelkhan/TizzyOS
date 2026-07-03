@@ -3,7 +3,7 @@
 // FILE: src/screens/VerifyForDispatch.tsx
 // ============================================================
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -18,17 +18,16 @@ import {
   StatusBar,
   Platform,
 } from 'react-native';
-import {
-  Camera,
-  useCameraDevice,
-  useCodeScanner,
-} from 'react-native-vision-camera';
 import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { PERMISSIONS, request, check, RESULTS } from 'react-native-permissions';
 import { verifyQRAndMarkReadyForDispatch } from '../../../../api/features/private/scanFwsOrderPrivateSlice';
 import { ScanResponse } from '../../../types/orderTypes';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// ✅ CORRECT: Import Camera and CameraType from react-native-camera-kit v18
+import { Camera, CameraType } from 'react-native-camera-kit';
+import type { CameraApi } from 'react-native-camera-kit';
 
 const { width, height } = Dimensions.get('window');
 
@@ -56,7 +55,8 @@ const VerifyForDispatch: React.FC = () => {
   const [showSuccessModal, setShowSuccessModal] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
 
-  const device = useCameraDevice('back');
+  // ✅ Ref for camera kit scanner - use CameraApi type
+  const cameraRef = useRef<CameraApi>(null);
 
   // ============================================================
   // Camera Permission Check
@@ -124,25 +124,6 @@ const VerifyForDispatch: React.FC = () => {
       return null;
     }
   };
-
-  // ============================================================
-  // QR Code Scanner using useCodeScanner hook
-  // ============================================================
-  const codeScanner = useCodeScanner({
-    codeTypes: ['qr', 'ean-13', 'code-128'],
-    onCodeScanned: codes => {
-      if (isScanning && !isProcessing && codes.length > 0) {
-        const qrData = codes[0]?.value;
-        if (!qrData) return;
-
-        setIsScanning(false);
-        Vibration.vibrate(200);
-
-        console.log('📸 QR Code Scanned:', qrData);
-        handleQRScan(qrData);
-      }
-    },
-  });
 
   // ============================================================
   // Handle QR Scan - COMPLETE FIXED WITH DUPLICATE DETECTION
@@ -349,6 +330,25 @@ const VerifyForDispatch: React.FC = () => {
   };
 
   // ============================================================
+  // ✅ Handle QR code scan from CameraKit
+  // ============================================================
+  const onReadCode = (event: any) => {
+    // Stop scanning immediately
+    if (!isScanning || isProcessing) return;
+
+    // CameraKit v18 returns QR data in event.nativeEvent.codeStringValue
+    const qrData = event?.nativeEvent?.codeStringValue || event?.data || event;
+
+    if (!qrData || typeof qrData !== 'string') return;
+
+    console.log('📸 QR Code Scanned:', qrData);
+
+    setIsScanning(false);
+    Vibration.vibrate(200);
+    handleQRScan(qrData);
+  };
+
+  // ============================================================
   // Success Modal
   // ============================================================
   const SuccessModal = () => {
@@ -426,49 +426,27 @@ const VerifyForDispatch: React.FC = () => {
     );
   }
 
-  if (!device) {
-    return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#4CAF50" />
-        <Text style={styles.loadingText}>Loading camera...</Text>
-      </View>
-    );
-  }
-
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
 
       <View style={styles.cameraContainer}>
+        {/* ✅ CameraKit v18 - Full screen camera */}
         <Camera
-          style={styles.camera}
-          device={device}
-          isActive={true}
-          codeScanner={isScanning && !isProcessing ? codeScanner : undefined}
-          torch="off"
-          enableZoomGesture={true}
+          ref={cameraRef}
+          style={StyleSheet.absoluteFill}
+          cameraType={CameraType.Back}
+          scanBarcode={isScanning && !isProcessing}
+          onReadCode={onReadCode}
+        />
+
+        {/* ✅ Overlay - Back Button */}
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
         >
-          {/* Scanner Overlay */}
-          <View style={styles.overlay}>
-            {/* Back Button */}
-            <TouchableOpacity
-              style={styles.backButton}
-              onPress={() => navigation.goBack()}
-            >
-              <Icon name="close" size={28} color="#FFFFFF" />
-            </TouchableOpacity>
-
-            {/* Scan Frame */}
-            <View style={styles.frameContainer}>
-              <View style={styles.cornerTL} />
-              <View style={styles.cornerTR} />
-              <View style={styles.cornerBL} />
-              <View style={styles.cornerBR} />
-            </View>
-
-            <Text style={styles.scanText}>Place QR Code inside the frame</Text>
-          </View>
-        </Camera>
+          <Icon name="close" size={28} color="#FFFFFF" />
+        </TouchableOpacity>
 
         <LoadingOverlay />
         <SuccessModal />
@@ -497,78 +475,19 @@ const styles = StyleSheet.create({
   cameraContainer: {
     flex: 1,
     position: 'relative',
-  },
-  camera: {
-    flex: 1,
-  },
-  overlay: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: '#000',
   },
   backButton: {
     position: 'absolute',
     top: Platform.OS === 'ios' ? 50 : 20,
     left: 20,
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 10,
-  },
-  frameContainer: {
-    width: width * 0.7,
-    height: width * 0.7,
-    borderWidth: 2,
-    borderColor: '#fff',
-    borderRadius: 10,
-  },
-  cornerTL: {
-    position: 'absolute',
-    top: -2,
-    left: -2,
-    width: 30,
-    height: 30,
-    borderTopWidth: 4,
-    borderLeftWidth: 4,
-    borderColor: '#4CAF50',
-  },
-  cornerTR: {
-    position: 'absolute',
-    top: -2,
-    right: -2,
-    width: 30,
-    height: 30,
-    borderTopWidth: 4,
-    borderRightWidth: 4,
-    borderColor: '#4CAF50',
-  },
-  cornerBL: {
-    position: 'absolute',
-    bottom: -2,
-    left: -2,
-    width: 30,
-    height: 30,
-    borderBottomWidth: 4,
-    borderLeftWidth: 4,
-    borderColor: '#4CAF50',
-  },
-  cornerBR: {
-    position: 'absolute',
-    bottom: -2,
-    right: -2,
-    width: 30,
-    height: 30,
-    borderBottomWidth: 4,
-    borderRightWidth: 4,
-    borderColor: '#4CAF50',
-  },
-  scanText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    marginTop: 30,
-    fontWeight: '500',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 22,
   },
   centerContainer: {
     flex: 1,

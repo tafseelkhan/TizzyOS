@@ -28,18 +28,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { jwtDecode } from 'jwt-decode';
-import {
-  GestureHandlerRootView,
-  Gesture,
-  GestureDetector,
-} from 'react-native-gesture-handler';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-  withTiming,
-  runOnJS,
-} from 'react-native-reanimated';
 
 // Type definitions for props
 interface BottomNavigationProps {
@@ -106,9 +94,9 @@ const ROLE_ICONS = {
     route: 'Shipper',
   },
   CAB: {
-    icon: 'taxi' as const,
+    icon: 'directions-car' as const, // ✅ FIXED: taxi → directions-car
     label: 'Cab',
-    route: 'Cab',
+    route: 'CabDriver',
   },
   RENT: {
     icon: 'car' as const,
@@ -132,8 +120,8 @@ const ROLE_COLORS = {
   BUYER: '#06B6D4',
 };
 
-// Allowed roles for linking
-const ALLOWED_ROLES = ['SELLER', 'FWS', 'SHIPPING'];
+// ✅ Allowed roles for linking - CAB ADDED
+const ALLOWED_ROLES = ['SELLER', 'FWS', 'SHIPPING', 'CAB'];
 
 const BottomNavigation = ({
   activeTab,
@@ -168,10 +156,6 @@ const BottomNavigation = ({
 
   // Safe area insets for proper spacing
   const insets = useSafeAreaInsets();
-
-  // Animated values for drawer
-  const translateY = useSharedValue(500);
-  const opacity = useSharedValue(0);
 
   // Screen dimensions
   const screenHeight = Dimensions.get('window').height;
@@ -378,7 +362,6 @@ const BottomNavigation = ({
 
       triggerSuccessHaptic();
       setIsDrawerVisible(false);
-      closeDrawer();
 
       await fetchLinkedAccounts();
 
@@ -572,53 +555,17 @@ const BottomNavigation = ({
     }
   };
 
-  // ✅ Open drawer with animation
+  // ✅ Open drawer
   const openDrawer = async () => {
     await fetchLinkedAccounts();
     setIsDrawerVisible(true);
-    translateY.value = withSpring(0, { damping: 15, stiffness: 100 });
-    opacity.value = withTiming(1, { duration: 300 });
     triggerHeavyHaptic();
   };
 
-  // ✅ Close drawer with animation
+  // ✅ Close drawer
   const closeDrawer = () => {
-    translateY.value = withSpring(500, { damping: 15, stiffness: 100 });
-    opacity.value = withTiming(0, { duration: 300 });
-    setTimeout(() => {
-      setIsDrawerVisible(false);
-    }, 300);
+    setIsDrawerVisible(false);
   };
-
-  // ✅ Gesture API
-  const panGesture = Gesture.Pan()
-    .onStart(() => {
-      'worklet';
-    })
-    .onUpdate(event => {
-      'worklet';
-      const newY = event.translationY;
-      if (newY >= -100 && newY <= drawerHeight - 100) {
-        translateY.value = newY;
-      }
-    })
-    .onEnd(event => {
-      'worklet';
-      if (event.translationY > 100) {
-        runOnJS(closeDrawer)();
-      } else {
-        translateY.value = withSpring(0, { damping: 15, stiffness: 100 });
-      }
-    });
-
-  // ✅ Animated styles
-  const drawerStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }],
-  }));
-
-  const backdropStyle = useAnimatedStyle(() => ({
-    opacity: opacity.value,
-  }));
 
   // ✅ Profile press handler - UPDATED with Double Tap API
   const handleProfilePress = () => {
@@ -674,8 +621,8 @@ const BottomNavigation = ({
                 ? '#1E3A5F'
                 : '#EFF6FF'
               : isDark
-              ? 'rgba(255,255,255,0.05)'
-              : '#FFFFFF',
+                ? 'rgba(255,255,255,0.05)'
+                : '#FFFFFF',
             borderColor: isActive ? roleColor : isDark ? '#334155' : '#E5E7EB',
             borderWidth: isActive ? 3 : 1,
             opacity: isActive ? 1 : 0.8,
@@ -948,127 +895,120 @@ const BottomNavigation = ({
           </TouchableOpacity>
         </View>
 
-        {/* Draggable Half Screen Drawer - FIXED scrolling */}
+        {/* Static Half Screen Drawer - NO GESTURE, ONLY SCROLLING ACCOUNTS */}
         <Modal
           visible={isDrawerVisible}
           transparent={true}
-          animationType="none"
+          animationType="slide"
           onRequestClose={closeDrawer}
         >
-          <GestureHandlerRootView style={styles.gestureContainer}>
-            <Animated.View style={[styles.backdrop, backdropStyle]}>
-              <Pressable
-                style={styles.backdropPressable}
-                onPress={closeDrawer}
-              />
-            </Animated.View>
+          <View style={styles.modalContainer}>
+            <Pressable style={styles.backdrop} onPress={closeDrawer} />
 
-            <GestureDetector gesture={panGesture}>
-              <Animated.View
-                style={[
-                  styles.drawer,
-                  drawerStyle,
-                  {
-                    height: drawerHeight,
-                    backgroundColor: themeColors.drawerBg,
-                    borderTopLeftRadius: 24,
-                    borderTopRightRadius: 24,
-                    borderColor: themeColors.border,
-                  },
-                ]}
-              >
-                {/* Drag Handle */}
-                <View style={styles.dragHandleContainer}>
-                  <View
-                    style={[
-                      styles.dragHandle,
-                      { backgroundColor: themeColors.border },
-                    ]}
-                  />
-                  <Text
-                    style={[
-                      styles.drawerTitle,
-                      { color: themeColors.drawerText },
-                    ]}
-                  >
-                    Switch Account
-                  </Text>
-                  <Text
-                    style={[
-                      styles.drawerSubtitle,
-                      { color: themeColors.drawerText + '80' },
-                    ]}
-                  >
-                    {linkedAccounts.length > 0
-                      ? `${
-                          linkedAccounts.filter(a => a.isActive).length
-                        } active, ${
-                          linkedAccounts.filter(a => !a.isActive).length
-                        } available`
-                      : 'No accounts available'}
-                  </Text>
-                </View>
-
-                {/* Account List with Scrolling - FIXED */}
-                <View style={styles.accountListContainer}>
-                  {isLoading ? (
-                    <View style={styles.loadingContainer}>
-                      <ActivityIndicator size="large" color="#3B82F6" />
-                      <Text
-                        style={{ color: themeColors.drawerText, marginTop: 10 }}
-                      >
-                        Loading accounts...
-                      </Text>
-                    </View>
-                  ) : linkedAccounts.length === 0 ? (
-                    <View style={styles.emptyContainer}>
-                      <Feather
-                        name="users"
-                        size={48}
-                        color={themeColors.drawerText + '40'}
-                      />
-                      <Text
-                        style={[
-                          styles.emptyText,
-                          { color: themeColors.drawerText },
-                        ]}
-                      >
-                        No linked accounts found
-                      </Text>
-                    </View>
-                  ) : (
-                    <FlatList
-                      data={linkedAccounts}
-                      keyExtractor={(item, index) => item.id + index}
-                      renderItem={renderAccountItem}
-                      contentContainerStyle={styles.accountList}
-                      showsVerticalScrollIndicator={true}
-                      style={styles.accountFlatList}
-                      nestedScrollEnabled={true}
-                      scrollEnabled={true}
-                    />
-                  )}
-                </View>
-
-                {/* Add Account Button */}
-                <TouchableOpacity
+            <View
+              style={[
+                styles.drawer,
+                {
+                  height: drawerHeight,
+                  backgroundColor: themeColors.drawerBg,
+                  borderTopLeftRadius: 24,
+                  borderTopRightRadius: 24,
+                  borderColor: themeColors.border,
+                },
+              ]}
+            >
+              {/* Drag Handle - Just for visual, not draggable */}
+              <View style={styles.dragHandleContainer}>
+                <View
                   style={[
-                    styles.addAccountButton,
-                    { backgroundColor: '#3B82F6' },
+                    styles.dragHandle,
+                    { backgroundColor: themeColors.border },
                   ]}
-                  onPress={() => {
-                    triggerMediumHaptic();
-                    setIsAddAccountModalVisible(true);
-                  }}
+                />
+                <Text
+                  style={[
+                    styles.drawerTitle,
+                    { color: themeColors.drawerText },
+                  ]}
                 >
-                  <Feather name="plus" size={20} color="#FFFFFF" />
-                  <Text style={styles.addAccountButtonText}>
-                    Add Linked Account
-                  </Text>
-                </TouchableOpacity>
-              </Animated.View>
-            </GestureDetector>
-          </GestureHandlerRootView>
+                  Switch Account
+                </Text>
+                <Text
+                  style={[
+                    styles.drawerSubtitle,
+                    { color: themeColors.drawerText + '80' },
+                  ]}
+                >
+                  {linkedAccounts.length > 0
+                    ? `${
+                        linkedAccounts.filter(a => a.isActive).length
+                      } active, ${
+                        linkedAccounts.filter(a => !a.isActive).length
+                      } available`
+                    : 'No accounts available'}
+                </Text>
+              </View>
+
+              {/* Account List - ONLY THIS SCROLLS */}
+              <View style={styles.accountListContainer}>
+                {isLoading ? (
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color="#3B82F6" />
+                    <Text
+                      style={{ color: themeColors.drawerText, marginTop: 10 }}
+                    >
+                      Loading accounts...
+                    </Text>
+                  </View>
+                ) : linkedAccounts.length === 0 ? (
+                  <View style={styles.emptyContainer}>
+                    <Feather
+                      name="users"
+                      size={48}
+                      color={themeColors.drawerText + '40'}
+                    />
+                    <Text
+                      style={[
+                        styles.emptyText,
+                        { color: themeColors.drawerText },
+                      ]}
+                    >
+                      No linked accounts found
+                    </Text>
+                  </View>
+                ) : (
+                  <FlatList
+                    data={linkedAccounts}
+                    keyExtractor={(item, index) => item.id + index}
+                    renderItem={renderAccountItem}
+                    contentContainerStyle={styles.accountList}
+                    showsVerticalScrollIndicator={true}
+                    style={styles.accountFlatList}
+                    nestedScrollEnabled={true}
+                    scrollEnabled={true}
+                    bounces={true}
+                  />
+                )}
+              </View>
+
+              {/* Add Account Button */}
+              <TouchableOpacity
+                style={[
+                  styles.addAccountButton,
+                  { backgroundColor: '#3B82F6' },
+                ]}
+                onPress={() => {
+                  triggerMediumHaptic();
+                  setIsAddAccountModalVisible(true);
+                }}
+              >
+                <Feather name="plus" size={20} color="#FFFFFF" />
+                <Text style={styles.addAccountButtonText}>
+                  Add Linked Account
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </Modal>
       </View>
 
@@ -1186,7 +1126,7 @@ const BottomNavigation = ({
                 />
               </View>
 
-              {/* Role Selection */}
+              {/* Role Selection - NOW INCLUDES CAB */}
               <View style={styles.inputGroup}>
                 <Text
                   style={[styles.inputLabel, { color: themeColors.drawerText }]}
@@ -1337,8 +1277,9 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
     gap: 2,
   },
-  gestureContainer: {
+  modalContainer: {
     flex: 1,
+    justifyContent: 'flex-end',
   },
   backdrop: {
     position: 'absolute',
@@ -1348,14 +1289,8 @@ const styles = StyleSheet.create({
     bottom: 0,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
   },
-  backdropPressable: {
-    flex: 1,
-  },
   drawer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
+    position: 'relative',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingHorizontal: 20,
@@ -1386,6 +1321,7 @@ const styles = StyleSheet.create({
   accountListContainer: {
     flex: 1,
     minHeight: 150,
+    maxHeight: 300,
   },
   accountFlatList: {
     flex: 1,
@@ -1401,9 +1337,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     marginBottom: 10,
     borderWidth: 1,
-  },
-  accountItemActive: {
-    borderWidth: 3,
   },
   accountAvatar: {
     width: 50,

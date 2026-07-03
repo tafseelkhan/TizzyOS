@@ -27,6 +27,7 @@ export class InterstitialManager {
   private _pendingTrigger: boolean = false;
   private _instanceId: number;
   private static _counter: number = 0;
+  private _isLoading: boolean = false;
 
   constructor() {
     InterstitialManager._counter++;
@@ -36,37 +37,52 @@ export class InterstitialManager {
     this._service = new InterstitialService();
     this._service.setCallbacks({
       onLoaded: () => {
-        Logger.debug(TAG, `#${this._instanceId} Service loaded`);
+        Logger.debug(TAG, `#${this._instanceId} ✅ Service loaded`);
         this._state = 'loaded';
+        this._isLoading = false;
         this._callbacks?.onLoaded();
       },
       onFailed: error => {
-        Logger.error(TAG, `#${this._instanceId} Service failed:`, error);
-        this._state = 'failed';
+        Logger.error(TAG, `#${this._instanceId} ❌ Service failed:`, error);
+        this._state = 'idle';
+        this._isLoading = false;
         this._callbacks?.onFailed(error);
       },
       onOpened: () => {
-        Logger.debug(TAG, `#${this._instanceId} Service opened`);
+        Logger.debug(TAG, `#${this._instanceId} 👁️ Service opened`);
         this._state = 'showing';
+        this._isLoading = false;
         this._callbacks?.onOpened();
       },
       onClosed: () => {
-        Logger.debug(TAG, `#${this._instanceId} Service closed`);
+        Logger.debug(TAG, `#${this._instanceId} 🚪 Service closed`);
         this._state = 'cooldown';
+        this._isLoading = false;
         this._callbacks?.onClosed();
         // Auto-reload after cooldown
         setTimeout(() => {
           if (!this._isPaused) {
+            Logger.debug(
+              TAG,
+              `#${this._instanceId} 🔄 Auto-reloading after cooldown`,
+            );
             this.startLoading();
           }
-        }, AdsConfig.interstitialCooldownMs);
+        }, AdsConfig.interstitialCooldownMs || 30000);
       },
       onCooldownEnded: () => {
-        Logger.debug(TAG, `#${this._instanceId} Cooldown ended`);
+        Logger.debug(TAG, `#${this._instanceId} 🔥 Cooldown ended`);
         this._state = 'idle';
+        this._isLoading = false;
+        this._callbacks?.onCooldownEnded();
         // If we have a pending trigger, try to show
         if (this._pendingTrigger && !this._isPaused) {
+          Logger.debug(TAG, `#${this._instanceId} 🎯 Pending exists, showing`);
           this.show();
+        } else if (!this._isPaused) {
+          // Auto-load next ad
+          Logger.debug(TAG, `#${this._instanceId} 📦 Auto-loading next ad`);
+          this.startLoading();
         }
       },
     });
@@ -81,37 +97,124 @@ export class InterstitialManager {
   }
 
   public async startLoading(): Promise<void> {
+    // ✅ Check if paused
     if (this._isPaused) {
-      Logger.debug(TAG, `#${this._instanceId} Paused, not loading`);
+      Logger.debug(TAG, `#${this._instanceId} ⏸️ Paused, not loading`);
       return;
     }
 
-    if (this._state === 'loading' || this._state === 'loaded') {
-      Logger.debug(TAG, `#${this._instanceId} Already loading/loaded`);
+    // ✅ Check if already loading
+    if (this._isLoading) {
+      Logger.debug(TAG, `#${this._instanceId} ⏳ Already loading, skipping`);
       return;
     }
 
-    Logger.debug(TAG, `#${this._instanceId} Loading...`);
+    // ✅ Fix: Use string comparison with type assertion
+    const stateStr = this._state as string;
+
+    // ✅ Check if already loaded
+    if (stateStr === 'loaded') {
+      Logger.debug(TAG, `#${this._instanceId} ✅ Already loaded, skipping`);
+      return;
+    }
+
+    // ✅ Reset stuck states
+    if (stateStr === 'loading') {
+      Logger.debug(
+        TAG,
+        `#${this._instanceId} 🔄 State stuck in loading, resetting to idle`,
+      );
+      this._state = 'idle';
+      this._isLoading = false;
+    }
+
+    // ✅ Only load if state allows
+    const canLoad =
+      stateStr === 'idle' ||
+      stateStr === 'failed' ||
+      stateStr === 'cooldown' ||
+      stateStr === 'closed';
+    if (!canLoad) {
+      Logger.debug(
+        TAG,
+        `#${this._instanceId} ⏸️ Cannot load in state: ${this._state}`,
+      );
+      return;
+    }
+
+    Logger.debug(
+      TAG,
+      `#${this._instanceId} 📥 Loading... (${this._state} → loading)`,
+    );
     this._state = 'loading';
-    await this._service.loadAd();
+    this._isLoading = true;
+
+    try {
+      await this._service.loadAd();
+    } catch (error) {
+      Logger.error(TAG, `#${this._instanceId} ❌ Load error:`, error);
+      this._state = 'idle';
+      this._isLoading = false;
+      this._callbacks?.onFailed(error as Error);
+    }
   }
 
   public async show(): Promise<boolean> {
     if (this._isPaused) {
-      Logger.debug(TAG, `#${this._instanceId} Paused, cannot show`);
+      Logger.debug(TAG, `#${this._instanceId} ⏸️ Paused, cannot show`);
       return false;
     }
 
-    if (this._state !== 'loaded') {
-      Logger.debug(TAG, `#${this._instanceId} Not loaded (${this._state})`);
-      return false;
+    // ✅ Fix: Use string comparison with type assertion
+    const stateStr = this._state as string;
+
+    if (stateStr !== 'loaded') {
+      Logger.debug(TAG, `#${this._instanceId} ❌ Not loaded (${this._state})`);
+      // ✅ If state is loading but not loaded, wait
+      if (stateStr === 'loading') {
+        Logger.debug(
+          TAG,
+          `#${this._instanceId} ⏳ Waiting for load to complete...`,
+        );
+        // Wait for load to complete (max 5 seconds)
+        let waitCount = 0;
+        // ✅ Fix: Use proper Promise<void> typing
+        while (this._state === 'loading' && waitCount < 50) {
+          await new Promise<void>(resolve => {
+            setTimeout(() => {
+              resolve();
+            }, 100);
+          });
+          waitCount++;
+        }
+        if (this._state === 'loaded') {
+          Logger.debug(
+            TAG,
+            `#${this._instanceId} ✅ Load completed, showing now`,
+          );
+        } else {
+          Logger.debug(
+            TAG,
+            `#${this._instanceId} ❌ Load still not complete after waiting`,
+          );
+          return false;
+        }
+      } else {
+        return false;
+      }
     }
 
-    Logger.debug(TAG, `#${this._instanceId} Showing`);
+    Logger.debug(TAG, `#${this._instanceId} 🎯 Showing`);
     const result = await this._service.showAd();
     if (result) {
       this._state = 'showing';
       this._pendingTrigger = false;
+      this._isLoading = false;
+      Logger.debug(TAG, `#${this._instanceId} ✅ Show succeeded`);
+    } else {
+      this._state = 'idle';
+      this._isLoading = false;
+      Logger.debug(TAG, `#${this._instanceId} ❌ Show failed`);
     }
     return result;
   }
@@ -125,7 +228,7 @@ export class InterstitialManager {
   }
 
   public setPendingTrigger(): void {
-    Logger.debug(TAG, `#${this._instanceId} Pending trigger set`);
+    Logger.debug(TAG, `#${this._instanceId} 📝 Pending trigger set`);
     this._pendingTrigger = true;
   }
 
@@ -134,19 +237,32 @@ export class InterstitialManager {
   }
 
   public clearPendingTrigger(): void {
-    Logger.debug(TAG, `#${this._instanceId} Pending trigger cleared`);
+    Logger.debug(TAG, `#${this._instanceId} 🧹 Pending trigger cleared`);
     this._pendingTrigger = false;
   }
 
   public pause(): void {
-    Logger.debug(TAG, `#${this._instanceId} Paused`);
+    Logger.debug(TAG, `#${this._instanceId} ⏸️ Paused`);
     this._isPaused = true;
   }
 
   public resume(): void {
-    Logger.debug(TAG, `#${this._instanceId} Resumed`);
+    Logger.debug(TAG, `#${this._instanceId} ▶️ Resumed`);
     this._isPaused = false;
-    if (this._state !== 'loaded' && this._state !== 'loading') {
+
+    // ✅ Fix: Use string comparison with type assertion
+    const stateStr = this._state as string;
+
+    // ✅ Reset stuck state on resume
+    if (stateStr === 'loading' && !this._isLoading) {
+      this._state = 'idle';
+    }
+
+    // ✅ Reload if needed
+    const isLoadedState = stateStr === 'loaded';
+    const isLoadingState = stateStr === 'loading';
+    if (!isLoadedState && !isLoadingState) {
+      Logger.debug(TAG, `#${this._instanceId} 🔄 Reloading on resume`);
       this.startLoading();
     }
   }
@@ -156,10 +272,11 @@ export class InterstitialManager {
   }
 
   public cleanUp(): void {
-    Logger.debug(TAG, `#${this._instanceId} Cleaning up`);
+    Logger.debug(TAG, `#${this._instanceId} 🧹 Cleaning up`);
     this._service.cleanUp();
     this._state = 'idle';
     this._pendingTrigger = false;
+    this._isLoading = false;
     this._callbacks = null;
   }
 }
