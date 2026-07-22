@@ -193,7 +193,7 @@ const styles = StyleSheet.create({
   },
   uploadSubtitle: {
     fontSize: 11,
-    fontFamily: 'LightItalic',
+    fontFamily: 'Poppins-LightItalic',
     color: '#9CA3AF',
     marginBottom: 8,
     textAlign: 'center',

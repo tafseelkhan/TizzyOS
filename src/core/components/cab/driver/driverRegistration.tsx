@@ -14,26 +14,44 @@ import {
   Modal,
   Dimensions,
 } from 'react-native';
+import { NavigationProp, useNavigation } from '@react-navigation/native';
 import { useCabDriver, useDriverForm } from '../../../hooks/cab/useCabDriver';
 import { useVehicleCategories } from '../../../hooks/cab/useVehicleCategories';
+import { useRideTypes } from '../../../hooks/cab/useRideTypes';
 import { pickImage, ImageResult } from '../../../services/cab/cabService';
 import DocumentUpload from './documentUpload';
 import Icon from 'react-native-vector-icons/Ionicons';
 
 const { width, height } = Dimensions.get('window');
 
-const CabDriverRegistration = ({ navigation }: any) => {
-  const { register, isLoading, isRegistered, status } = useCabDriver();
+const CabDriverRegistration = () => {
+  const navigation =
+    useNavigation<NavigationProp<Record<string, object | undefined>>>();
+
+  // ✅ Hooks
+  const { register, isLoading, isRegistered, checkStatus } = useCabDriver();
   const { formData, updateField, resetForm } = useDriverForm();
   const {
-    categories,
+    isLoading: rideTypesLoading,
+    rideTypes,
+    getRideTypeLabel,
+    selectRideType,
+  } = useRideTypes();
+  const {
+    isLoading: categoriesLoading,
+    isLoadingFiltered,
+    filteredCategories,
     companies,
     models,
-    isLoading: categoriesLoading,
+    selectedModel,
+    rideTypeInfo,
+    fetchFilteredCategories,
     selectCategory,
     selectCompany,
     selectModel,
-    fetchCategories,
+    getCategoryLabel,
+    getCompanyLabel,
+    getModelLabel,
   } = useVehicleCategories();
 
   // ✅ Local states for image uploads
@@ -45,14 +63,26 @@ const CabDriverRegistration = ({ navigation }: any) => {
   const [pollution, setPollution] = useState<ImageResult | null>(null);
 
   // ✅ Modal states
+  const [showRideTypePicker, setShowRideTypePicker] = useState(false);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [showCompanyPicker, setShowCompanyPicker] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
 
-  // ✅ Fetch categories on mount
+  // ✅ Check status on mount
   useEffect(() => {
-    fetchCategories();
+    checkStatus();
   }, []);
+
+  // ✅ Auto navigate if already registered
+  useEffect(() => {
+    if (
+      isRegistered &&
+      navigation &&
+      typeof navigation.navigate === 'function'
+    ) {
+      navigation.navigate('DriverStatus');
+    }
+  }, [isRegistered, navigation]);
 
   // ✅ Handle image pick
   const handlePickImage = async (field: string) => {
@@ -87,6 +117,15 @@ const CabDriverRegistration = ({ navigation }: any) => {
     }
   };
 
+  // ✅ Handle ride type selection - SEND rideTypeCode to backend
+  const handleRideTypeSelect = (code: string) => {
+    selectRideType(code);
+    updateField('rideTypeCode', code); // ✅ This will be sent to backend
+    setShowRideTypePicker(false);
+    // ✅ Fetch filtered categories when ride type is selected
+    fetchFilteredCategories(code);
+  };
+
   // ✅ Handle category selection
   const handleCategorySelect = (categoryCode: string) => {
     selectCategory(categoryCode);
@@ -111,28 +150,29 @@ const CabDriverRegistration = ({ navigation }: any) => {
     setShowModelPicker(false);
   };
 
-  // ✅ Handle registration
+  // ✅ Handle registration - backend ko rideTypeCode bhejega
   const handleRegister = async () => {
     try {
+      // ✅ formData contains rideTypeCode, vehicleCategoryCode, vehicleCompanyCode, vehicleModelCode, etc.
       const success = await register(formData);
       if (success) {
         resetForm();
-        navigation.navigate('DriverStatus');
+        setLicenceFront(null);
+        setLicenceBack(null);
+        setRcFront(null);
+        setRcBack(null);
+        setInsurance(null);
+        setPollution(null);
       }
     } catch (error) {
       Alert.alert('Error', 'Failed to register driver');
     }
   };
 
-  // ✅ If already registered, navigate to profile
-  if (isRegistered) {
-    navigation.replace('DriverStatus');
-    return null;
-  }
-
-  // ✅ Check if form is valid (only required fields)
+  // ✅ Check if form is valid
   const isFormValid = () => {
     const requiredFields = [
+      'rideTypeCode', // ✅ This must be selected
       'licenceNumber',
       'licenceExpiryDate',
       'licenceFront',
@@ -154,26 +194,10 @@ const CabDriverRegistration = ({ navigation }: any) => {
     );
   };
 
-  // ✅ Get selected category label
-  const getSelectedCategoryLabel = () => {
-    if (!formData.vehicleCategoryCode) return 'Select Category';
-    const cat = categories.find(c => c.code === formData.vehicleCategoryCode);
-    return cat ? cat.category : formData.vehicleCategoryCode;
-  };
-
-  // ✅ Get selected company label
-  const getSelectedCompanyLabel = () => {
-    if (!formData.vehicleCompanyCode) return 'Select Company';
-    const company = companies.find(c => c.code === formData.vehicleCompanyCode);
-    return company ? company.name : formData.vehicleCompanyCode;
-  };
-
-  // ✅ Get selected model label
-  const getSelectedModelLabel = () => {
-    if (!formData.vehicleModelCode) return 'Select Model';
-    const model = models.find(m => m.code === formData.vehicleModelCode);
-    return model ? model.name : formData.vehicleModelCode;
-  };
+  // ✅ If already registered, don't render
+  if (isRegistered) {
+    return null;
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -185,7 +209,7 @@ const CabDriverRegistration = ({ navigation }: any) => {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
         >
-          {/* ✅ Header Section */}
+          {/* Header Section */}
           <View style={styles.headerContainer}>
             <View style={styles.headerIconContainer}>
               <Icon name="car-sport" size={34} color="#3B82F6" />
@@ -194,6 +218,62 @@ const CabDriverRegistration = ({ navigation }: any) => {
             <Text style={styles.subtitle}>
               Join our fleet and start earning today
             </Text>
+          </View>
+
+          {/* ✅ RIDE TYPE SELECTION - FIRST STEP (Required) */}
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Icon name="layers" size={20} color="#3B82F6" />
+              <Text style={styles.sectionTitle}>Select Ride Type</Text>
+              <View style={styles.requiredBadge}>
+                <Text style={styles.requiredBadgeText}>Required</Text>
+              </View>
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>
+                Ride Type <Text style={styles.required}>*</Text>
+              </Text>
+              <TouchableOpacity
+                style={styles.selectInput}
+                onPress={() => setShowRideTypePicker(true)}
+                disabled={rideTypesLoading}
+              >
+                <View style={styles.selectLeft}>
+                  <Icon
+                    name="car"
+                    size={18}
+                    color="#9CA3AF"
+                    style={styles.selectIcon}
+                  />
+                  <Text
+                    style={
+                      formData.rideTypeCode
+                        ? styles.selectText
+                        : styles.selectPlaceholder
+                    }
+                  >
+                    {rideTypesLoading
+                      ? 'Loading...'
+                      : getRideTypeLabel(formData.rideTypeCode)}
+                  </Text>
+                </View>
+                <Icon name="chevron-down" size={18} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            {formData.rideTypeCode && rideTypeInfo && (
+              <View style={styles.infoBox}>
+                <Icon name="information-circle" size={16} color="#3B82F6" />
+                <Text style={styles.infoText}>{rideTypeInfo.description}</Text>
+              </View>
+            )}
+
+            {!formData.rideTypeCode && (
+              <Text style={styles.hintText}>
+                ⚠️ Please select a ride type to continue
+              </Text>
+            )}
           </View>
 
           {/* ✅ Licence Section */}
@@ -242,12 +322,10 @@ const CabDriverRegistration = ({ navigation }: any) => {
                   placeholderTextColor="#9CA3AF"
                   value={formData.licenceExpiryDate}
                   onChangeText={text => updateField('licenceExpiryDate', text)}
-                  keyboardType="default"
                 />
               </View>
             </View>
 
-            {/* ✅ Licence Documents - Individual Rows */}
             <DocumentUpload
               label="Licence Front *"
               image={licenceFront}
@@ -261,191 +339,246 @@ const CabDriverRegistration = ({ navigation }: any) => {
             />
           </View>
 
-          {/* ✅ Vehicle Section */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Icon name="car" size={20} color="#3B82F6" />
-              <Text style={styles.sectionTitle}>Vehicle Details</Text>
-            </View>
+          {/* ✅ Vehicle Section - Only after ride type selection */}
+          {formData.rideTypeCode && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Icon name="car" size={20} color="#3B82F6" />
+                <Text style={styles.sectionTitle}>Vehicle Details</Text>
+              </View>
 
-            {/* ✅ Category Picker */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>
-                Category <Text style={styles.required}>*</Text>
-              </Text>
-              <TouchableOpacity
-                style={styles.selectInput}
-                onPress={() => setShowCategoryPicker(true)}
-                disabled={categoriesLoading}
-              >
-                <View style={styles.selectLeft}>
+              {/* Category Picker */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>
+                  Category <Text style={styles.required}>*</Text>
+                </Text>
+                <TouchableOpacity
+                  style={styles.selectInput}
+                  onPress={() => setShowCategoryPicker(true)}
+                  disabled={
+                    isLoadingFiltered || filteredCategories.length === 0
+                  }
+                >
+                  <View style={styles.selectLeft}>
+                    <Icon
+                      name="grid"
+                      size={18}
+                      color="#9CA3AF"
+                      style={styles.selectIcon}
+                    />
+                    <Text
+                      style={
+                        formData.vehicleCategoryCode
+                          ? styles.selectText
+                          : styles.selectPlaceholder
+                      }
+                    >
+                      {isLoadingFiltered
+                        ? 'Loading...'
+                        : getCategoryLabel(formData.vehicleCategoryCode)}
+                    </Text>
+                  </View>
+                  <Icon name="chevron-down" size={18} color="#6B7280" />
+                </TouchableOpacity>
+                {filteredCategories.length === 0 && !isLoadingFiltered && (
+                  <Text style={styles.hintText}>
+                    No vehicles available for this ride type
+                  </Text>
+                )}
+              </View>
+
+              {/* Company Picker */}
+              {formData.vehicleCategoryCode && companies.length > 0 && (
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>
+                    Company <Text style={styles.required}>*</Text>
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.selectInput}
+                    onPress={() => setShowCompanyPicker(true)}
+                  >
+                    <View style={styles.selectLeft}>
+                      <Icon
+                        name="business"
+                        size={18}
+                        color="#9CA3AF"
+                        style={styles.selectIcon}
+                      />
+                      <Text
+                        style={
+                          formData.vehicleCompanyCode
+                            ? styles.selectText
+                            : styles.selectPlaceholder
+                        }
+                      >
+                        {getCompanyLabel(formData.vehicleCompanyCode)}
+                      </Text>
+                    </View>
+                    <Icon name="chevron-down" size={18} color="#6B7280" />
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Model Picker */}
+              {formData.vehicleCompanyCode && models.length > 0 && (
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>
+                    Model <Text style={styles.required}>*</Text>
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.selectInput}
+                    onPress={() => setShowModelPicker(true)}
+                  >
+                    <View style={styles.selectLeft}>
+                      <Icon
+                        name="cube"
+                        size={18}
+                        color="#9CA3AF"
+                        style={styles.selectIcon}
+                      />
+                      <Text
+                        style={
+                          formData.vehicleModelCode
+                            ? styles.selectText
+                            : styles.selectPlaceholder
+                        }
+                      >
+                        {getModelLabel(formData.vehicleModelCode)}
+                      </Text>
+                    </View>
+                    <Icon name="chevron-down" size={18} color="#6B7280" />
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Show selected model details */}
+              {selectedModel && (
+                <View style={styles.modelDetailsContainer}>
+                  <Text style={styles.modelDetailsTitle}>
+                    Vehicle Specifications
+                  </Text>
+                  <View style={styles.modelDetailsGrid}>
+                    <View style={styles.modelDetailItem}>
+                      <Text style={styles.modelDetailLabel}>Type</Text>
+                      <Text style={styles.modelDetailValue}>
+                        {selectedModel.vehicleType}
+                      </Text>
+                    </View>
+                    <View style={styles.modelDetailItem}>
+                      <Text style={styles.modelDetailLabel}>Class</Text>
+                      <Text style={styles.modelDetailValue}>
+                        {selectedModel.vehicleClass}
+                      </Text>
+                    </View>
+                    <View style={styles.modelDetailItem}>
+                      <Text style={styles.modelDetailLabel}>AC</Text>
+                      <Text style={styles.modelDetailValue}>
+                        {selectedModel.hasAC ? 'Yes ✅' : 'No ❌'}
+                      </Text>
+                    </View>
+                    <View style={styles.modelDetailItem}>
+                      <Text style={styles.modelDetailLabel}>Passengers</Text>
+                      <Text style={styles.modelDetailValue}>
+                        {selectedModel.passengerCapacity}
+                      </Text>
+                    </View>
+                    <View style={styles.modelDetailItem}>
+                      <Text style={styles.modelDetailLabel}>Luggage</Text>
+                      <Text style={styles.modelDetailValue}>
+                        {selectedModel.luggageCapacity} bags
+                      </Text>
+                    </View>
+                    <View style={styles.modelDetailItem}>
+                      <Text style={styles.modelDetailLabel}>Hand Bags</Text>
+                      <Text style={styles.modelDetailValue}>
+                        {selectedModel.handBagCapacity}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              )}
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>
+                  Vehicle Number <Text style={styles.required}>*</Text>
+                </Text>
+                <View style={styles.inputContainer}>
                   <Icon
-                    name="grid"
+                    name="car-outline"
                     size={18}
                     color="#9CA3AF"
-                    style={styles.selectIcon}
+                    style={styles.inputIcon}
                   />
-                  <Text
-                    style={
-                      formData.vehicleCategoryCode
-                        ? styles.selectText
-                        : styles.selectPlaceholder
-                    }
-                  >
-                    {categoriesLoading
-                      ? 'Loading...'
-                      : getSelectedCategoryLabel()}
-                  </Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="KA01AB1234"
+                    placeholderTextColor="#9CA3AF"
+                    value={formData.vehicleNumber}
+                    onChangeText={text => updateField('vehicleNumber', text)}
+                    autoCapitalize="characters"
+                  />
                 </View>
-                <Icon name="chevron-down" size={18} color="#6B7280" />
-              </TouchableOpacity>
-            </View>
+              </View>
 
-            {/* ✅ Company Picker */}
-            {formData.vehicleCategoryCode && (
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>
-                  Company <Text style={styles.required}>*</Text>
-                </Text>
-                <TouchableOpacity
-                  style={styles.selectInput}
-                  onPress={() => setShowCompanyPicker(true)}
-                >
-                  <View style={styles.selectLeft}>
-                    <Icon
-                      name="business"
-                      size={18}
-                      color="#9CA3AF"
-                      style={styles.selectIcon}
-                    />
-                    <Text
-                      style={
-                        formData.vehicleCompanyCode
-                          ? styles.selectText
-                          : styles.selectPlaceholder
-                      }
-                    >
-                      {getSelectedCompanyLabel()}
+              <View style={styles.rowContainer}>
+                <View style={[styles.halfWidth, { marginRight: 8 }]}>
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.label}>
+                      Color <Text style={styles.required}>*</Text>
                     </Text>
+                    <View style={styles.inputContainer}>
+                      <Icon
+                        name="color-palette"
+                        size={18}
+                        color="#9CA3AF"
+                        style={styles.inputIcon}
+                      />
+                      <TextInput
+                        style={styles.input}
+                        placeholder="White"
+                        placeholderTextColor="#9CA3AF"
+                        value={formData.vehicleColor}
+                        onChangeText={text => updateField('vehicleColor', text)}
+                      />
+                    </View>
                   </View>
-                  <Icon name="chevron-down" size={18} color="#6B7280" />
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* ✅ Model Picker */}
-            {formData.vehicleCompanyCode && (
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>
-                  Model <Text style={styles.required}>*</Text>
-                </Text>
-                <TouchableOpacity
-                  style={styles.selectInput}
-                  onPress={() => setShowModelPicker(true)}
-                >
-                  <View style={styles.selectLeft}>
-                    <Icon
-                      name="cube"
-                      size={18}
-                      color="#9CA3AF"
-                      style={styles.selectIcon}
-                    />
-                    <Text
-                      style={
-                        formData.vehicleModelCode
-                          ? styles.selectText
-                          : styles.selectPlaceholder
-                      }
-                    >
-                      {getSelectedModelLabel()}
+                </View>
+                <View style={[styles.halfWidth, { marginLeft: 8 }]}>
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.label}>
+                      Year <Text style={styles.required}>*</Text>
                     </Text>
-                  </View>
-                  <Icon name="chevron-down" size={18} color="#6B7280" />
-                </TouchableOpacity>
-              </View>
-            )}
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>
-                Vehicle Number <Text style={styles.required}>*</Text>
-              </Text>
-              <View style={styles.inputContainer}>
-                <Icon
-                  name="car-outline"
-                  size={18}
-                  color="#9CA3AF"
-                  style={styles.inputIcon}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="KA01AB1234"
-                  placeholderTextColor="#9CA3AF"
-                  value={formData.vehicleNumber}
-                  onChangeText={text => updateField('vehicleNumber', text)}
-                  autoCapitalize="characters"
-                />
-              </View>
-            </View>
-
-            <View style={styles.rowContainer}>
-              <View style={[styles.halfWidth, { marginRight: 8 }]}>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>
-                    Color <Text style={styles.required}>*</Text>
-                  </Text>
-                  <View style={styles.inputContainer}>
-                    <Icon
-                      name="color-palette"
-                      size={18}
-                      color="#9CA3AF"
-                      style={styles.inputIcon}
-                    />
-                    <TextInput
-                      style={styles.input}
-                      placeholder="White"
-                      placeholderTextColor="#9CA3AF"
-                      value={formData.vehicleColor}
-                      onChangeText={text => updateField('vehicleColor', text)}
-                    />
-                  </View>
-                </View>
-              </View>
-              <View style={[styles.halfWidth, { marginLeft: 8 }]}>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>
-                    Year <Text style={styles.required}>*</Text>
-                  </Text>
-                  <View style={styles.inputContainer}>
-                    <Icon
-                      name="calendar-outline"
-                      size={18}
-                      color="#9CA3AF"
-                      style={styles.inputIcon}
-                    />
-                    <TextInput
-                      style={styles.input}
-                      placeholder="2022"
-                      placeholderTextColor="#9CA3AF"
-                      value={formData.manufacturingYear}
-                      onChangeText={text =>
-                        updateField('manufacturingYear', text)
-                      }
-                      keyboardType="number-pad"
-                    />
+                    <View style={styles.inputContainer}>
+                      <Icon
+                        name="calendar-outline"
+                        size={18}
+                        color="#9CA3AF"
+                        style={styles.inputIcon}
+                      />
+                      <TextInput
+                        style={styles.input}
+                        placeholder="2022"
+                        placeholderTextColor="#9CA3AF"
+                        value={formData.manufacturingYear}
+                        onChangeText={text =>
+                          updateField('manufacturingYear', text)
+                        }
+                        keyboardType="number-pad"
+                      />
+                    </View>
                   </View>
                 </View>
               </View>
             </View>
-          </View>
+          )}
 
-          {/* ✅ Documents Section */}
+          {/* Documents Section */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Icon name="document-attach" size={20} color="#3B82F6" />
               <Text style={styles.sectionTitle}>Vehicle Documents</Text>
             </View>
 
-            {/* ✅ RC Documents - Individual Rows */}
             <DocumentUpload
               label="RC Front *"
               image={rcFront}
@@ -473,7 +606,7 @@ const CabDriverRegistration = ({ navigation }: any) => {
             />
           </View>
 
-          {/* ✅ Submit Button */}
+          {/* Submit Button */}
           <TouchableOpacity
             style={[
               styles.submitButton,
@@ -501,6 +634,49 @@ const CabDriverRegistration = ({ navigation }: any) => {
         </ScrollView>
       </KeyboardAvoidingView>
 
+      {/* ✅ RIDE TYPE PICKER MODAL */}
+      <Modal
+        visible={showRideTypePicker}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowRideTypePicker(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Ride Type</Text>
+              <TouchableOpacity onPress={() => setShowRideTypePicker(false)}>
+                <Icon name="close" size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {rideTypes.map(rideType => (
+                <TouchableOpacity
+                  key={rideType.code}
+                  style={styles.modalItem}
+                  onPress={() => handleRideTypeSelect(rideType.code)}
+                >
+                  <View style={styles.modalItemLeft}>
+                    <Text style={styles.modalItemText}>{rideType.name}</Text>
+                    <Text style={styles.modalItemSubtext} numberOfLines={2}>
+                      {rideType.description}
+                    </Text>
+                    <View style={styles.modalItemClasses}>
+                      <Text style={styles.modalItemClassesText}>
+                        Classes: {rideType.vehicleClasses.join(', ')}
+                      </Text>
+                    </View>
+                  </View>
+                  {formData.rideTypeCode === rideType.code && (
+                    <Icon name="checkmark-circle" size={22} color="#3B82F6" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       {/* ✅ Category Picker Modal */}
       <Modal
         visible={showCategoryPicker}
@@ -517,7 +693,7 @@ const CabDriverRegistration = ({ navigation }: any) => {
               </TouchableOpacity>
             </View>
             <ScrollView showsVerticalScrollIndicator={false}>
-              {categories.map(category => (
+              {filteredCategories.map(category => (
                 <TouchableOpacity
                   key={category.code}
                   style={styles.modalItem}
@@ -525,9 +701,7 @@ const CabDriverRegistration = ({ navigation }: any) => {
                 >
                   <Text style={styles.modalItemText}>{category.category}</Text>
                   {formData.vehicleCategoryCode === category.code && (
-                    <View style={styles.modalItemCheckContainer}>
-                      <Icon name="checkmark" size={16} color="#3B82F6" />
-                    </View>
+                    <Icon name="checkmark-circle" size={22} color="#3B82F6" />
                   )}
                 </TouchableOpacity>
               ))}
@@ -560,9 +734,7 @@ const CabDriverRegistration = ({ navigation }: any) => {
                 >
                   <Text style={styles.modalItemText}>{company.name}</Text>
                   {formData.vehicleCompanyCode === company.code && (
-                    <View style={styles.modalItemCheckContainer}>
-                      <Icon name="checkmark" size={16} color="#3B82F6" />
-                    </View>
+                    <Icon name="checkmark-circle" size={22} color="#3B82F6" />
                   )}
                 </TouchableOpacity>
               ))}
@@ -593,11 +765,15 @@ const CabDriverRegistration = ({ navigation }: any) => {
                   style={styles.modalItem}
                   onPress={() => handleModelSelect(model.code)}
                 >
-                  <Text style={styles.modalItemText}>{model.name}</Text>
+                  <View style={styles.modalItemLeft}>
+                    <Text style={styles.modalItemText}>{model.name}</Text>
+                    <Text style={styles.modalItemSubtext}>
+                      {model.vehicleType} • {model.vehicleClass} •{' '}
+                      {model.passengerCapacity} seats
+                    </Text>
+                  </View>
                   {formData.vehicleModelCode === model.code && (
-                    <View style={styles.modalItemCheckContainer}>
-                      <Icon name="checkmark" size={16} color="#3B82F6" />
-                    </View>
+                    <Icon name="checkmark-circle" size={22} color="#3B82F6" />
                   )}
                 </TouchableOpacity>
               ))}
@@ -609,6 +785,7 @@ const CabDriverRegistration = ({ navigation }: any) => {
   );
 };
 
+// ============ STYLES ============
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -618,7 +795,6 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 40,
   },
-  // ✅ Header Styles
   headerContainer: {
     alignItems: 'center',
     marginBottom: 24,
@@ -653,7 +829,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     letterSpacing: 0.3,
   },
-  // ✅ Section Styles
   section: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
@@ -681,8 +856,19 @@ const styles = StyleSheet.create({
     color: '#1A1A1A',
     marginLeft: 10,
     letterSpacing: 0.3,
+    flex: 1,
   },
-  // ✅ Input Styles
+  requiredBadge: {
+    backgroundColor: '#EF4444',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  requiredBadgeText: {
+    fontSize: 10,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
   inputGroup: {
     marginBottom: 12,
   },
@@ -742,7 +928,6 @@ const styles = StyleSheet.create({
     color: '#9CA3AF',
     flex: 1,
   },
-  // ✅ Row & Column Layouts
   rowContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -750,7 +935,59 @@ const styles = StyleSheet.create({
   halfWidth: {
     flex: 1,
   },
-  // ✅ Submit Button Styles
+  infoBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#EEF2FF',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 4,
+  },
+  infoText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#3B82F6',
+    marginLeft: 8,
+    lineHeight: 16,
+  },
+  hintText: {
+    fontSize: 12,
+    color: '#EF4444',
+    marginTop: 4,
+    marginLeft: 4,
+  },
+  modelDetailsContainer: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 10,
+    padding: 12,
+    marginTop: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  modelDetailsTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 10,
+  },
+  modelDetailsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  modelDetailItem: {
+    width: '33.33%',
+    marginBottom: 6,
+  },
+  modelDetailLabel: {
+    fontSize: 11,
+    color: '#9CA3AF',
+  },
+  modelDetailValue: {
+    fontSize: 13,
+    color: '#1A1A1A',
+    fontWeight: '500',
+  },
   submitButton: {
     backgroundColor: '#1A1A1A',
     borderRadius: 12,
@@ -777,7 +1014,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginRight: 10,
   },
-  // ✅ Footer Styles
   footer: {
     marginTop: 18,
     alignItems: 'center',
@@ -791,7 +1027,6 @@ const styles = StyleSheet.create({
     color: '#3B82F6',
     fontWeight: '500',
   },
-  // ✅ Modal Styles
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -802,7 +1037,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 20,
-    maxHeight: '70%',
+    maxHeight: '75%',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -827,17 +1062,31 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
   },
+  modalItemLeft: {
+    flex: 1,
+    marginRight: 12,
+  },
   modalItemText: {
     fontSize: 15,
     color: '#1A1A1A',
+    fontWeight: '500',
   },
-  modalItemCheckContainer: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#EEF2FF',
-    justifyContent: 'center',
-    alignItems: 'center',
+  modalItemSubtext: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    marginTop: 2,
+  },
+  modalItemClasses: {
+    marginTop: 4,
+  },
+  modalItemClassesText: {
+    fontSize: 10,
+    color: '#6B7280',
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    alignSelf: 'flex-start',
   },
 });
 

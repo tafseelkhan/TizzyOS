@@ -193,7 +193,7 @@ type ShippingPartner = {
   kyc?: any;
 };
 
-const API_BASE_URL = 'http://172.20.10.12:5000';
+const API_BASE_URL = 'http://172.20.245.121:5000';
 
 // Theme colors
 const getThemeColors = (isDark: boolean) => {
@@ -486,7 +486,7 @@ const ManualShippingModal: React.FC<{
   const fetchShippingPartners = async () => {
     try {
       setLoadingPartners(true);
-      const apiUrl = `${API_BASE_URL}/api/shipping/available-shipping`;
+      const apiUrl = `${API_BASE_URL}/api/v0/shipping/available-shipping`;
       const headers = {
         Authorization: `Bearer ${authToken}`,
         'Content-Type': 'application/json',
@@ -862,7 +862,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
       if (!tokenToUse) return null;
 
       const response = await axios.get(
-        `${API_BASE_URL}/api/delivery/tracking/${orderId}/qr`,
+        `${API_BASE_URL}/api/v0/delivery/tracking/${orderId}/qr`,
         {
           headers: { Authorization: `Bearer ${tokenToUse}` },
           timeout: 10000,
@@ -920,7 +920,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
         return { trackingHistory: null, qrOwnershipHistory: null };
 
       const response = await axios.get(
-        `${API_BASE_URL}/api/tracking/history/status`,
+        `${API_BASE_URL}/api/v0/tracking/history/status`,
         {
           params: { orderId },
           headers: { Authorization: `Bearer ${tokenToUse}` },
@@ -1110,7 +1110,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
         }
       }
 
-      const apiUrl = `${API_BASE_URL}/api/seller/orders?sellerId=${currentSellerId}`;
+      const apiUrl = `${API_BASE_URL}/api/v0/seller/orders?sellerId=${currentSellerId}`;
       const headers = {
         Authorization: `Bearer ${tokenToUse}`,
         'Content-Type': 'application/json',
@@ -1178,7 +1178,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
 
       setProcessingOrder(order._id || order.orderId || '');
       const response = await axios.post(
-        `${API_BASE_URL}/api/delivery/tracking/shipping/seller/accept-order`,
+        `${API_BASE_URL}/api/v0/delivery/tracking/shipping/seller/accept-order`,
         { orderId: order.orderId },
         {
           headers: {
@@ -1253,7 +1253,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
           : 'TRUCK');
 
       const response = await axios.post(
-        `${API_BASE_URL}/api/delivery/tracking/shipping/seller/assign/auto-manual`,
+        `${API_BASE_URL}/api/v0/delivery/tracking/shipping/seller/assign/auto-manual`,
         {
           orderId: order.orderId,
           assignmentType: 'MANUAL',
@@ -1357,7 +1357,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
 
       setProcessingOrder(order._id || order.orderId || '');
       const response = await axios.post(
-        `${API_BASE_URL}/api/delivery/tracking/shipping/seller/assign/auto-manual`,
+        `${API_BASE_URL}/api/v0/delivery/tracking/shipping/seller/assign/auto-manual`,
         { orderId: order.orderId, assignmentType: 'AUTO', shippingType },
         {
           headers: {
@@ -1422,7 +1422,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
 
       setProcessingFWSOrder(order._id || order.orderId || '');
       const response = await axios.post(
-        `${API_BASE_URL}/api/delivery/tracking/shipping/seller/deliver-to-fws`,
+        `${API_BASE_URL}/api/v0/delivery/tracking/shipping/seller/deliver-to-fws`,
         { orderId: order.orderId },
         {
           headers: {

@@ -59,7 +59,7 @@ type VehicleCategory = 'Car' | 'Bike' | 'Scooter' | 'Auto' | 'Tempo';
 type IdentityType = 'Aadhaar' | 'VoterID' | 'Passport' | 'PAN';
 type ShippingType = 'TRUCK' | 'RIDER';
 
-const API_BASE_URL = 'http://172.20.10.12:5000';
+const API_BASE_URL = 'http://172.20.245.121:5000';
 
 // ============================================================
 // BATTERY BASED TIMEOUT CALCULATOR
@@ -826,7 +826,7 @@ class LocationTracker {
 
     const mode = isBg ? 'BACKGROUND' : 'FOREGROUND';
     console.log(`🌐 Sending ${mode} location to API...`);
-    console.log(`🌐 URL: ${API_BASE_URL}/api/track/rider/location`);
+    console.log(`🌐 URL: ${API_BASE_URL}/api/v0/track/rider/location`);
     console.log(`🌐 Payload:`, {
       shippingId: this.shippingId,
       action: 'update',
@@ -840,7 +840,7 @@ class LocationTracker {
     });
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/track/rider/location`, {
+      const response = await fetch(`${API_BASE_URL}/api/v0/track/rider/location`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1373,7 +1373,7 @@ const RiderRegistrationScreen: React.FC = () => {
       console.log(`📍 Initial location: ${lat}, ${lng}`);
 
       console.log('🌐 Sending start action to backend...');
-      await fetch(`${API_BASE_URL}/api/track/rider/location`, {
+      await fetch(`${API_BASE_URL}/api/v0/track/rider/location`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1480,7 +1480,7 @@ const RiderRegistrationScreen: React.FC = () => {
       }
 
       console.log('Fetching shipping data from backend...');
-      const res = await fetch(`${API_BASE_URL}/api/shipping/form/check`, {
+      const res = await fetch(`${API_BASE_URL}/api/v0/shipping/form/check`, {
         method: 'GET',
         headers: {
           Accept: 'application/json',
@@ -1578,7 +1578,7 @@ const RiderRegistrationScreen: React.FC = () => {
       console.log(`🔄 Toggling online status to: ${newStatus}`);
       setIsOnline(newStatus);
 
-      const res = await fetch(`${API_BASE_URL}/api/shipper/online-status`, {
+      const res = await fetch(`${API_BASE_URL}/api/v0/shipper/online-status`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1795,7 +1795,7 @@ const RiderRegistrationScreen: React.FC = () => {
   const submitRegistration = async (formData: any) => {
     const token = await getAuthToken();
     if (!token) throw new Error('Auth token missing');
-    const res = await fetch(`${API_BASE_URL}/api/shipping/register`, {
+    const res = await fetch(`${API_BASE_URL}/api/v0/shipping/register`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

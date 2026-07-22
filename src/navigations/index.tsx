@@ -3,7 +3,7 @@ import {
   NavigationContainer,
   NavigationContainerRef,
 } from '@react-navigation/native';
-import { AdsSDK } from '../api/ads';
+// import { AdsSDK } from '../api/ads';
 import { handleNavigationStateChange } from './navigation';
 import { createStackNavigator } from '@react-navigation/stack';
 import TizzyGo from '../screens/animations/splashScreen';
@@ -59,6 +59,7 @@ import FWSScannedOrders from '../screens/fws/scannedOrders/scannedOrders';
 import CabDriverScreen from '../screens/cab/menuScreen';
 import DriverRegistrationScreen from '../screens/cab/driver/driverRegistration';
 import DriverStatusScreen from '../screens/cab/driver/driverStatus';
+import DriverAvailabilityScreen from '../screens/cab/driverAvailableStatus/driverAvailability';
 
 // ✅ Complete RootStackParamList with all screens
 export type RootStackParamList = {
@@ -116,6 +117,7 @@ export type RootStackParamList = {
   CabDriver: undefined;
   DriverRegistration: undefined;
   DriverStatus: undefined;
+  DriverAvailability: undefined;
 };
 
 const Stack = createStackNavigator<RootStackParamList>();
@@ -124,12 +126,12 @@ export default function AppNavigator(): React.ReactElement {
   const navigationRef =
     useRef<NavigationContainerRef<RootStackParamList>>(null);
 
-  // Register navigation ref for Ads SDK
-  useEffect(() => {
-    if (navigationRef.current) {
-      AdsSDK.registerNavigationContainer(navigationRef.current);
-    }
-  }, [navigationRef.current]);
+  // // Register navigation ref for Ads SDK
+  // useEffect(() => {
+  //   if (navigationRef.current) {
+  //     AdsSDK.registerNavigationContainer(navigationRef.current);
+  //   }
+  // }, [navigationRef.current]);
 
   return (
     <NavigationContainer
@@ -141,7 +143,7 @@ export default function AppNavigator(): React.ReactElement {
       onReady={() => {
         // Register navigation ref when ready
         if (navigationRef.current) {
-          AdsSDK.registerNavigationContainer(navigationRef.current);
+          // AdsSDK.registerNavigationContainer(navigationRef.current);
         }
       }}
     >
@@ -208,6 +210,10 @@ export default function AppNavigator(): React.ReactElement {
           component={DriverRegistrationScreen}
         />
         <Stack.Screen name="DriverStatus" component={DriverStatusScreen} />
+        <Stack.Screen
+          name="DriverAvailability"
+          component={DriverAvailabilityScreen}
+        />
       </Stack.Navigator>
     </NavigationContainer>
   );

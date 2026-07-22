@@ -99,7 +99,7 @@ export default function SellerProductsGrid() {
       }
 
       const response = await fetch(
-        `http://172.20.10.12:5000/api/seller/forms/categories/user`,
+        `http://172.20.245.121:5000/api/v0/seller/forms/categories/user`,
         {
           method: 'GET',
           headers: {
@@ -223,7 +223,7 @@ export default function SellerProductsGrid() {
       }
 
       const response = await fetch(
-        `http://172.20.10.12:5000/api/delete/product`,
+        `http://172.20.245.121:5000/api/v0/delete/product`,
         {
           method: 'DELETE',
           headers: {

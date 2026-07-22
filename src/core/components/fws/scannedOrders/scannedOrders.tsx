@@ -38,7 +38,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width, height } = Dimensions.get('window');
 
-const API_BASE_URL = 'http://172.20.10.12:5000';
+const API_BASE_URL = 'http://172.20.245.121:5000';
 
 type TabType = 'current' | 'previous';
 
@@ -146,7 +146,7 @@ const ScannedOrdersScreen: React.FC = () => {
       }
 
       const response = await axios.get(
-        `${API_BASE_URL}/api/shipping/available-shipping`,
+        `${API_BASE_URL}/api/v0/shipping/available-shipping`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -291,7 +291,7 @@ const ScannedOrdersScreen: React.FC = () => {
       const token = await getAuthToken();
       if (token && order.order) {
         const trackingResponse = await axios.get(
-          `${API_BASE_URL}/api/tracking/history/status`,
+          `${API_BASE_URL}/api/v0/tracking/history/status`,
           {
             params: { orderId: order.order.orderId },
             headers: { Authorization: `Bearer ${token}` },

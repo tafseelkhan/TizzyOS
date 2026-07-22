@@ -29,7 +29,7 @@ if (
 }
 
 const { width } = Dimensions.get('window');
-const BASE_URL = 'http://172.20.10.12:5000';
+const BASE_URL = 'http://172.20.245.121:5000';
 
 // Define navigation param list for FWS
 type RootStackParamList = {
@@ -91,7 +91,7 @@ const getImageUrl = (image?: string): string => {
 const fwsApi = {
   getFWSProfile: async (token: string): Promise<FWSProfile> => {
     try {
-      const response = await fetch(`${BASE_URL}/api/fws`, {
+      const response = await fetch(`${BASE_URL}/api/v0/fws`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -273,7 +273,7 @@ const FWSMenu: React.FC<FWSMenuProps> = ({
         const token = await AsyncStorage.getItem('authToken');
         if (!token) return;
 
-        const response = await fetch(`${BASE_URL}/api/profile/me`, {
+        const response = await fetch(`${BASE_URL}/api/v0/profile/me`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',

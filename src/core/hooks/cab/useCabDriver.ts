@@ -1,5 +1,7 @@
+// hooks/cab/useCabDriver.ts
 import { useState, useEffect, useCallback } from 'react';
 import { Alert } from 'react-native';
+import { NavigationProp, useNavigation } from '@react-navigation/native';
 import {
   registerDriver,
   getDriverProfile,
@@ -15,7 +17,6 @@ import {
 } from '../../types/CabTypes';
 
 interface UseCabDriverReturn {
-  // States
   isLoading: boolean;
   isRegistered: boolean;
   driver: RideDriver | null;
@@ -23,16 +24,17 @@ interface UseCabDriverReturn {
   statusColor: string;
   statusLabel: string;
   isApproved: boolean;
-
-  // Actions
   register: (data: RegisterDriverRequest) => Promise<boolean>;
   refreshDriver: () => Promise<void>;
   checkStatus: () => Promise<void>;
   clearDriver: () => void;
+  navigateToProfile: () => void;
 }
 
 export const useCabDriver = (): UseCabDriverReturn => {
-  // States
+  const navigation =
+    useNavigation<NavigationProp<Record<string, object | undefined>>>();
+
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isRegistered, setIsRegistered] = useState<boolean>(false);
   const [driver, setDriver] = useState<RideDriver | null>(null);
@@ -41,7 +43,16 @@ export const useCabDriver = (): UseCabDriverReturn => {
   const [statusLabel, setStatusLabel] = useState<string>('Unknown');
   const [isApproved, setIsApproved] = useState<boolean>(false);
 
-  // ✅ Check driver status
+  const navigateToProfile = useCallback(() => {
+    try {
+      if (navigation && typeof navigation.navigate === 'function') {
+        navigation.navigate('DriverStatus');
+      }
+    } catch (error) {
+      console.error('Navigation error:', error);
+    }
+  }, [navigation]);
+
   const checkStatus = useCallback(async () => {
     try {
       setIsLoading(true);
@@ -56,6 +67,10 @@ export const useCabDriver = (): UseCabDriverReturn => {
         setStatusColor(getStatusColor(driverStatus));
         setStatusLabel(getStatusLabel(driverStatus));
         setIsApproved(driverStatus === 'approved');
+
+        if (result.isRegistered) {
+          navigateToProfile();
+        }
       } else {
         setStatus(null);
         setStatusColor('#6B7280');
@@ -67,9 +82,8 @@ export const useCabDriver = (): UseCabDriverReturn => {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [navigateToProfile]);
 
-  // ✅ Register driver
   const register = useCallback(
     async (data: RegisterDriverRequest): Promise<boolean> => {
       try {
@@ -78,13 +92,12 @@ export const useCabDriver = (): UseCabDriverReturn => {
 
         if (result.success) {
           Alert.alert(
-            'Success',
-            result.message || 'Driver registered successfully',
+            'Success 🎉',
+            result.message || 'Driver registered successfully!',
           );
           await checkStatus();
           return true;
         } else {
-          // Show validation errors
           if (result.errors && result.errors.length > 0) {
             const errorMessages = result.errors
               .map(e => `• ${e.message}`)
@@ -96,6 +109,7 @@ export const useCabDriver = (): UseCabDriverReturn => {
           return false;
         }
       } catch (error) {
+        console.error('Registration error:', error);
         Alert.alert('Error', 'Something went wrong. Please try again.');
         return false;
       } finally {
@@ -105,7 +119,6 @@ export const useCabDriver = (): UseCabDriverReturn => {
     [checkStatus],
   );
 
-  // ✅ Refresh driver data
   const refreshDriver = useCallback(async () => {
     try {
       setIsLoading(true);
@@ -134,7 +147,6 @@ export const useCabDriver = (): UseCabDriverReturn => {
     }
   }, []);
 
-  // ✅ Clear driver data
   const clearDriver = useCallback(() => {
     setDriver(null);
     setIsRegistered(false);
@@ -144,7 +156,6 @@ export const useCabDriver = (): UseCabDriverReturn => {
     setIsApproved(false);
   }, []);
 
-  // ✅ Initial status check
   useEffect(() => {
     checkStatus();
   }, [checkStatus]);
@@ -161,6 +172,7 @@ export const useCabDriver = (): UseCabDriverReturn => {
     refreshDriver,
     checkStatus,
     clearDriver,
+    navigateToProfile,
   };
 };
 
@@ -180,6 +192,7 @@ interface UseDriverFormReturn {
 
 export const useDriverForm = (): UseDriverFormReturn => {
   const [formData, setFormData] = useState<RegisterDriverRequest>({
+    rideTypeCode: '',
     licenceNumber: '',
     licenceExpiryDate: '',
     licenceFront: '',
@@ -205,6 +218,7 @@ export const useDriverForm = (): UseDriverFormReturn => {
 
   const resetForm = () => {
     setFormData({
+      rideTypeCode: '',
       licenceNumber: '',
       licenceExpiryDate: '',
       licenceFront: '',
@@ -222,14 +236,32 @@ export const useDriverForm = (): UseDriverFormReturn => {
     });
   };
 
-  const isFormValid = Object.values(formData).every(
-    value => value !== '' && value !== undefined && value !== null,
-  );
+  const isFormValid = () => {
+    const requiredFields: (keyof RegisterDriverRequest)[] = [
+      'rideTypeCode',
+      'licenceNumber',
+      'licenceExpiryDate',
+      'licenceFront',
+      'licenceBack',
+      'vehicleCategoryCode',
+      'vehicleCompanyCode',
+      'vehicleModelCode',
+      'vehicleNumber',
+      'vehicleColor',
+      'manufacturingYear',
+      'rcFront',
+      'rcBack',
+    ];
+
+    return requiredFields.every(
+      field => formData[field] && formData[field].trim() !== '',
+    );
+  };
 
   return {
     formData,
     updateField,
     resetForm,
-    isFormValid,
+    isFormValid: isFormValid(),
   };
 };

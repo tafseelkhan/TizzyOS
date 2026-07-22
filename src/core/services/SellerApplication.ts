@@ -2,7 +2,7 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
-const API_BASE_URL = 'http://172.20.10.12:5000'; // Replace with your actual API URL
+const API_BASE_URL = 'http://172.20.245.121:5000'; // Replace with your actual API URL
 
 // Define a proper file interface for React Native
 export interface FileObject {
@@ -161,7 +161,7 @@ class SellerApplicationAPI {
       );
 
       const response = await axios.post(
-        `${API_BASE_URL}/api/seller/apply`,
+        `${API_BASE_URL}/api/v0/seller/apply`,
         data,
         {
           headers,
@@ -188,7 +188,7 @@ class SellerApplicationAPI {
   async getApplicationStatus(): Promise<ApiResponse> {
     try {
       const headers = await this.getAuthHeaders();
-      const response = await axios.get(`${API_BASE_URL}/api/seller/apply`, {
+      const response = await axios.get(`${API_BASE_URL}/api/v0/seller/apply`, {
         headers,
       });
       return response.data;

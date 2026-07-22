@@ -189,7 +189,7 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
   ) => {
     try {
       const response = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${Config.GOOGLE_SERVICES_ACCOUNT_KEY}&language=en`,
+        `https://maps.googleapis.com/maps/api/v0/geocode/json?latlng=${latitude},${longitude}&key=${Config.GOOGLE_SERVICES_ACCOUNT_KEY}&language=en`,
       );
       const data = await response.json();
 
@@ -247,7 +247,7 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
 
     try {
       const res = await fetch(
-        `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(
+        `https://maps.googleapis.com/maps/api/v0/place/autocomplete/json?input=${encodeURIComponent(
           text,
         )}&key=${
           Config.GOOGLE_SERVICES_ACCOUNT_KEY
@@ -278,7 +278,7 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
     try {
       setLoading(true);
       const res = await fetch(
-        `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&key=${Config.GOOGLE_SERVICES_ACCOUNT_KEY}&language=en`,
+        `https://maps.googleapis.com/maps/api/v0/place/details/json?place_id=${placeId}&key=${Config.GOOGLE_SERVICES_ACCOUNT_KEY}&language=en`,
       );
       const data = await res.json();
       const details = data.result;

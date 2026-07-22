@@ -33,7 +33,7 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 // API URL - Change this to your actual API URL
-const API_URL = "http://172.20.10.12:5000"; // or use env variables
+const API_URL = "http://172.20.245.121:5000"; // or use env variables
 
 // For Android navigation bar color - we'll use a simple approach
 const setAndroidNavigationBar = async (color: string, isDark: boolean) => {
@@ -150,7 +150,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
 
       console.log("🔍 Fetching theme from API...");
 
-      const response = await fetch(`${API_URL}/api/user/theme`, {
+      const response = await fetch(`${API_URL}/api/v0/user/theme`, {
         method: "GET",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -197,7 +197,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
       if (token) {
         console.log("🔄 Syncing theme with backend...");
 
-        const response = await fetch(`${API_URL}/api/user/theme`, {
+        const response = await fetch(`${API_URL}/api/v0/user/theme`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

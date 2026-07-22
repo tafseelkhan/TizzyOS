@@ -86,7 +86,7 @@ interface StepItemProps {
 }
 
 // API Configuration
-const API_BASE_URL = 'http://172.20.10.12:5000';
+const API_BASE_URL = 'http://172.20.245.121:5000';
 
 const RegistrationSuccessScreen: React.FC = () => {
   const navigation = useNavigation<NavigationType>();
@@ -123,7 +123,7 @@ const RegistrationSuccessScreen: React.FC = () => {
 
       console.log(`Fetching shipping data for ID: ${id}`);
 
-      const response = await fetch(`${API_BASE_URL}/api/shipping/${id}`, {
+      const response = await fetch(`${API_BASE_URL}/api/v0/shipping/${id}`, {
         method: 'GET',
         headers: {
           Accept: 'application/json',

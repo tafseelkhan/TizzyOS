@@ -1,18 +1,20 @@
+// services/cab/cabService.ts
 import { Platform } from 'react-native';
 import * as ImagePicker from 'react-native-image-picker';
 import {
   registerRideDriver,
   getRideDriver,
   checkDriverStatus,
+  getRideTypes,
+  getFilteredVehicleCategories,
   getRideVehicleCategories,
 } from '../../../api/features/private/driverCabRegisterPrivateSlice';
 import {
   RegisterDriverRequest,
   RegisterDriverResponse,
   RideDriver,
-  ApiError,
   VehicleCategory,
-  VehicleCategoryResponse,
+  RideType,
 } from '../../types/CabTypes';
 import {
   validateDriverForm,
@@ -111,10 +113,70 @@ export const pickMultipleImages = (
 };
 
 // ============================================
+// 🚗 RIDE TYPE SERVICE
+// ============================================
+
+export const fetchRideTypes = async (): Promise<{
+  success: boolean;
+  rideTypes?: RideType[];
+  message?: string;
+}> => {
+  try {
+    const response = await getRideTypes();
+    if (response.success && response.data) {
+      return {
+        success: true,
+        rideTypes: response.data,
+        message: response.message,
+      };
+    }
+    return {
+      success: false,
+      message: response.message || 'Failed to fetch ride types',
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : 'Network error',
+    };
+  }
+};
+
+// ============================================
 // 🚗 VEHICLE CATEGORY SERVICE
 // ============================================
 
-export const fetchVehicleCategories = async (): Promise<{
+export const fetchFilteredCategories = async (
+  rideTypeCode: string,
+): Promise<{
+  success: boolean;
+  rideType?: RideType;
+  categories?: VehicleCategory[];
+  message?: string;
+}> => {
+  try {
+    const response = await getFilteredVehicleCategories(rideTypeCode);
+    if (response.success && response.data) {
+      return {
+        success: true,
+        rideType: response.data.rideType,
+        categories: response.data.categories,
+        message: response.message,
+      };
+    }
+    return {
+      success: false,
+      message: response.message || 'Failed to fetch categories',
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : 'Network error',
+    };
+  }
+};
+
+export const fetchAllVehicleCategories = async (): Promise<{
   success: boolean;
   categories?: VehicleCategory[];
   message?: string;
@@ -151,17 +213,19 @@ export interface DriverRegistrationResult {
     id: string;
     driverCode: string;
     status: string;
+    rideType?: string;
+    vehicle?: {
+      name: string;
+      type: string;
+      class: string;
+    };
   };
   errors?: Array<{ field: string; message: string }>;
 }
 
-/**
- * Register driver with validation
- */
 export const registerDriver = async (
   formData: RegisterDriverRequest,
 ): Promise<DriverRegistrationResult> => {
-  // ✅ Validate form data
   const validation = validateDriverForm(formData);
   if (!validation.isValid) {
     return {
@@ -196,9 +260,6 @@ export const registerDriver = async (
   }
 };
 
-/**
- * Get current driver profile
- */
 export const getDriverProfile = async (): Promise<{
   success: boolean;
   data?: RideDriver;
@@ -225,9 +286,6 @@ export const getDriverProfile = async (): Promise<{
   }
 };
 
-/**
- * Get driver status
- */
 export const getDriverStatus = async (): Promise<{
   isRegistered: boolean;
   status?: string;
@@ -241,24 +299,15 @@ export const getDriverStatus = async (): Promise<{
   };
 };
 
-/**
- * Check if driver is approved
- */
 export const isDriverApproved = async (): Promise<boolean> => {
   const status = await getDriverStatus();
   return status.isRegistered && status.status === 'approved';
 };
 
-/**
- * Format driver code for display
- */
 export const formatDriverCode = (code: string): string => {
   return code || 'N/A';
 };
 
-/**
- * Get status color
- */
 export const getStatusColor = (status?: string): string => {
   const colors = {
     pending: '#F59E0B',
@@ -271,9 +320,6 @@ export const getStatusColor = (status?: string): string => {
     : '#6B7280';
 };
 
-/**
- * Get status label
- */
 export const getStatusLabel = (status?: string): string => {
   const labels = {
     pending: 'Pending Verification',

@@ -13,6 +13,8 @@ import {
   Platform,
   UIManager,
   StatusBar,
+  Switch,
+  Alert,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import LinearGradient from 'react-native-linear-gradient';
@@ -29,7 +31,7 @@ if (
 }
 
 const { width } = Dimensions.get('window');
-const BASE_URL = 'http://172.20.10.12:5000';
+const BASE_URL = 'http://172.20.245.121:5000';
 
 type RootStackParamList = {
   DriverRegistration: undefined;
@@ -39,7 +41,7 @@ type RootStackParamList = {
   DriverDocuments: undefined;
   DriverReviews: undefined;
   DriverProfile: undefined;
-  DriverStatus: undefined;
+  DriverAvailability: undefined;
   DriverVehicles: undefined;
   DriverSupport: undefined;
   [key: string]: undefined | object;
@@ -88,7 +90,7 @@ const getImageUrl = (image?: string): string => {
 const driverApi = {
   getDriverProfile: async (token: string): Promise<DriverProfile> => {
     try {
-      const response = await fetch(`${BASE_URL}/api/driver/profile`, {
+      const response = await fetch(`${BASE_URL}/api/v0/driver/profile`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -163,6 +165,12 @@ const driverApi = {
             iconName: 'wallet-outline',
             iconColor: '#F59E0B',
           },
+          {
+            segment: 'driver-availability',
+            title: 'Driver Availability',
+            iconName: 'radio-button-on-outline',
+            iconColor: '#8B5CF6',
+          },
         ],
       },
     ];
@@ -191,6 +199,8 @@ const SidebarWithDriver: React.FC = () => {
   const [menuData, setMenuData] = useState<MenuSection[]>([]);
   const [loading, setLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
+  const [isLocationOn, setIsLocationOn] = useState(true);
   const [profileData, setProfileData] = useState({
     _id: '',
     name: 'User',
@@ -222,7 +232,7 @@ const SidebarWithDriver: React.FC = () => {
         const token = await AsyncStorage.getItem('authToken');
         if (!token) return;
 
-        const response = await fetch(`${BASE_URL}/api/profile/me`, {
+        const response = await fetch(`${BASE_URL}/api/v0/profile/me`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -292,6 +302,9 @@ const SidebarWithDriver: React.FC = () => {
       case 'earnings':
         navigation.navigate('DriverEarnings');
         break;
+      case 'driver-availability':
+        navigation.navigate('DriverAvailability');
+        break;
       default:
         console.log('Navigate to:', segment);
     }
@@ -318,6 +331,28 @@ const SidebarWithDriver: React.FC = () => {
       default:
         return '#3B82F6';
     }
+  };
+
+  const handleOnlineToggle = (value: boolean) => {
+    setIsOnline(value);
+    Alert.alert(
+      value ? 'Online' : 'Offline',
+      value
+        ? 'You are now online and available for rides'
+        : 'You are now offline and will not receive ride requests',
+      [{ text: 'OK' }],
+    );
+  };
+
+  const handleLocationToggle = (value: boolean) => {
+    setIsLocationOn(value);
+    Alert.alert(
+      value ? 'Location On' : 'Location Off',
+      value
+        ? 'Your location is now visible to riders'
+        : 'Your location is now hidden from riders',
+      [{ text: 'OK' }],
+    );
   };
 
   if (loading) {
@@ -453,7 +488,7 @@ const SidebarWithDriver: React.FC = () => {
             </View>
           </View>
 
-          {driverProfile && (
+          {/* {driverProfile && (
             <View style={styles.statsContainer}>
               <View style={[styles.statCard, { backgroundColor: colors.card }]}>
                 <View
@@ -513,7 +548,7 @@ const SidebarWithDriver: React.FC = () => {
                 </Text>
               </View>
             </View>
-          )}
+          )} */}
 
           {menuData.map(section => (
             <View key={section.segment} style={styles.section}>
@@ -571,56 +606,117 @@ const SidebarWithDriver: React.FC = () => {
                     },
                   ]}
                 >
-                  {section.children.map(item => (
-                    <TouchableOpacity
-                      key={item.segment}
-                      style={[
-                        styles.subMenuItem,
-                        activeItem === item.segment && styles.subMenuItemActive,
-                      ]}
-                      onPress={() => handleItemPress(item.segment)}
-                      activeOpacity={0.6}
-                    >
-                      <View style={styles.subMenuItemLeft}>
+                  {section.children.map(item => {
+                    if (item.segment === 'driver-availability') {
+                      return (
                         <View
-                          style={[
-                            styles.itemIconContainer,
-                            {
-                              backgroundColor: isDark
-                                ? 'rgba(255,255,255,0.03)'
-                                : '#F3F4F6',
-                            },
-                          ]}
+                          key={item.segment}
+                          style={styles.driverAvailabilityContainer}
                         >
+                          <TouchableOpacity
+                            style={[
+                              styles.subMenuItem,
+                              activeItem === item.segment &&
+                                styles.subMenuItemActive,
+                            ]}
+                            onPress={() => handleItemPress(item.segment)}
+                            activeOpacity={0.6}
+                          >
+                            <View style={styles.subMenuItemLeft}>
+                              <View
+                                style={[
+                                  styles.itemIconContainer,
+                                  {
+                                    backgroundColor: isDark
+                                      ? 'rgba(255,255,255,0.03)'
+                                      : '#F3F4F6',
+                                  },
+                                ]}
+                              >
+                                <Icon
+                                  name={item.iconName}
+                                  size={20}
+                                  color={item.iconColor}
+                                />
+                              </View>
+                              <Text
+                                style={[
+                                  styles.subMenuText,
+                                  {
+                                    color:
+                                      activeItem === item.segment
+                                        ? colors.accent
+                                        : colors.textPrimary,
+                                  },
+                                ]}
+                              >
+                                {item.title}
+                              </Text>
+                            </View>
+                            <View style={styles.rightContent}>
+                              <Icon
+                                name="chevron-forward"
+                                size={14}
+                                color={colors.textMuted}
+                              />
+                            </View>
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    }
+
+                    return (
+                      <TouchableOpacity
+                        key={item.segment}
+                        style={[
+                          styles.subMenuItem,
+                          activeItem === item.segment &&
+                            styles.subMenuItemActive,
+                        ]}
+                        onPress={() => handleItemPress(item.segment)}
+                        activeOpacity={0.6}
+                      >
+                        <View style={styles.subMenuItemLeft}>
+                          <View
+                            style={[
+                              styles.itemIconContainer,
+                              {
+                                backgroundColor: isDark
+                                  ? 'rgba(255,255,255,0.03)'
+                                  : '#F3F4F6',
+                              },
+                            ]}
+                          >
+                            <Icon
+                              name={item.iconName}
+                              size={20}
+                              color={item.iconColor}
+                            />
+                          </View>
+                          <Text
+                            style={[
+                              styles.subMenuText,
+                              {
+                                color:
+                                  activeItem === item.segment
+                                    ? colors.accent
+                                    : colors.textPrimary,
+                              },
+                            ]}
+                          >
+                            {item.title}
+                          </Text>
+                        </View>
+                        <View style={styles.rightContent}>
                           <Icon
-                            name={item.iconName}
-                            size={20}
-                            color={item.iconColor}
+                            name="chevron-forward"
+                            size={14}
+                            color={colors.textMuted}
                           />
                         </View>
-                        <Text
-                          style={[
-                            styles.subMenuText,
-                            {
-                              color:
-                                activeItem === item.segment
-                                  ? colors.accent
-                                  : colors.textPrimary,
-                            },
-                          ]}
-                        >
-                          {item.title}
-                        </Text>
-                      </View>
-                      <View style={styles.rightContent}>
-                        <Icon
-                          name="chevron-forward"
-                          size={14}
-                          color={colors.textMuted}
-                        />
-                      </View>
-                    </TouchableOpacity>
-                  ))}
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
               )}
             </View>
@@ -822,6 +918,9 @@ const styles = StyleSheet.create({
   },
   bottomSpacer: {
     height: 90,
+  },
+  driverAvailabilityContainer: {
+    marginBottom: 4,
   },
 });
 

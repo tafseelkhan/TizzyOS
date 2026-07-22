@@ -250,7 +250,7 @@ const BottomNavigation = ({
       }
 
       const response = await fetch(
-        'http://172.20.10.12:5000/api/auth/linked-accounts',
+        'http://172.20.245.121:5000/api/v0/auth/linked-accounts',
         {
           method: 'GET',
           headers: {
@@ -332,7 +332,7 @@ const BottomNavigation = ({
       }
 
       const response = await fetch(
-        'http://172.20.10.12:5000/api/auth/switch-account',
+        'http://172.20.245.121:5000/api/v0/auth/switch-account',
         {
           method: 'POST',
           headers: {
@@ -412,7 +412,7 @@ const BottomNavigation = ({
       }
 
       const response = await fetch(
-        'http://172.20.10.12:5000/api/auth/double-tap-switch',
+        'http://172.20.245.121:5000/api/v0/auth/double-tap-switch',
         {
           method: 'POST',
           headers: {
@@ -515,7 +515,7 @@ const BottomNavigation = ({
       }
 
       const response = await fetch(
-        'http://172.20.10.12:5000/api/auth/add-linked-account',
+        'http://172.20.245.121:5000/api/v0/auth/add-linked-account',
         {
           method: 'POST',
           headers: {

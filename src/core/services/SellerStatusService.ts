@@ -1,7 +1,7 @@
-// utils/api/seller/status/seller.ts
+// utils/api/v0/seller/status/seller.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_BASE_URL = 'http://172.20.10.12:5000';
+const API_BASE_URL = 'http://172.20.245.121:5000';
 
 export interface SellerStatusResponse {
   success: boolean;
@@ -54,7 +54,7 @@ export const getMySellerApplication =
       }
 
       const response = await fetchWithTimeout(
-        `${API_BASE_URL}/api/seller/status`,
+        `${API_BASE_URL}/api/v0/seller/status`,
         {
           method: 'GET',
           headers: {
@@ -120,7 +120,7 @@ export const checkSellerFormStatus = async () => {
 
     // 🌐 API call using native fetch
     const response = await fetchWithTimeout(
-      `${API_BASE_URL}/api/seller/check-form-status`,
+      `${API_BASE_URL}/api/v0/seller/check-form-status`,
       {
         method: 'GET',
         headers: {

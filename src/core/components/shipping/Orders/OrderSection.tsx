@@ -47,11 +47,11 @@ const { width, height } = Dimensions.get('window');
 // CONSTANTS
 // ============================================
 
-const API_BASE_URL = 'http://172.20.10.12:5000';
-const SHIPPING_API_URL = `${API_BASE_URL}/api/delivery/tracking/shipping`;
-const DELIVERY_TRACKING_API_URL = `${API_BASE_URL}/api/delivery/tracking/shipping`;
-const TRACKING_API_URL = `${API_BASE_URL}/api/tracking`;
-const DELIVERY_API_URL = `${API_BASE_URL}/api/buyer/order`;
+const API_BASE_URL = 'http://172.20.245.121:5000';
+const SHIPPING_API_URL = `${API_BASE_URL}/api/v0/delivery/tracking/shipping`;
+const DELIVERY_TRACKING_API_URL = `${API_BASE_URL}/api/v0/delivery/tracking/shipping`;
+const TRACKING_API_URL = `${API_BASE_URL}/api/v0/tracking`;
+const DELIVERY_API_URL = `${API_BASE_URL}/api/v0/buyer/order`;
 
 // ============================================
 // HELPER: Get Auth Token & User ID
@@ -1862,7 +1862,7 @@ const PendingOrdersScreen = () => {
       const token = await getAuthToken();
       if (!token) return null;
       const response = await axios.get(
-        `${API_BASE_URL}/api/delivery/tracking/${orderId}/qr`,
+        `${API_BASE_URL}/api/v0/delivery/tracking/${orderId}/qr`,
         {
           headers: { Authorization: `Bearer ${token}` },
           timeout: 10000,

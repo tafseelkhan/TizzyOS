@@ -30,7 +30,7 @@ if (
 }
 
 const { width } = Dimensions.get('window');
-const BASE_URL = 'http://172.20.10.12:5000';
+const BASE_URL = 'http://172.20.245.121:5000';
 
 // Define navigation param list
 type RootStackParamList = {
@@ -129,7 +129,7 @@ const getImageUrl = (image?: string): string => {
 const shippingApi = {
   getShippingProfile: async (token: string): Promise<ShippingProfile> => {
     try {
-      const response = await fetch(`${BASE_URL}/api/shipping`, {
+      const response = await fetch(`${BASE_URL}/api/v0/shipping`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -207,7 +207,7 @@ const shippingApi = {
 const employeeApi = {
   getEmployeeProfile: async (token: string): Promise<EmployeeProfile> => {
     try {
-      const response = await fetch(`${BASE_URL}/api/employee`, {
+      const response = await fetch(`${BASE_URL}/api/v0/employee`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -311,7 +311,7 @@ const SidebarWithShipping: React.FC = () => {
         const token = await AsyncStorage.getItem('authToken');
         if (!token) return;
 
-        const response = await fetch(`${BASE_URL}/api/profile/me`, {
+        const response = await fetch(`${BASE_URL}/api/v0/profile/me`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
