@@ -19,9 +19,22 @@ import Icon from 'react-native-vector-icons/Ionicons';
 import LinearGradient from 'react-native-linear-gradient';
 import { driverStatusApi } from '../../../../api/features/private/driverLocationOnlinePrivateSlice';
 import { checkDriverStatus } from '../../../../api/features/private/driverCabRegisterPrivateSlice';
-import SocketService from '../../../utils/socket/socketUtils';
+
+// ============================================
+// 🔌 TWO DIFFERENT SOCKET SERVICES
+// ============================================
+import SocketService from '../../../utils/socket/socketUtils'; // Driver Status Socket
+import { socketService } from '../../../utils/socket/rideRequestUtils'; // Ride Request Socket
+
 import LocationService from '../../../utils/cab/driverAvailability';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+
+// ============================================
+// 🚗 RIDE REQUEST IMPORTS
+// ============================================
+import RideRequestPopup from '../../../components/cab/rideRequest/RideRequestPopup';
+import { useRideRequest } from '../../../hooks/cab/useRideRequest';
+import { rideRequestHandler } from '../../../utils/socket/rideRequestHandler';
 
 const { width } = Dimensions.get('window');
 
@@ -49,6 +62,17 @@ const COLORS = {
 
 const DriverStatusScreen: React.FC = () => {
   const navigation = useNavigation();
+
+  // ============================================
+  // 🚗 RIDE REQUEST HOOK (NEW)
+  // ============================================
+  const {
+    currentRequest,
+    isRequestActive,
+    acceptRide,
+    rejectRide,
+    dismissRequest,
+  } = useRideRequest();
 
   // State
   const [userId, setUserId] = useState<string | null>(null);
@@ -87,6 +111,122 @@ const DriverStatusScreen: React.FC = () => {
   );
   const isMounted = useRef<boolean>(true);
 
+  // ============================================
+  // ✅ CONNECT BOTH SOCKETS
+  // ============================================
+  const initBothSockets = async () => {
+    console.log('[Screen] Initializing both sockets...');
+
+    try {
+      // 1️⃣ Connect Driver Status Socket (SocketUtils)
+      const driverSocket = await SocketService.connect();
+      console.log('[Screen] ✅ Driver Status Socket connected');
+
+      // 2️⃣ Connect Ride Request Socket (SocketService)
+      await socketService.connect();
+      console.log('[Screen] ✅ Ride Request Socket connected');
+
+      // Setup listeners for both
+      setupDriverSocketListeners(driverSocket);
+      setupRideSocketListeners();
+
+      // Check connection status after 1 second
+      setTimeout(() => {
+        if (!isMounted.current) return;
+
+        const connected = SocketService.isSocketConnected();
+        const id = SocketService.getSocketId();
+        setSocketConnected(connected);
+        setSocketId(id);
+        console.log(
+          '[Screen] Driver Status Socket - Connected:',
+          connected,
+          'ID:',
+          id,
+        );
+
+        const rideConnected = socketService.isSocketConnected();
+        console.log('[Screen] Ride Request Socket - Connected:', rideConnected);
+      }, 1000);
+    } catch (error) {
+      console.error('[Screen] Failed to init sockets:', error);
+      Alert.alert(
+        'Socket Error',
+        'Failed to connect to server. Please try again.',
+      );
+    }
+  };
+
+  // ============================================
+  // 🎯 DRIVER STATUS SOCKET LISTENERS (SocketUtils)
+  // ============================================
+  const setupDriverSocketListeners = (socket: any) => {
+    socket.on('connect', () => {
+      console.log('[Screen] Driver Status Socket CONNECT event');
+      if (!isMounted.current) return;
+      setSocketConnected(true);
+      const id = socket.id;
+      setSocketId(id);
+
+      const extractedUserId = SocketService.getUserId();
+      if (extractedUserId) {
+        setUserId(extractedUserId);
+        socket.emit('driver:register', { userId: extractedUserId });
+      }
+    });
+
+    socket.on('disconnect', () => {
+      console.log('[Screen] Driver Status Socket DISCONNECT event');
+      if (!isMounted.current) return;
+      setSocketConnected(false);
+      setSocketId(null);
+      setSocketRegistered(false);
+    });
+
+    socket.on('driver:registered', (data: any) => {
+      console.log('[Screen] DRIVER:REGISTERED event:', data);
+      if (!isMounted.current) return;
+      setSocketRegistered(true);
+      if (data.data?.socketId) {
+        setSocketId(data.data.socketId);
+      }
+      if (data.data?.userId) {
+        setUserId(data.data.userId);
+      }
+    });
+
+    socket.on('driver:status-changed', (data: any) => {
+      console.log('[Screen] DRIVER:STATUS-CHANGED:', data);
+      if (!isMounted.current) return;
+      const currentUserId = SocketService.getUserId();
+      if (data.userId === currentUserId) {
+        setIsOnline(data.isOnline);
+        setIsAvailable(data.isAvailable);
+        if (data.lastSeen) {
+          setLastSeen(data.lastSeen);
+        }
+      }
+    });
+
+    socket.on('driver:error', (data: any) => {
+      console.error('[Screen] DRIVER:ERROR:', data);
+      Alert.alert('Socket Error', data.message || 'Something went wrong');
+    });
+
+    socket.on('welcome', (data: any) => {
+      console.log('[Screen] Welcome from server:', data);
+    });
+  };
+
+  // ============================================
+  // 🎯 RIDE REQUEST SOCKET LISTENERS (SocketService)
+  // ============================================
+  const setupRideSocketListeners = () => {
+    // Ride request handler already handles these
+    // But we can add additional logging
+    console.log('[Screen] Ride Request Socket listeners ready');
+  };
+
   // ✅ Initialize on Mount
   useEffect(() => {
     isMounted.current = true;
@@ -105,31 +245,44 @@ const DriverStatusScreen: React.FC = () => {
       }),
     ]).start();
 
-    initSocket();
+    // ============================================
+    // 🔌 CONNECT BOTH SOCKETS
+    // ============================================
+    initBothSockets();
+
     fetchDriverStatus();
     checkDriverRegistration();
     startPulseAnimation();
     startGlowAnimation();
     checkLocationPermissions();
-
-    // ✅ Check location state on mount
     checkLocationStatus();
+
+    // ============================================
+    // 🚗 SETUP RIDE REQUEST HANDLER
+    // ============================================
+    rideRequestHandler.setup();
 
     return () => {
       isMounted.current = false;
-      const socket = SocketService.getSocket();
-      if (socket) {
-        socket.off('driver:status-changed');
-        socket.off('connect');
-        socket.off('disconnect');
-        socket.off('driver:registered');
-        socket.off('driver:error');
+
+      // Cleanup Driver Status Socket
+      const driverSocket = SocketService.getSocket();
+      if (driverSocket) {
+        driverSocket.off('driver:status-changed');
+        driverSocket.off('connect');
+        driverSocket.off('disconnect');
+        driverSocket.off('driver:registered');
+        driverSocket.off('driver:error');
       }
+
+      // Cleanup Ride Request Socket
+      socketService.cleanup();
+
       if (locationIntervalRef.current) {
         clearInterval(locationIntervalRef.current);
       }
-      // ✅ FIX: DO NOT STOP TRACKING - Sirf listeners cleanup karo
-      // LocationService.stopTracking(); // ❌ REMOVED - Tracking continue rahega
+
+      rideRequestHandler.cleanup();
     };
   }, []);
 
@@ -140,8 +293,6 @@ const DriverStatusScreen: React.FC = () => {
       checkLocationStatus();
       return () => {
         console.log('[Screen] Unfocused - Location tracking continues...');
-        // ✅ Screen se bahar jate time kuch mat karo
-        // Location tracking continue rahegi
       };
     }, []),
   );
@@ -194,103 +345,6 @@ const DriverStatusScreen: React.FC = () => {
         'Could not navigate to registration screen. Please try again.',
       );
     }
-  };
-
-  // Socket Initialization
-  const initSocket = async () => {
-    console.log('[Screen] Initializing socket...');
-
-    try {
-      const socket = await SocketService.connect();
-      console.log('[Screen] Socket instance created');
-
-      const extractedUserId = SocketService.getUserId();
-      if (extractedUserId && isMounted.current) {
-        setUserId(extractedUserId);
-        console.log('[Screen] UserId from token:', extractedUserId);
-      }
-
-      setupSocketListeners(socket);
-
-      setTimeout(() => {
-        if (!isMounted.current) return;
-        const connected = SocketService.isSocketConnected();
-        const id = SocketService.getSocketId();
-        setSocketConnected(connected);
-        setSocketId(id);
-        console.log(
-          '[Screen] Socket status - Connected:',
-          connected,
-          'ID:',
-          id,
-        );
-      }, 1000);
-    } catch (error) {
-      console.error('[Screen] Failed to init socket:', error);
-      Alert.alert(
-        'Socket Error',
-        'Failed to connect to server. Please try again.',
-      );
-    }
-  };
-
-  // Socket Listeners
-  const setupSocketListeners = (socket: any) => {
-    socket.on('connect', () => {
-      console.log('[Screen] Socket CONNECT event');
-      if (!isMounted.current) return;
-      setSocketConnected(true);
-      const id = socket.id;
-      setSocketId(id);
-
-      const extractedUserId = SocketService.getUserId();
-      if (extractedUserId) {
-        setUserId(extractedUserId);
-        socket.emit('driver:register', { userId: extractedUserId });
-      }
-    });
-
-    socket.on('disconnect', () => {
-      console.log('[Screen] Socket DISCONNECT event');
-      if (!isMounted.current) return;
-      setSocketConnected(false);
-      setSocketId(null);
-      setSocketRegistered(false);
-    });
-
-    socket.on('driver:registered', (data: any) => {
-      console.log('[Screen] DRIVER:REGISTERED event:', data);
-      if (!isMounted.current) return;
-      setSocketRegistered(true);
-      if (data.data?.socketId) {
-        setSocketId(data.data.socketId);
-      }
-      if (data.data?.userId) {
-        setUserId(data.data.userId);
-      }
-    });
-
-    socket.on('driver:status-changed', (data: any) => {
-      console.log('[Screen] DRIVER:STATUS-CHANGED:', data);
-      if (!isMounted.current) return;
-      const currentUserId = SocketService.getUserId();
-      if (data.userId === currentUserId) {
-        setIsOnline(data.isOnline);
-        setIsAvailable(data.isAvailable);
-        if (data.lastSeen) {
-          setLastSeen(data.lastSeen);
-        }
-      }
-    });
-
-    socket.on('driver:error', (data: any) => {
-      console.error('[Screen] DRIVER:ERROR:', data);
-      Alert.alert('Socket Error', data.message || 'Something went wrong');
-    });
-
-    socket.on('welcome', (data: any) => {
-      console.log('[Screen] Welcome from server:', data);
-    });
   };
 
   // Animation Functions
@@ -449,7 +503,6 @@ const DriverStatusScreen: React.FC = () => {
         setLocationPermissionGranted(true);
       }
 
-      // ✅ Start tracking - THIS WILL KEEP RUNNING IN BACKGROUND
       const started = await LocationService.startTracking();
 
       if (isMounted.current) {
@@ -498,12 +551,19 @@ const DriverStatusScreen: React.FC = () => {
     setRefreshing(true);
     await fetchDriverStatus();
     await checkDriverRegistration();
+
+    // Check both sockets
     const connected = SocketService.isSocketConnected();
     const id = SocketService.getSocketId();
     const uid = SocketService.getUserId();
     setSocketConnected(connected);
     setSocketId(id);
     if (uid) setUserId(uid);
+
+    // Check ride socket
+    const rideConnected = socketService.isSocketConnected();
+    console.log('[Screen] Ride Socket connected:', rideConnected);
+
     setRefreshing(false);
   }, []);
 
@@ -943,6 +1003,20 @@ const DriverStatusScreen: React.FC = () => {
           </View>
         </Animated.View>
       </ScrollView>
+
+      {/* ============================================
+          🚗 RIDE REQUEST POPUP - GLOBAL OVERLAY
+          Shows on ANY screen when ride request arrives
+          ============================================ */}
+      {currentRequest && isRequestActive && (
+        <RideRequestPopup
+          visible={true}
+          requestData={currentRequest}
+          onAccept={acceptRide}
+          onReject={rejectRide}
+          onTimeout={dismissRequest}
+        />
+      )}
     </View>
   );
 };

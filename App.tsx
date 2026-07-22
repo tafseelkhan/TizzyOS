@@ -15,9 +15,65 @@ import { ZeptPayProvider } from '@flixora/zeptpay-react-native';
 // import { AdsSDK, initializeAds } from './src/api/ads';
 import { RootStackParamList } from './src/navigations';
 
+// ============================================
+// 🚗 IMPORT DRIVER SERVICES
+// ============================================
+import { notificationService } from './src/core/services/notification/NotificationService';
+import { socketService } from './src/core/utils/socket/rideRequestUtils';
+import { rideRequestHandler } from './src/core/utils/socket/rideRequestHandler';
+import { ringtoneService } from './src/core/services/audio/RingtoneService';
+
 function App(): React.ReactElement {
   const navigationRef =
     useRef<NavigationContainerRef<RootStackParamList>>(null);
+
+  // ============================================
+  // ✅ INITIALIZE DRIVER SERVICES
+  // ============================================
+  useEffect(() => {
+    const initializeServices = async () => {
+      try {
+        console.log('🚀 Initializing driver services...');
+
+        // 1. Setup Notification Service (includes ringtone)
+        await notificationService.setup();
+        console.log('✅ Notification service ready');
+
+        // 2. Register FCM Token
+        const fcmToken = await notificationService.registerFCMToken();
+        if (fcmToken) {
+          console.log('📱 FCM Token:', fcmToken);
+          // Send token to backend if needed
+          // await api.registerFCMToken(fcmToken);
+        }
+
+        // 3. Setup Ringtone Background Handler
+        const {
+          trackPlayerBackgroundHandler,
+        } = require('./src/services/audio/RingtoneService');
+        await trackPlayerBackgroundHandler();
+        console.log('✅ TrackPlayer background handler ready');
+
+        // 4. Setup Ride Request Handler (Socket will connect when driver goes online)
+        rideRequestHandler.setup();
+        console.log('✅ Ride request handler ready');
+
+        console.log('✅ All driver services initialized');
+      } catch (error) {
+        console.error('❌ Service initialization failed:', error);
+      }
+    };
+
+    initializeServices();
+
+    // Cleanup on app unmount
+    return () => {
+      socketService.cleanup();
+      ringtoneService.cleanup();
+      notificationService.cleanup();
+      rideRequestHandler.cleanup();
+    };
+  }, []);
 
   // useEffect(() => {
   //   // Initialize Ads SDK

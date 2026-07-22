@@ -1,3 +1,5 @@
+// src/navigations/index.tsx
+
 import React, { useEffect, useRef } from 'react';
 import {
   NavigationContainer,
@@ -61,6 +63,11 @@ import DriverRegistrationScreen from '../screens/cab/driver/driverRegistration';
 import DriverStatusScreen from '../screens/cab/driver/driverStatus';
 import DriverAvailabilityScreen from '../screens/cab/driverAvailableStatus/driverAvailability';
 
+// ============================================
+// 🚗 NEW DRIVER RIDE SCREENS
+// ============================================
+import ActiveTripScreen from '../screens/cab/rideRequest/ActiveTripScreen';
+
 // ✅ Complete RootStackParamList with all screens
 export type RootStackParamList = {
   // Auth & Splash
@@ -118,6 +125,13 @@ export type RootStackParamList = {
   DriverRegistration: undefined;
   DriverStatus: undefined;
   DriverAvailability: undefined;
+
+  // ============================================
+  // 🚗 NEW DRIVER RIDE SCREENS
+  // ============================================
+  ActiveTrip: {
+    bookingId: string;
+  };
 };
 
 const Stack = createStackNavigator<RootStackParamList>();
@@ -213,6 +227,18 @@ export default function AppNavigator(): React.ReactElement {
         <Stack.Screen
           name="DriverAvailability"
           component={DriverAvailabilityScreen}
+        />
+
+        {/* ============================================
+            🚗 NEW DRIVER RIDE SCREENS
+            ============================================ */}
+        <Stack.Screen
+          name="ActiveTrip"
+          component={ActiveTripScreen}
+          options={{
+            presentation: 'modal',
+            gestureEnabled: true,
+          }}
         />
       </Stack.Navigator>
     </NavigationContainer>
