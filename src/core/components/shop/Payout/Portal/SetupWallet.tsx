@@ -53,11 +53,11 @@ export default function MerchantOnboardingScreen() {
     try {
       setLoadingStatus(true);
       console.log(
-        '🌐 Calling status API endpoint: http://172.20.245.121:5000/api/v0/payout-portal/wallet-setup/sellers/status',
+        '🌐 Calling status API endpoint: http://10.48.121.121:5000/api/v0/payout-portal/wallet-setup/sellers/status',
       );
 
       const response = await fetch(
-        'http://172.20.245.121:5000/api/v0/payout-portal/wallet-setup/sellers/status',
+        'http://10.48.121.121:5000/api/v0/payout-portal/wallet-setup/sellers/status',
         {
           headers: { Authorization: `Bearer ${token}` },
         },
@@ -324,7 +324,7 @@ export default function MerchantOnboardingScreen() {
       );
 
       const response = await fetch(
-        'http://172.20.245.121:5000/api/v0/payout-portal/wallet-setup/sellers',
+        'http://10.48.121.121:5000/api/v0/payout-portal/wallet-setup/sellers',
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

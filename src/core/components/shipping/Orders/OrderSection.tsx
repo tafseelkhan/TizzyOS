@@ -47,7 +47,7 @@ const { width, height } = Dimensions.get('window');
 // CONSTANTS
 // ============================================
 
-const API_BASE_URL = 'http://172.20.245.121:5000';
+const API_BASE_URL = 'http://10.48.121.121:5000';
 const SHIPPING_API_URL = `${API_BASE_URL}/api/v0/delivery/tracking/shipping`;
 const DELIVERY_TRACKING_API_URL = `${API_BASE_URL}/api/v0/delivery/tracking/shipping`;
 const TRACKING_API_URL = `${API_BASE_URL}/api/v0/tracking`;

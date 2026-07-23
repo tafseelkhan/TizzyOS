@@ -73,7 +73,7 @@ export const verifyToken = async (
       return { success: false };
     }
 
-    const res = await axios.get('http://172.20.245.121:5000/api/v0/auth/check', {
+    const res = await axios.get('http://10.48.121.121:5000/api/v0/auth/check', {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -158,7 +158,7 @@ export const signup = async ({ identifier, role }: SignupPayload) => {
   const formattedIdentifier = identifier.toLowerCase().trim();
 
   try {
-    const response = await fetch('http://172.20.245.121:5000/api/v0/auth/signup', {
+    const response = await fetch('http://10.48.121.121:5000/api/v0/auth/signup', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -203,7 +203,7 @@ export const verifySignup = async ({
   const formattedIdentifier = identifier.toLowerCase().trim();
 
   try {
-    const response = await fetch('http://172.20.245.121:5000/api/v0/auth/verify-signup', {
+    const response = await fetch('http://10.48.121.121:5000/api/v0/auth/verify-signup', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -253,7 +253,7 @@ export const login = async ({ identifier }: LoginPayload) => {
   const formattedIdentifier = identifier.toLowerCase().trim();
 
   return await fetchHandler(
-    'http://172.20.245.121:5000/api/v0/auth/send-login-otp',
+    'http://10.48.121.121:5000/api/v0/auth/send-login-otp',
     {
       method: 'POST',
       body: JSON.stringify({ identifier: formattedIdentifier }),
@@ -269,7 +269,7 @@ export const verifyLogin = async ({ identifier, otp }: VerifyLoginPayload) => {
   const formattedIdentifier = identifier.toLowerCase().trim();
 
   const data = await fetchHandler(
-    'http://172.20.245.121:5000/api/v0/auth/verify-login',
+    'http://10.48.121.121:5000/api/v0/auth/verify-login',
     {
       method: 'POST',
       body: JSON.stringify({
@@ -294,7 +294,7 @@ export const verifyLogin = async ({ identifier, otp }: VerifyLoginPayload) => {
 export const resendOtp = async ({ identifier }: ResendOtpPayload) => {
   const formattedIdentifier = identifier.toLowerCase().trim();
 
-  return await fetchHandler('http://172.20.245.121:5000/api/v0/auth/resend-otp', {
+  return await fetchHandler('http://10.48.121.121:5000/api/v0/auth/resend-otp', {
     method: 'POST',
     body: JSON.stringify({ identifier: formattedIdentifier }),
   });
@@ -329,7 +329,7 @@ export const switchAccount = async ({ targetUserId }: SwitchAccountPayload) => {
   }
 
   const data = await fetchHandler(
-    'http://172.20.245.121:5000/api/v0/auth/switch-account',
+    'http://10.48.121.121:5000/api/v0/auth/switch-account',
     {
       method: 'POST',
       headers: {
@@ -366,7 +366,7 @@ export const addLinkedAccount = async (payload: AddLinkedAccountPayload) => {
   }
 
   const data = await fetchHandler(
-    'http://172.20.245.121:5000/api/v0/auth/add-linked-account',
+    'http://10.48.121.121:5000/api/v0/auth/add-linked-account',
     {
       method: 'POST',
       headers: {
@@ -387,7 +387,7 @@ export const fetchLinkedAccounts = async () => {
   }
 
   const data = await fetchHandler(
-    'http://172.20.245.121:5000/api/v0/auth/linked-accounts',
+    'http://10.48.121.121:5000/api/v0/auth/linked-accounts',
     {
       method: 'GET',
       headers: {
@@ -407,7 +407,7 @@ export const removeLinkedAccount = async (targetUserId: string) => {
   }
 
   const data = await fetchHandler(
-    'http://172.20.245.121:5000/api/v0/auth/remove-linked-account',
+    'http://10.48.121.121:5000/api/v0/auth/remove-linked-account',
     {
       method: 'DELETE',
       headers: {
@@ -428,7 +428,7 @@ export const checkAuthStatus = async () => {
     }
 
     const response = await axios.get(
-      'http://172.20.245.121:5000/api/v0/auth/check-auth',
+      'http://10.48.121.121:5000/api/v0/auth/check-auth',
       {
         headers: { Authorization: `Bearer ${token}` },
       },

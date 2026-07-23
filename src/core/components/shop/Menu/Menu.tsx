@@ -29,7 +29,7 @@ if (
 }
 
 const { width } = Dimensions.get('window');
-const BASE_URL = 'http://172.20.245.121:5000';
+const BASE_URL = 'http://10.48.121.121:5000';
 
 // Define navigation param list
 type RootStackParamList = {

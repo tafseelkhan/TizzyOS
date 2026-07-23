@@ -1,7 +1,7 @@
 // utils/api/v0/seller/status/seller.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_BASE_URL = 'http://172.20.245.121:5000';
+const API_BASE_URL = 'http://10.48.121.121:5000';
 
 export interface SellerStatusResponse {
   success: boolean;

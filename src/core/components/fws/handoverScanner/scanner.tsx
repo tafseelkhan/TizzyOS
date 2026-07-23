@@ -28,7 +28,7 @@ import type { CameraApi } from 'react-native-camera-kit';
 type QRScannerNavigationProp = StackNavigationProp<any>;
 
 // ✅ API Base URL
-const API_BASE_URL = 'http://172.20.245.121:5000';
+const API_BASE_URL = 'http://10.48.121.121:5000';
 
 // ✅ Auth Helper
 const getAuthToken = async (): Promise<string | null> => {

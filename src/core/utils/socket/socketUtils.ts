@@ -87,7 +87,7 @@ class SocketService {
       }
 
       // ✅ Base URL
-      let baseUrl = API_BASE_URL || 'http://172.20.245.121:5000';
+      let baseUrl = API_BASE_URL || 'http://10.48.121.121:5000';
       if (baseUrl.endsWith('/')) {
         baseUrl = baseUrl.slice(0, -1);
       }

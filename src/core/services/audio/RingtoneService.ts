@@ -1,11 +1,6 @@
 // src/services/audio/RingtoneService.ts
 
-import TrackPlayer, {
-  Capability,
-  AppKilledPlaybackBehavior,
-  RepeatMode,
-  State,
-} from 'react-native-track-player';
+import Sound from 'react-native-sound';
 import { Vibration, Platform } from 'react-native';
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 import { CONFIG } from '../../../api/constants/rideRequestConfig';
@@ -17,9 +12,9 @@ const hapticOptions = {
 
 class RingtoneService {
   private static instance: RingtoneService;
+  private sound: Sound | null = null;
   private isPlaying = false;
-  // In React Native timers return numbers, avoid NodeJS namespace issues
-  private vibrationInterval: number | null = null;
+  private vibrationInterval: ReturnType<typeof setInterval> | null = null;
   private isSetup = false;
 
   private constructor() {}
@@ -32,61 +27,23 @@ class RingtoneService {
   }
 
   /**
-   * Setup TrackPlayer
+   * Setup Sound
    */
   async setup(): Promise<void> {
     if (this.isSetup) return;
 
     try {
-      await TrackPlayer.setupPlayer({
-        waitForBuffer: true,
-        autoHandleInterruptions: true,
-      });
-
-      await TrackPlayer.updateOptions({
-        android: {
-          appKilledPlaybackBehavior:
-            AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification,
-        },
-        capabilities: [Capability.Play, Capability.Pause, Capability.Stop],
-        compactCapabilities: [
-          Capability.Play,
-          Capability.Pause,
-          Capability.Stop,
-        ],
-      });
-
+      // Enable playback in silent mode
+      Sound.setCategory('Playback', true);
       this.isSetup = true;
       console.log('🔊 Ringtone service setup complete');
     } catch (error) {
-      console.error('Failed to setup TrackPlayer:', error);
-      // Fallback - try to recover
-      if (error instanceof Error && error.message.includes('already setup')) {
-        this.isSetup = true;
-      }
+      console.error('Failed to setup Sound:', error);
     }
   }
 
   /**
-   * Add ride request sound to queue
-   */
-  private async addRideRequestSound(): Promise<void> {
-    try {
-      await TrackPlayer.reset();
-      await TrackPlayer.add({
-        id: 'ride_request',
-        url: require('../../../assets/sounds/driverRequestAudio1.mp3'),
-        title: 'New Ride Request',
-        artist: 'TizzyGo',
-      });
-    } catch (error) {
-      console.error('Failed to add ride request sound:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Play ride request ringtone in loop
+   * Load and play ride request ringtone in loop
    */
   async playRideRequestRingtone(): Promise<void> {
     if (this.isPlaying) {
@@ -96,22 +53,50 @@ class RingtoneService {
 
     try {
       await this.setup();
-      await this.addRideRequestSound();
-      await TrackPlayer.setRepeatMode(RepeatMode.Queue);
-      await TrackPlayer.setVolume(CONFIG.RINGTONE_VOLUME);
-      await TrackPlayer.play();
 
-      this.isPlaying = true;
-      console.log('🔊 Ringtone started');
+      // Load sound file
+      this.sound = new Sound(
+        'driverRequestAudio1.mp3',
+        Sound.MAIN_BUNDLE,
+        error => {
+          if (error) {
+            console.error('❌ Failed to load sound:', error);
+            this.isPlaying = false;
+            return;
+          }
 
-      // Start vibration
-      this.startVibration();
+          // Sound loaded successfully
+          console.log('✅ Sound loaded successfully');
 
-      // Haptic feedback
-      ReactNativeHapticFeedback.trigger('notificationWarning', hapticOptions);
+          // Set to loop infinitely (-1 means infinite loop)
+          this.sound?.setNumberOfLoops(-1);
+
+          // Set volume
+          this.sound?.setVolume(CONFIG.RINGTONE_VOLUME);
+
+          // Play the sound
+          this.sound?.play(success => {
+            if (success) {
+              console.log('🔊 Ringtone playing');
+              this.isPlaying = true;
+            } else {
+              console.log('❌ Sound playback failed');
+              this.isPlaying = false;
+            }
+          });
+
+          // Start vibration
+          this.startVibration();
+
+          // Haptic feedback
+          ReactNativeHapticFeedback.trigger(
+            'notificationWarning',
+            hapticOptions,
+          );
+        },
+      );
     } catch (error) {
-      console.error('Failed to play ringtone:', error);
-      // Attempt recovery
+      console.error('❌ Failed to play ringtone:', error);
       this.isPlaying = false;
     }
   }
@@ -121,11 +106,11 @@ class RingtoneService {
    */
   async stopRingtone(): Promise<void> {
     try {
-      const state = await TrackPlayer.getState();
-      if (state === State.Playing || state === State.Buffering) {
-        await TrackPlayer.stop();
+      if (this.sound) {
+        this.sound.stop();
+        this.sound.release();
+        this.sound = null;
       }
-      await TrackPlayer.reset();
 
       this.isPlaying = false;
       console.log('🔊 Ringtone stopped');
@@ -184,19 +169,3 @@ class RingtoneService {
 }
 
 export const ringtoneService = RingtoneService.getInstance();
-
-// Background handler for TrackPlayer
-export const trackPlayerBackgroundHandler = async (): Promise<void> => {
-  TrackPlayer.addEventListener('remote-play' as any, () => {
-    TrackPlayer.play();
-  });
-
-  TrackPlayer.addEventListener('remote-pause' as any, () => {
-    TrackPlayer.pause();
-  });
-
-  TrackPlayer.addEventListener('remote-stop' as any, () => {
-    TrackPlayer.stop();
-    TrackPlayer.reset();
-  });
-};

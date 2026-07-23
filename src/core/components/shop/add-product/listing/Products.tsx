@@ -141,7 +141,7 @@ const PricePreview: React.FC<PricePreviewProps> = ({
 
     try {
       const response = await fetch(
-        'http://172.20.245.121:5000/api/v0/seller/product/price-calculation',
+        'http://10.48.121.121:5000/api/v0/seller/product/price-calculation',
         {
           method: 'POST',
           headers: {
@@ -797,7 +797,7 @@ export const ProductForm: React.FC = () => {
   // ==================== API CALLS ====================
   const fetchCategories = async () => {
     try {
-      const response = await fetch('http://172.20.245.121:5000/api/v0/categories');
+      const response = await fetch('http://10.48.121.121:5000/api/v0/categories');
       const data = await response.json();
       let categoriesData: Category[] = [];
       if (Array.isArray(data)) categoriesData = data;
@@ -1135,7 +1135,7 @@ export const ProductForm: React.FC = () => {
         const fileName = `products/${item.type}_${Date.now()}_${i}.${ext}`;
 
         const res = await fetch(
-          'http://172.20.245.121:5000/api/v0/upload/get-upload-url',
+          'http://10.48.121.121:5000/api/v0/upload/get-upload-url',
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1289,7 +1289,7 @@ export const ProductForm: React.FC = () => {
 
     const token = await AsyncStorage.getItem('authToken');
     const response = await fetch(
-      'http://172.20.245.121:5000/api/v0/seller/forms/categories/products',
+      'http://10.48.121.121:5000/api/v0/seller/forms/categories/products',
       {
         method: 'POST',
         headers: {
