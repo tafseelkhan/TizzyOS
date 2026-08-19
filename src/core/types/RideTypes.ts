@@ -21,20 +21,52 @@ export interface Fare {
   perMinuteRate: number;
 }
 
+export interface Location {
+  address: string;
+  latitude: number;
+  longitude: number;
+}
+
 export interface RideRequest {
   requestId: string;
-  bookingId: string;
+
+  customer: {
+    customerId: string;
+    name: string;
+    profilePicture?: string;
+  };
+
+  booking: {
+    bookingId: string;
+    rideCode?: string;
+    serviceType?: string;
+    quoteId?: string;
+    fwsAirportRideId?: string;
+  };
+
   fare: number;
-  pickup: Location;
-  destination: Location;
   distance: number;
-  isRetry: boolean;
-  batchNumber: number;
-  expiresAt: string;
+
+  pickup: {
+    address: string;
+    latitude: number;
+    longitude: number;
+  };
+
+  destination: {
+    address: string;
+    latitude: number;
+    longitude: number;
+  };
+
+  expiresAt?: string;
+  isRetry?: boolean;
+  batchNumber?: string;
 }
 
 export interface Booking {
   bookingId: string;
+  trackingId: string;
   rideCode: string;
   customerId: string;
   driverId: string | null;

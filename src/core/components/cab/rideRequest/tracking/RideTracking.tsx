@@ -1,4 +1,4 @@
-// src/core/screens/cab/driver/ActiveTripScreen.tsx
+// src/core/screens/cab/driver/RideTracking.tsx
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -13,60 +13,149 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { driverRideApi } from '../../../../api/features/private/driverRidePrivateSlice';
-import { socketService } from '../../../utils/socket/rideRequestUtils';
-import { SOCKET_EVENTS } from '../../../../api/constants/rideRequestConfig';
-import { Booking, Tracking } from '../../../types/RideTypes';
+import { driverRideApi } from '../../../../../api/features/private/driverRidePrivateSlice';
+import { tripSocketHandler } from '../../../../utils/socket/TripSocketHandler';
+import { Booking, Tracking } from '../../../../types/RideTypes';
+import { RootStackParamList } from '../../../../../navigations/index';
+import { StackScreenProps } from '@react-navigation/stack';
 
-interface ActiveTripScreenProps {
-  route: {
-    params: {
-      bookingId: string;
-    };
-  };
-  navigation: any;
-}
+type RideTrackingScreenProps = StackScreenProps<
+  RootStackParamList,
+  'RideTracking'
+>;
 
-const ActiveTripScreen: React.FC<ActiveTripScreenProps> = ({
+const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
   route,
   navigation,
 }) => {
-  const { bookingId } = route.params || {};
+  const { trackingId, bookingId } = route.params || {};
   const [booking, setBooking] = useState<Booking | null>(null);
   const [tracking, setTracking] = useState<Tracking | null>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
 
   useEffect(() => {
-    if (bookingId) {
-      loadTripDetails();
+    if (!trackingId) {
+      console.error('[RideTracking] ❌ No trackingId provided');
+      Alert.alert('Error', 'No tracking ID provided for this trip');
+      navigation.goBack();
+      return;
     }
 
-    // Listen for status updates
-    const handleStatusChange = (data: any) => {
-      if (data.bookingId === bookingId) {
-        loadTripDetails();
-      }
-    };
+    console.log('[RideTracking] 📍 Starting with trackingId:', trackingId);
+    if (bookingId) {
+      console.log('[RideTracking] 📍 Backup bookingId:', bookingId);
+    }
 
-    socketService.on(SOCKET_EVENTS.RIDE_STATUS_CHANGE, handleStatusChange);
+    tripSocketHandler.startListening();
+    loadTripDetails();
+
+    const unsubscribeStatus = tripSocketHandler.subscribeToStatusChanges(
+      (data: any) => {
+        if (data.trackingId === trackingId) {
+          console.log(
+            '[RideTracking] Status change received, reloading trip details',
+          );
+          loadTripDetails();
+        }
+      },
+    );
+
+    const unsubscribeCancel = tripSocketHandler.subscribeToCancellations(
+      (data: any) => {
+        if (data.trackingId === trackingId) {
+          console.log('[RideTracking] Cancellation received');
+          Alert.alert('Trip Cancelled', 'This trip has been cancelled.');
+          navigation.goBack();
+        }
+      },
+    );
 
     return () => {
-      socketService.off(SOCKET_EVENTS.RIDE_STATUS_CHANGE, handleStatusChange);
+      unsubscribeStatus();
+      unsubscribeCancel();
     };
-  }, [bookingId]);
+  }, [trackingId]);
 
+  // ✅ FIX: Correct async flow - trackingId for tracking, bookingId for booking details
   const loadTripDetails = async () => {
+    if (!trackingId) {
+      console.error('[RideTracking] ❌ No trackingId provided');
+      return;
+    }
+
     try {
       setLoading(true);
-      const [bookingData, trackingData] = await Promise.all([
-        driverRideApi.getTripDetails(bookingId),
-        driverRideApi.getTrackingByBooking(bookingId),
-      ]);
-      setBooking(bookingData);
+      console.log('[RideTracking] ========================================');
+      console.log('[RideTracking] 📡 Loading trip details');
+      console.log('[RideTracking] 📦 trackingId:', trackingId);
+      console.log('[RideTracking] 📦 bookingId:', bookingId);
+
+      // ✅ Step 1: Get tracking data using trackingId
+      console.log(
+        '[RideTracking] 📡 Step 1: Calling getTrackingByBooking with trackingId:',
+        trackingId,
+      );
+      const trackingData = await driverRideApi.getTrackingByBooking(trackingId);
+      console.log('[RideTracking] ✅ Step 1: Tracking data loaded');
+      console.log(
+        '[RideTracking] 📦 Tracking data:',
+        JSON.stringify(trackingData, null, 2),
+      );
+
+      if (!trackingData) {
+        throw new Error('No tracking data found');
+      }
+
       setTracking(trackingData);
+
+      // ✅ Step 2: Get booking details using bookingId (from route params)
+      console.log(
+        '[RideTracking] 📡 Step 2: Calling getTripDetails with bookingId:',
+        bookingId,
+      );
+
+      if (!bookingId) {
+        // Fallback: try to get bookingId from tracking data
+        const bookingIdFromTracking = trackingData.bookingId;
+        console.log(
+          '[RideTracking] ⚠️ No bookingId in route params, using from tracking:',
+          bookingIdFromTracking,
+        );
+        if (bookingIdFromTracking) {
+          const bookingData = await driverRideApi.getTripDetails(
+            bookingIdFromTracking,
+          );
+          console.log(
+            '[RideTracking] ✅ Step 2: Booking data loaded (from tracking)',
+          );
+          console.log(
+            '[RideTracking] 📦 Booking data:',
+            JSON.stringify(bookingData, null, 2),
+          );
+          setBooking(bookingData);
+        } else {
+          console.warn(
+            '[RideTracking] ⚠️ No bookingId available to fetch booking details',
+          );
+        }
+      } else {
+        // ✅ Use bookingId from route params
+        const bookingData = await driverRideApi.getTripDetails(bookingId);
+        console.log('[RideTracking] ✅ Step 2: Booking data loaded');
+        console.log(
+          '[RideTracking] 📦 Booking data:',
+          JSON.stringify(bookingData, null, 2),
+        );
+        setBooking(bookingData);
+      }
+
+      console.log('[RideTracking] ✅ Trip details loaded successfully!');
+      console.log('[RideTracking] ========================================');
     } catch (error: any) {
-      console.error('Failed to load trip:', error);
+      console.error('[RideTracking] ❌ Failed to load trip:', error);
+      console.error('[RideTracking] ❌ Error message:', error.message);
+      console.error('[RideTracking] ❌ Error stack:', error.stack);
       Alert.alert('Error', error.message || 'Failed to load trip details');
       navigation.goBack();
     } finally {
@@ -79,18 +168,17 @@ const ActiveTripScreen: React.FC<ActiveTripScreenProps> = ({
 
     try {
       setUpdating(true);
+      console.log('[RideTracking] 📡 Updating ride status to:', status);
       await driverRideApi.updateRideStatus(tracking.trackingId, status);
 
-      // Emit socket event for real-time update
-      socketService.emit(SOCKET_EVENTS.RIDE_STATUS_CHANGE, {
-        bookingId: booking?.bookingId,
+      tripSocketHandler.emitStatusChange({
+        bookingId: booking?.trackingId || trackingId,
         status,
       });
 
-      // Reload trip details
       await loadTripDetails();
     } catch (error: any) {
-      console.error('Failed to update status:', error);
+      console.error('[RideTracking] Failed to update status:', error);
       Alert.alert('Error', error.message || 'Failed to update ride status');
     } finally {
       setUpdating(false);
@@ -106,8 +194,8 @@ const ActiveTripScreen: React.FC<ActiveTripScreenProps> = ({
         onPress: async () => {
           try {
             setUpdating(true);
-            await driverRideApi.cancelBooking(bookingId, 'Driver cancelled');
-            socketService.emit('cancel-ride', { bookingId });
+            await driverRideApi.cancelBooking(trackingId, 'Driver cancelled');
+            tripSocketHandler.emitCancelRide({ bookingId: trackingId });
             Alert.alert('Success', 'Trip cancelled successfully');
             navigation.goBack();
           } catch (error: any) {
@@ -208,7 +296,6 @@ const ActiveTripScreen: React.FC<ActiveTripScreenProps> = ({
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#1f2937" />
 
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
@@ -221,7 +308,6 @@ const ActiveTripScreen: React.FC<ActiveTripScreenProps> = ({
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Trip Code */}
         <View style={styles.tripCodeCard}>
           <Text style={styles.tripCodeLabel}>Trip Code</Text>
           <Text style={styles.tripCode}>{booking.rideCode}</Text>
@@ -232,13 +318,11 @@ const ActiveTripScreen: React.FC<ActiveTripScreenProps> = ({
           </View>
         </View>
 
-        {/* Customer Info */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>👤 Customer</Text>
           <Text style={styles.cardValue}>{booking.customerId}</Text>
         </View>
 
-        {/* Fare */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>💰 Fare</Text>
           <Text style={styles.fareText}>₹{booking.fare?.totalFare || 0}</Text>
@@ -250,7 +334,6 @@ const ActiveTripScreen: React.FC<ActiveTripScreenProps> = ({
           </View>
         </View>
 
-        {/* Pickup & Drop */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>📍 Trip Details</Text>
           <View style={styles.locationRow}>
@@ -278,7 +361,6 @@ const ActiveTripScreen: React.FC<ActiveTripScreenProps> = ({
           </View>
         </View>
 
-        {/* Tracking Status */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>📊 Tracking</Text>
           <View style={styles.trackingStatus}>
@@ -310,7 +392,6 @@ const ActiveTripScreen: React.FC<ActiveTripScreenProps> = ({
           )}
         </View>
 
-        {/* Action Buttons */}
         <View style={styles.actionContainer}>
           {renderStatusButtons()}
 
@@ -569,4 +650,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default ActiveTripScreen;
+export default RideTrackingScreen;

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { driverStatusApi } from '../../../api/features/private/driverLocationOnlinePrivateSlice';
 import { driverRideApi } from '../../../api/features/private/driverRidePrivateSlice';
-import { socketService } from '../../utils/socket/rideRequestUtils';
+import { socketService } from '../../utils/socket/socketUtils';
 import { SOCKET_EVENTS } from '../../../api/constants/rideRequestConfig';
 import { DriverStatus, Tracking } from '../../types/RideTypes';
 

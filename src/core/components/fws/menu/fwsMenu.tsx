@@ -29,7 +29,7 @@ if (
 }
 
 const { width } = Dimensions.get('window');
-const BASE_URL = 'http://10.48.121.121:5000';
+const BASE_URL = 'http://10.171.84.121:5000';
 
 // Define navigation param list for FWS
 type RootStackParamList = {

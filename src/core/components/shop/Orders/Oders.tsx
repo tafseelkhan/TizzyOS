@@ -1,4 +1,6 @@
-// SellerOrdersScreen.tsx - FULLY FIXED FOR BOTH SELLER & FWS
+// SellerOrdersScreen.tsx - COMPLETE REFACTOR WITH ALL-IN-ONE SELLER ORDERS API
+// Removed: /api/v0/tracking/history/status (N+1 problem eliminated)
+// Now using: /api/v0/seller/orders with full DeliveryTracking data
 
 import React, {
   useState,
@@ -122,6 +124,7 @@ type QRCodeData = {
   status?: string;
 };
 
+// Extended Order type with full DeliveryTracking data from backend
 type Order = {
   _id?: string;
   orderId?: string;
@@ -145,8 +148,6 @@ type Order = {
   updatedAt?: string;
   isConfirmed?: boolean;
   fulfillmentType?: 'SELLER' | 'FWS';
-  currentHolderType?: string;
-  currentStatus?: string;
   shippingRider?: {
     id: string;
     name: string;
@@ -158,8 +159,23 @@ type Order = {
     cartId?: string;
     createdAt?: string;
   };
+  // Complete DeliveryTracking data from backend
+  deliveryTracking?: any | null;
   trackingHistory?: TrackingHistoryEntry[] | null;
   qrOwnershipHistory?: QROwnershipEntry[] | null;
+  pendingAssignment?: any | null;
+  route?: any[];
+  routeHistory?: any[];
+  currentStatus?: string | null;
+  currentHolderType?: string | null;
+  currentHolderId?: string | null;
+  currentHolderName?: string | null;
+  trackingId?: string | null;
+  currentLocation?: any | null;
+  currentFWS?: any | null;
+  currentShipping?: any | null;
+  trackingUpdatedAt?: string | null;
+  hasTracking?: boolean;
   qrCodeData?: QRCodeData | null;
 };
 
@@ -193,7 +209,7 @@ type ShippingPartner = {
   kyc?: any;
 };
 
-const API_BASE_URL = 'http://10.48.121.121:5000';
+const API_BASE_URL = 'http://10.171.84.121:5000';
 
 // Theme colors
 const getThemeColors = (isDark: boolean) => {
@@ -854,7 +870,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
   } | null>(null);
 
   // ==================================================
-  // QR CODE API
+  // QR CODE API (PRESERVED - NOT REMOVED)
   // ==================================================
   const fetchQRCode = async (orderId: string): Promise<QRCodeData | null> => {
     try {
@@ -906,43 +922,9 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   // ==================================================
-  // TRACKING API INTEGRATION
+  // 🚫 REMOVED: fetchTrackingStatus() - COMPLETELY REMOVED
+  // /api/v0/tracking/history/status is NO LONGER CALLED
   // ==================================================
-  const fetchTrackingStatus = async (
-    orderId: string,
-  ): Promise<{
-    trackingHistory: TrackingHistoryEntry[] | null;
-    qrOwnershipHistory: QROwnershipEntry[] | null;
-  }> => {
-    try {
-      const tokenToUse = authToken || (await AsyncStorage.getItem('authToken'));
-      if (!tokenToUse)
-        return { trackingHistory: null, qrOwnershipHistory: null };
-
-      const response = await axios.get(
-        `${API_BASE_URL}/api/v0/tracking/history/status`,
-        {
-          params: { orderId },
-          headers: { Authorization: `Bearer ${tokenToUse}` },
-          timeout: 10000,
-        },
-      );
-
-      if (response.data && response.data.success) {
-        return {
-          trackingHistory: response.data.trackingHistory || null,
-          qrOwnershipHistory: response.data.qrOwnershipHistory || null,
-        };
-      }
-      return { trackingHistory: null, qrOwnershipHistory: null };
-    } catch (error: any) {
-      console.error(
-        `Error fetching tracking for order ${orderId}:`,
-        error.message,
-      );
-      return { trackingHistory: null, qrOwnershipHistory: null };
-    }
-  };
 
   // ==================================================
   // SELLER LOGIC HELPERS - FIXED
@@ -1048,11 +1030,13 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     }
   };
 
-  const mapApiOrderToUI = (
-    apiOrder: any,
-    trackingHistory?: TrackingHistoryEntry[] | null,
-    qrOwnershipHistory?: QROwnershipEntry[] | null,
-  ): Order => {
+  // ==================================================
+  // ✅ UPDATED: mapApiOrderToUI - Now uses full DeliveryTracking from backend
+  // ==================================================
+  const mapApiOrderToUI = (apiOrder: any): Order => {
+    // Safely extract tracking data with fallbacks
+    const hasTracking = apiOrder.hasTracking === true;
+
     return {
       _id: apiOrder._id,
       orderId: apiOrder.orderId,
@@ -1078,14 +1062,31 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
       paymentIntentId: apiOrder.paymentIntentId,
       fulfillmentType: apiOrder.fulfillmentType,
       metadata: apiOrder.metadata,
-      trackingHistory: trackingHistory || null,
-      qrOwnershipHistory: qrOwnershipHistory || null,
       qrCodeData: null,
-      currentHolderType: apiOrder.currentHolderType || 'SELLER',
-      currentStatus: apiOrder.currentStatus || apiOrder.status,
+
+      // ✅ Complete DeliveryTracking data preserved from backend
+      deliveryTracking: apiOrder.deliveryTracking ?? null,
+      trackingHistory: apiOrder.trackingHistory ?? [],
+      qrOwnershipHistory: apiOrder.qrOwnershipHistory ?? [],
+      pendingAssignment: apiOrder.pendingAssignment ?? null,
+      route: apiOrder.route ?? [],
+      routeHistory: apiOrder.routeHistory ?? [],
+      currentStatus: apiOrder.currentStatus ?? apiOrder.status ?? 'captured',
+      currentHolderType: apiOrder.currentHolderType ?? 'SELLER',
+      currentHolderId: apiOrder.currentHolderId ?? null,
+      currentHolderName: apiOrder.currentHolderName ?? null,
+      trackingId: apiOrder.trackingId ?? null,
+      currentLocation: apiOrder.currentLocation ?? null,
+      currentFWS: apiOrder.currentFWS ?? null,
+      currentShipping: apiOrder.currentShipping ?? null,
+      trackingUpdatedAt: apiOrder.trackingUpdatedAt ?? null,
+      hasTracking: hasTracking,
     };
   };
 
+  // ==================================================
+  // ✅ UPDATED: fetchOrders - ONLY ONE API CALL
+  // ==================================================
   const fetchOrders = async (currentSellerId: string): Promise<void> => {
     try {
       if (!currentSellerId) {
@@ -1110,6 +1111,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
         }
       }
 
+      // 🚀 SINGLE API CALL - NO N+1 PROBLEM
       const apiUrl = `${API_BASE_URL}/api/v0/seller/orders?sellerId=${currentSellerId}`;
       const headers = {
         Authorization: `Bearer ${tokenToUse}`,
@@ -1126,19 +1128,11 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
           ordersArray = response.data.orders;
       }
 
-      const mappedOrders: Order[] = [];
-      for (const order of ordersArray) {
-        try {
-          const { trackingHistory, qrOwnershipHistory } =
-            await fetchTrackingStatus(order.orderId);
-          mappedOrders.push(
-            mapApiOrderToUI(order, trackingHistory, qrOwnershipHistory),
-          );
-        } catch (error) {
-          console.error('Error processing order:', error);
-          mappedOrders.push(mapApiOrderToUI(order, null, null));
-        }
-      }
+      // ✅ Map orders directly - NO per-order tracking API calls
+      const mappedOrders: Order[] = ordersArray.map((order: any) =>
+        mapApiOrderToUI(order),
+      );
+
       setOrders(mappedOrders);
     } catch (error: any) {
       console.error('Error fetching orders:', error);
@@ -1164,6 +1158,9 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     }
   };
 
+  // ==================================================
+  // ✅ UPDATED: sellerAcceptOrder - NO tracking API call
+  // ==================================================
   const sellerAcceptOrder = async (order: Order): Promise<void> => {
     try {
       let tokenToUse = authToken;
@@ -1195,22 +1192,10 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
           'Success',
           'Order accepted successfully! Now you can assign a shipping partner.',
         );
-        if (order.orderId) {
-          const { trackingHistory, qrOwnershipHistory } =
-            await fetchTrackingStatus(order.orderId);
-          setOrders(prevOrders =>
-            prevOrders.map(o =>
-              o.orderId === order.orderId
-                ? {
-                    ...o,
-                    trackingHistory: trackingHistory || o.trackingHistory,
-                    qrOwnershipHistory:
-                      qrOwnershipHistory || o.qrOwnershipHistory,
-                  }
-                : o,
-            ),
-          );
-        }
+
+        // ✅ Refresh orders to get updated tracking data
+        // No individual tracking API call
+        await fetchOrders(sellerId!);
       } else {
         throw new Error(response.data?.message || 'Failed to accept order');
       }
@@ -1230,6 +1215,9 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     }
   };
 
+  // ==================================================
+  // ✅ UPDATED: sellerAssignShipping - NO tracking API call
+  // ==================================================
   const sellerAssignShipping = async (
     order: Order,
     shippingPartner: ShippingPartner,
@@ -1275,22 +1263,11 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
           'Success',
           `${shippingPartner.vehicleType} assigned successfully!`,
         );
-        if (order.orderId) {
-          const { trackingHistory, qrOwnershipHistory } =
-            await fetchTrackingStatus(order.orderId);
-          setOrders(prevOrders =>
-            prevOrders.map(o =>
-              o.orderId === order.orderId
-                ? {
-                    ...o,
-                    trackingHistory: trackingHistory || o.trackingHistory,
-                    qrOwnershipHistory:
-                      qrOwnershipHistory || o.qrOwnershipHistory,
-                  }
-                : o,
-            ),
-          );
-        }
+
+        // ✅ Refresh orders to get updated tracking data
+        // No individual tracking API call
+        await fetchOrders(sellerId!);
+
         setShowShippingModal(false);
         setSelectedOrderForShipping(null);
       } else {
@@ -1340,6 +1317,9 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     );
   };
 
+  // ==================================================
+  // ✅ UPDATED: sellerAutoAssignWithType - NO tracking API call
+  // ==================================================
   const sellerAutoAssignWithType = async (
     order: Order,
     shippingType: 'RIDER' | 'TRUCK',
@@ -1374,22 +1354,10 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
           'Auto-Assign Success',
           `${shippingType} automatically assigned.`,
         );
-        if (order.orderId) {
-          const { trackingHistory, qrOwnershipHistory } =
-            await fetchTrackingStatus(order.orderId);
-          setOrders(prevOrders =>
-            prevOrders.map(o =>
-              o.orderId === order.orderId
-                ? {
-                    ...o,
-                    trackingHistory: trackingHistory || o.trackingHistory,
-                    qrOwnershipHistory:
-                      qrOwnershipHistory || o.qrOwnershipHistory,
-                  }
-                : o,
-            ),
-          );
-        }
+
+        // ✅ Refresh orders to get updated tracking data
+        // No individual tracking API call
+        await fetchOrders(sellerId!);
       } else {
         throw new Error(
           response.data?.message || 'Failed to auto-assign shipping partner',
@@ -1408,6 +1376,9 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     }
   };
 
+  // ==================================================
+  // ✅ UPDATED: sellerDeliverToFWS - NO tracking API call
+  // ==================================================
   const sellerDeliverToFWS = async (order: Order): Promise<void> => {
     try {
       let tokenToUse = authToken;
@@ -1439,22 +1410,10 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
           'Success',
           'Order marked as Intransit To FWS successfully!',
         );
-        if (order.orderId) {
-          const { trackingHistory, qrOwnershipHistory } =
-            await fetchTrackingStatus(order.orderId);
-          setOrders(prevOrders =>
-            prevOrders.map(o =>
-              o.orderId === order.orderId
-                ? {
-                    ...o,
-                    trackingHistory: trackingHistory || o.trackingHistory,
-                    qrOwnershipHistory:
-                      qrOwnershipHistory || o.qrOwnershipHistory,
-                  }
-                : o,
-            ),
-          );
-        }
+
+        // ✅ Refresh orders to get updated tracking data
+        // No individual tracking API call
+        await fetchOrders(sellerId!);
       } else {
         throw new Error(response.data?.message || 'Failed to intransit to FWS');
       }
@@ -1737,8 +1696,8 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
           isOrderDelivered(order.trackingHistory)
             ? 'check-circle'
             : hasSellerAccepted(order.trackingHistory)
-            ? 'check-circle'
-            : 'access-time'
+              ? 'check-circle'
+              : 'access-time'
         }
         size={12}
         color="#FFFFFF"
@@ -2365,8 +2324,8 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
               {selectedTab === 'all'
                 ? 'No orders yet'
                 : selectedTab === 'pending'
-                ? 'No pending orders'
-                : 'No active orders'}
+                  ? 'No pending orders'
+                  : 'No active orders'}
             </Text>
             <Text
               style={[styles.emptySubtext, { color: colors.textSecondary }]}
@@ -2374,8 +2333,8 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
               {selectedTab === 'all'
                 ? 'When customers place orders, they will appear here'
                 : selectedTab === 'pending'
-                ? 'All orders have been accepted'
-                : 'All accepted orders appear here'}
+                  ? 'All orders have been accepted'
+                  : 'All accepted orders appear here'}
             </Text>
             <TouchableOpacity
               style={[
@@ -2393,8 +2352,8 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
               {selectedTab === 'all'
                 ? 'All Orders'
                 : selectedTab === 'pending'
-                ? 'Pending Orders'
-                : 'Active Orders'}{' '}
+                  ? 'Pending Orders'
+                  : 'Active Orders'}{' '}
               • {filteredOrders.length}
             </Text>
             {filteredOrders

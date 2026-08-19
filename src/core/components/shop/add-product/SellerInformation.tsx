@@ -1,4 +1,4 @@
-// SellerInformation.tsx - WITH GPS LOCATION AND MAP DISPLAY
+// SellerInformation.tsx - FIXED GOOGLE MAPS API ENDPOINTS
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
@@ -60,6 +60,9 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
 
   const isMountedRef = useRef(true);
   const mapRef = useRef<MapView>(null);
+
+  // ✅ Google API Key validation
+  const GOOGLE_API_KEY = Config.GOOGLE_SERVICES_ACCOUNT_KEY;
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -164,7 +167,6 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
 
         // Reverse geocode to get address from coordinates
         await reverseGeocodeAndUpdate(location.latitude, location.longitude);
-
       } else {
         setMapError('Invalid location received');
       }
@@ -182,38 +184,121 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
     }
   };
 
-  // Reverse geocode coordinates to get address
+  // ✅ FIX 1: Correct Reverse Geocoding endpoint
   const reverseGeocodeAndUpdate = async (
     latitude: number,
     longitude: number,
   ) => {
+    // ✅ Validate API key
+    if (!GOOGLE_API_KEY) {
+      console.error('❌ Google API key is missing!');
+      setMapError('Google API key is missing. Please check configuration.');
+      onSellerLocationChange('latitude', latitude);
+      onSellerLocationChange('longitude', longitude);
+      return;
+    }
+
     try {
-      const response = await fetch(
-        `https://maps.googleapis.com/maps/api/v0/geocode/json?latlng=${latitude},${longitude}&key=${Config.GOOGLE_SERVICES_ACCOUNT_KEY}&language=en`,
-      );
+      // ✅ CORRECT URL: https://maps.googleapis.com/maps/api/geocode/json
+      const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_API_KEY}&language=en`;
+
+      console.log('📍 Reverse geocoding URL:', url);
+
+      const response = await fetch(url);
+
+      // ✅ Log HTTP status
+      console.log('📡 Reverse Geocode HTTP Status:', response.status);
+
+      // ✅ Handle non-200 responses
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ HTTP Error Response:', errorText);
+        setMapError(`HTTP Error ${response.status}: ${errorText}`);
+        onSellerLocationChange('latitude', latitude);
+        onSellerLocationChange('longitude', longitude);
+        return;
+      }
+
       const data = await response.json();
 
-      if (data.status === 'OK' && data.results.length > 0) {
-        const address = data.results[0].formatted_address;
-        const placeId = data.results[0].place_id;
+      // ✅ Log full response for debugging
+      console.log('📦 Google Geocode Response:', JSON.stringify(data, null, 2));
+      console.log('📊 Google Status:', data.status);
 
-        onSellerLocationChange('address', address);
-        onSellerLocationChange('latitude', latitude);
-        onSellerLocationChange('longitude', longitude);
-        onSellerLocationChange('googlePlaceId', placeId);
-        setQuery(address);
-        setMapError(null);
-      } else {
-        // Even if no address found, save coordinates
-        onSellerLocationChange('latitude', latitude);
-        onSellerLocationChange('longitude', longitude);
-        setMapError('Address not found, but coordinates saved');
+      // ✅ Handle all Google API statuses
+      switch (data.status) {
+        case 'OK':
+          if (data.results && data.results.length > 0) {
+            const address = data.results[0].formatted_address;
+            const placeId = data.results[0].place_id;
+
+            onSellerLocationChange('address', address);
+            onSellerLocationChange('latitude', latitude);
+            onSellerLocationChange('longitude', longitude);
+            onSellerLocationChange('googlePlaceId', placeId);
+            setQuery(address);
+            setMapError(null);
+            console.log('✅ Reverse geocode successful:', address);
+          } else {
+            setMapError('No address found for these coordinates');
+            onSellerLocationChange('latitude', latitude);
+            onSellerLocationChange('longitude', longitude);
+          }
+          break;
+
+        case 'ZERO_RESULTS':
+          console.warn('⚠️ No results found for coordinates');
+          setMapError('Address not found for these coordinates');
+          onSellerLocationChange('latitude', latitude);
+          onSellerLocationChange('longitude', longitude);
+          break;
+
+        case 'REQUEST_DENIED':
+          console.error('❌ Google API Request Denied');
+          setMapError('API request denied. Please check API key permissions.');
+          break;
+
+        case 'INVALID_REQUEST':
+          console.error('❌ Invalid request to Google API');
+          setMapError('Invalid request. Please try again.');
+          break;
+
+        case 'OVER_QUERY_LIMIT':
+          console.error('❌ Google API Over Query Limit');
+          setMapError('API rate limit exceeded. Please try again later.');
+          break;
+
+        case 'INVALID_KEY':
+          console.error('❌ Invalid Google API Key');
+          setMapError('Invalid Google API key. Please check configuration.');
+          break;
+
+        case 'PERMISSION_DENIED':
+          console.error('❌ Google API Permission Denied');
+          setMapError(
+            'API permission denied. Please check API key restrictions.',
+          );
+          break;
+
+        default:
+          console.error('❌ Unknown Google API status:', data.status);
+          setMapError(
+            `Google API error: ${data.status} - ${data.error_message || 'Unknown error'}`,
+          );
+          onSellerLocationChange('latitude', latitude);
+          onSellerLocationChange('longitude', longitude);
       }
-    } catch (error) {
+    } catch (error: any) {
+      // ✅ Log fetch exceptions
+      console.error('❌ Reverse geocode fetch error:', error.message);
+      console.error('❌ Error stack:', error.stack);
+
       // Still save coordinates even if reverse geocoding fails
       onSellerLocationChange('latitude', latitude);
       onSellerLocationChange('longitude', longitude);
-      setMapError('Could not fetch address, but coordinates saved');
+      setMapError(
+        `Network error: ${error.message || 'Could not fetch address'}`,
+      );
     }
   };
 
@@ -234,7 +319,7 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
     Alert.alert('Success', 'Address saved manually!');
   };
 
-  // Fetch address suggestions from Google Places
+  // ✅ FIX 2: Correct Places Autocomplete endpoint
   const fetchSuggestions = async (text: string) => {
     setQuery(text);
     if (text.length < 3) {
@@ -242,29 +327,101 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
       return;
     }
 
+    // ✅ Validate API key
+    if (!GOOGLE_API_KEY) {
+      console.error('❌ Google API key is missing!');
+      setMapError('Google API key is missing. Please check configuration.');
+      return;
+    }
+
     setLoading(true);
     setMapError(null);
 
     try {
-      const res = await fetch(
-        `https://maps.googleapis.com/maps/api/v0/place/autocomplete/json?input=${encodeURIComponent(
-          text,
-        )}&key=${
-          Config.GOOGLE_SERVICES_ACCOUNT_KEY
-        }&language=en&components=country:in`,
-      );
-      const data = await res.json();
+      // ✅ CORRECT URL: https://maps.googleapis.com/maps/api/place/autocomplete/json
+      const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(
+        text,
+      )}&key=${GOOGLE_API_KEY}&language=en&components=country:in`;
 
-      if (isMountedRef.current) {
-        if (data.status === 'OK' || data.status === 'ZERO_RESULTS') {
-          setSuggestions(data.predictions || []);
-        } else {
+      console.log('🔍 Places Autocomplete URL:', url);
+
+      const response = await fetch(url);
+
+      // ✅ Log HTTP status
+      console.log('📡 Places Autocomplete HTTP Status:', response.status);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ HTTP Error Response:', errorText);
+        setMapError(`HTTP Error ${response.status}`);
+        if (isMountedRef.current) {
           setSuggestions([]);
         }
+        return;
       }
-    } catch (e) {
+
+      const data = await response.json();
+
+      // ✅ Log full response
+      console.log('📦 Google Places Response:', JSON.stringify(data, null, 2));
+      console.log('📊 Google Status:', data.status);
+
       if (isMountedRef.current) {
-        setMapError('Failed to fetch address suggestions');
+        // ✅ Handle all Google API statuses
+        switch (data.status) {
+          case 'OK':
+            setSuggestions(data.predictions || []);
+            break;
+          case 'ZERO_RESULTS':
+            setSuggestions([]);
+            setMapError('No locations found. Try a different search.');
+            break;
+          case 'REQUEST_DENIED':
+            console.error('❌ Places API Request Denied');
+            setMapError(
+              'API request denied. Please check API key permissions.',
+            );
+            setSuggestions([]);
+            break;
+          case 'INVALID_REQUEST':
+            console.error('❌ Invalid request to Places API');
+            setMapError('Invalid request. Please try again.');
+            setSuggestions([]);
+            break;
+          case 'OVER_QUERY_LIMIT':
+            console.error('❌ Places API Over Query Limit');
+            setMapError('Search limit exceeded. Please try again later.');
+            setSuggestions([]);
+            break;
+          case 'INVALID_KEY':
+            console.error('❌ Invalid Google API Key');
+            setMapError('Invalid Google API key. Please check configuration.');
+            setSuggestions([]);
+            break;
+          case 'PERMISSION_DENIED':
+            console.error('❌ Places API Permission Denied');
+            setMapError(
+              'API permission denied. Please check API key restrictions.',
+            );
+            setSuggestions([]);
+            break;
+          default:
+            console.error('❌ Unknown Places API status:', data.status);
+            setMapError(
+              `Google API error: ${data.status} - ${data.error_message || 'Unknown error'}`,
+            );
+            setSuggestions([]);
+        }
+      }
+    } catch (error: any) {
+      // ✅ Log fetch exceptions
+      console.error('❌ Places autocomplete fetch error:', error.message);
+      console.error('❌ Error stack:', error.stack);
+      if (isMountedRef.current) {
+        setMapError(
+          `Network error: ${error.message || 'Failed to fetch suggestions'}`,
+        );
+        setSuggestions([]);
       }
     } finally {
       if (isMountedRef.current) {
@@ -273,46 +430,126 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
     }
   };
 
-  // Select suggestion from Google Places
+  // ✅ FIX 3: Correct Place Details endpoint
   const selectSuggestion = async (placeId: string) => {
+    // ✅ Validate API key
+    if (!GOOGLE_API_KEY) {
+      console.error('❌ Google API key is missing!');
+      setMapError('Google API key is missing. Please check configuration.');
+      return;
+    }
+
     try {
       setLoading(true);
-      const res = await fetch(
-        `https://maps.googleapis.com/maps/api/v0/place/details/json?place_id=${placeId}&key=${Config.GOOGLE_SERVICES_ACCOUNT_KEY}&language=en`,
-      );
-      const data = await res.json();
-      const details = data.result;
 
-      if (details && details.geometry && details.geometry.location) {
-        const lat = details.geometry.location.lat;
-        const lng = details.geometry.location.lng;
+      // ✅ CORRECT URL: https://maps.googleapis.com/maps/api/place/details/json
+      const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&key=${GOOGLE_API_KEY}&language=en`;
 
-        if (lat !== 0 && lng !== 0) {
-          onSellerLocationChange('address', details.formatted_address || '');
-          onSellerLocationChange('latitude', lat);
-          onSellerLocationChange('longitude', lng);
-          onSellerLocationChange('googlePlaceId', placeId);
+      console.log('📍 Place Details URL:', url);
 
-          // Update map region
-          setMapRegion({
-            latitude: lat,
-            longitude: lng,
-            latitudeDelta: 0.01,
-            longitudeDelta: 0.01,
-          });
+      const response = await fetch(url);
 
-          setSuggestions([]);
-          setQuery(details.formatted_address || '');
-          setMapError(null);
-          Alert.alert('Success', 'Location selected successfully!');
-        } else {
-          setMapError('Invalid coordinates received');
-        }
-      } else {
-        setMapError('Could not fetch location details');
+      // ✅ Log HTTP status
+      console.log('📡 Place Details HTTP Status:', response.status);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ HTTP Error Response:', errorText);
+        setMapError(`HTTP Error ${response.status}`);
+        return;
       }
-    } catch (e) {
-      setMapError('Failed to fetch location details');
+
+      const data = await response.json();
+
+      // ✅ Log full response
+      console.log(
+        '📦 Google Place Details Response:',
+        JSON.stringify(data, null, 2),
+      );
+      console.log('📊 Google Status:', data.status);
+
+      // ✅ Handle all Google API statuses
+      switch (data.status) {
+        case 'OK':
+          const details = data.result;
+          if (details && details.geometry && details.geometry.location) {
+            const lat = details.geometry.location.lat;
+            const lng = details.geometry.location.lng;
+
+            if (lat !== 0 && lng !== 0) {
+              onSellerLocationChange(
+                'address',
+                details.formatted_address || '',
+              );
+              onSellerLocationChange('latitude', lat);
+              onSellerLocationChange('longitude', lng);
+              onSellerLocationChange('googlePlaceId', placeId);
+
+              // Update map region
+              setMapRegion({
+                latitude: lat,
+                longitude: lng,
+                latitudeDelta: 0.01,
+                longitudeDelta: 0.01,
+              });
+
+              setSuggestions([]);
+              setQuery(details.formatted_address || '');
+              setMapError(null);
+              Alert.alert('Success', 'Location selected successfully!');
+            } else {
+              setMapError('Invalid coordinates received');
+            }
+          } else {
+            setMapError('Could not fetch location details');
+          }
+          break;
+
+        case 'ZERO_RESULTS':
+          console.warn('⚠️ No results found for place ID');
+          setMapError('Location not found. Please try another.');
+          break;
+
+        case 'REQUEST_DENIED':
+          console.error('❌ Place Details API Request Denied');
+          setMapError('API request denied. Please check API key permissions.');
+          break;
+
+        case 'INVALID_REQUEST':
+          console.error('❌ Invalid request to Place Details API');
+          setMapError('Invalid request. Please try again.');
+          break;
+
+        case 'OVER_QUERY_LIMIT':
+          console.error('❌ Place Details API Over Query Limit');
+          setMapError('API rate limit exceeded. Please try again later.');
+          break;
+
+        case 'INVALID_KEY':
+          console.error('❌ Invalid Google API Key');
+          setMapError('Invalid Google API key. Please check configuration.');
+          break;
+
+        case 'PERMISSION_DENIED':
+          console.error('❌ Place Details API Permission Denied');
+          setMapError(
+            'API permission denied. Please check API key restrictions.',
+          );
+          break;
+
+        default:
+          console.error('❌ Unknown Place Details API status:', data.status);
+          setMapError(
+            `Google API error: ${data.status} - ${data.error_message || 'Unknown error'}`,
+          );
+      }
+    } catch (error: any) {
+      // ✅ Log fetch exceptions
+      console.error('❌ Place details fetch error:', error.message);
+      console.error('❌ Error stack:', error.stack);
+      setMapError(
+        `Network error: ${error.message || 'Failed to fetch location details'}`,
+      );
     } finally {
       setLoading(false);
     }

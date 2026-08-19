@@ -1,7 +1,7 @@
 // src/hooks/useDriverSocket.ts
 
 import { useState, useEffect, useCallback } from 'react';
-import { socketService } from '../../utils/socket/rideRequestUtils';
+import { socketService } from '../../utils/socket/socketUtils';
 import { SOCKET_EVENTS } from '../../../api/constants/rideRequestConfig';
 
 interface UseDriverSocketReturn {

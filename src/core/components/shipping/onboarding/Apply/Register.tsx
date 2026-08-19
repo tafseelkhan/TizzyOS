@@ -33,7 +33,9 @@ import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 import DeviceInfo from 'react-native-device-info';
 import { vehicleOptions } from './vehicleCategory';
 import GetLocation from 'react-native-get-location';
-import BackgroundService from 'react-native-background-actions';
+import LocationService, {
+  LocationWithMetadata,
+} from '../../../../utils/shippings/LocationService';
 
 const { width } = Dimensions.get('window');
 LogBox.ignoreLogs(['new NativeEventEmitter']);
@@ -59,836 +61,26 @@ type VehicleCategory = 'Car' | 'Bike' | 'Scooter' | 'Auto' | 'Tempo';
 type IdentityType = 'Aadhaar' | 'VoterID' | 'Passport' | 'PAN';
 type ShippingType = 'TRUCK' | 'RIDER';
 
-const API_BASE_URL = 'http://10.48.121.121:5000';
-
-// ============================================================
-// BATTERY BASED TIMEOUT CALCULATOR
-// ============================================================
-class BatteryTimeoutCalculator {
-  private static readonly MIN_TIMEOUT_MS = 3000;
-  private static readonly MAX_TIMEOUT_MS = 25000;
-  private static readonly BASE_FOREGROUND_TIMEOUT_MS = 15000;
-  private static readonly BASE_BACKGROUND_TIMEOUT_MS = 20000;
-
-  static getForegroundTimeout(batteryLevel: number): number {
-    const battery = Math.max(0, Math.min(100, batteryLevel));
-    const timeout =
-      this.BASE_FOREGROUND_TIMEOUT_MS * (battery / 100) +
-      this.MIN_TIMEOUT_MS * ((100 - battery) / 100);
-    return Math.floor(
-      Math.max(this.MIN_TIMEOUT_MS, Math.min(this.MAX_TIMEOUT_MS, timeout)),
-    );
-  }
-
-  static getBackgroundTimeout(batteryLevel: number): number {
-    const battery = Math.max(0, Math.min(100, batteryLevel));
-    const timeout =
-      this.BASE_BACKGROUND_TIMEOUT_MS * (battery / 100) +
-      this.MIN_TIMEOUT_MS * ((100 - battery) / 100);
-    return Math.floor(
-      Math.max(this.MIN_TIMEOUT_MS, Math.min(this.MAX_TIMEOUT_MS, timeout)),
-    );
-  }
-
-  static getPollingInterval(
-    batteryLevel: number,
-    isBackground: boolean,
-  ): number {
-    const battery = Math.max(0, Math.min(100, batteryLevel));
-    if (isBackground) return Math.floor(5000 + 15000 * (battery / 100));
-    else return Math.floor(3000 + 9000 * (battery / 100));
-  }
-
-  static getAccuracyMode(batteryLevel: number): 'high' | 'balanced' | 'low' {
-    if (batteryLevel > 50) return 'high';
-    if (batteryLevel > 20) return 'balanced';
-    return 'low';
-  }
-
-  static getBatteryIconName(batteryLevel: number): string {
-    if (batteryLevel > 90) return 'battery-full';
-    if (batteryLevel > 70) return 'battery-three-quarters';
-    if (batteryLevel > 50) return 'battery-half';
-    if (batteryLevel > 30) return 'battery-quarter';
-    if (batteryLevel > 15) return 'battery-empty';
-    return 'battery-warning';
-  }
-
-  static getBatteryColor(batteryLevel: number): string {
-    if (batteryLevel > 50) return '#10B981';
-    if (batteryLevel > 20) return '#F59E0B';
-    return '#EF4444';
-  }
-
-  static getAccuracyIconName(mode: string): string {
-    if (mode === 'high') return 'gps-fixed';
-    if (mode === 'balanced') return 'gps-not-fixed';
-    return 'gps-off';
-  }
-
-  static getAccuracyColor(mode: string): string {
-    if (mode === 'high') return '#10B981';
-    if (mode === 'balanced') return '#F59E0B';
-    return '#EF4444';
-  }
-}
-
-// ============================================================
-// LOGGING UTILITY
-// ============================================================
-const Logger = {
-  FOREGROUND: '🟢',
-  BACKGROUND: '🔵',
-  GPS: '📍',
-  API: '🌐',
-  PERMISSION: '🔐',
-  TRACKER: '🎯',
-  BATTERY: '🔋',
-  ERROR: '❌',
-  SUCCESS: '✅',
-  WARNING: '⚠️',
-  INFO: '📘',
-  log: (tag: string, message: string, data?: any) =>
-    console.log(
-      `${tag} [${new Date().toLocaleTimeString()}] ${message}`,
-      data ? data : '',
-    ),
-  logForeground: (message: string, data?: any) =>
-    Logger.log(Logger.FOREGROUND, message, data),
-  logBackground: (message: string, data?: any) =>
-    Logger.log(Logger.BACKGROUND, message, data),
-  logGPS: (message: string, coords?: any) => {
-    if (coords?.lat)
-      Logger.log(
-        Logger.GPS,
-        `${message} | Lat:${coords.lat.toFixed(6)} Lng:${coords.lng.toFixed(
-          6,
-        )} Acc:${(coords.acc || 0).toFixed(1)}m`,
-      );
-    else Logger.log(Logger.GPS, message);
-  },
-  logAPI: (message: string, data?: any) =>
-    Logger.log(Logger.API, message, data),
-  logPermission: (message: string, granted?: boolean) =>
-    Logger.log(
-      Logger.PERMISSION,
-      message,
-      granted !== undefined ? `Granted: ${granted}` : '',
-    ),
-  logTracker: (message: string, data?: any) =>
-    Logger.log(Logger.TRACKER, message, data),
-  logBattery: (
-    level: number,
-    fgTimeout?: number,
-    bgTimeout?: number,
-    interval?: number,
-  ) => {
-    let msg = `Level: ${level.toFixed(0)}%`;
-    if (fgTimeout) msg += ` | FG:${(fgTimeout / 1000).toFixed(0)}s`;
-    if (bgTimeout) msg += ` | BG:${(bgTimeout / 1000).toFixed(0)}s`;
-    if (interval) msg += ` | Interval:${(interval / 1000).toFixed(0)}s`;
-    Logger.log(Logger.BATTERY, msg);
-  },
-  logError: (message: string, error?: any) =>
-    console.error(`${Logger.ERROR} ${message}`, error || ''),
-  logSuccess: (message: string, data?: any) =>
-    Logger.log(Logger.SUCCESS, message, data),
-  logWarning: (message: string, data?: any) =>
-    Logger.log(Logger.WARNING, message, data),
-  logInfo: (message: string, data?: any) =>
-    Logger.log(Logger.INFO, message, data),
-};
-
-// ============================================================
-// LOCATION TRACKER - FIXED TO MATCH BACKEND
-// ============================================================
-interface LocationData {
-  latitude: number;
-  longitude: number;
-  accuracy: number;
-  timestamp: number;
-  isBackground?: boolean;
-  speed?: number;
-}
-
-type BatteryUpdateCallback = (info: {
-  level: number;
-  fgTimeout: number;
-  bgTimeout: number;
-  interval: number;
-  accuracyMode: string;
-}) => void;
-
-class LocationTracker {
-  private static instance: LocationTracker;
-  private isTracking = false;
-  private pollingIntervalId: ReturnType<typeof setInterval> | null = null;
-  private shippingId: string | null = null;
-  private authToken: string | null = null;
-  private lastLocation: LocationData | null = null;
-  private appStateSubscription: any = null;
-  private backgroundMode = false;
-  private batteryLevel = 100;
-  private batteryInterval: ReturnType<typeof setInterval> | null = null;
-  private isPollingInProgress = false;
-  private currentIntervalMs = 10000;
-  private appState: AppStateStatus = 'active';
-  private isStarting = false;
-  private isStopping = false;
-  private isBackgroundTaskRunning = false;
-  private pollCount = 0;
-  private successCount = 0;
-  private failCount = 0;
-  private isLocationRequestInProgress = false;
-  private lastRequestTime = 0;
-  private readonly MIN_REQUEST_INTERVAL = 2000;
-  private batteryUpdateCallback: BatteryUpdateCallback | null = null;
-
-  private constructor() {
-    Logger.logTracker('Initializing LocationTracker');
-    try {
-      this.appStateSubscription = AppState.addEventListener(
-        'change',
-        this.onAppStateChange.bind(this),
-      );
-      this.startBatteryMonitoring();
-      Logger.logSuccess('LocationTracker initialized');
-    } catch (error) {
-      Logger.logError('Constructor error:', error);
-    }
-  }
-
-  static getInstance(): LocationTracker {
-    if (!LocationTracker.instance)
-      LocationTracker.instance = new LocationTracker();
-    return LocationTracker.instance;
-  }
-
-  setBatteryUpdateCallback(callback: BatteryUpdateCallback | null) {
-    this.batteryUpdateCallback = callback;
-    if (callback && this.batteryLevel) callback(this.getBatteryInfo());
-  }
-
-  getBatteryInfo() {
-    return {
-      level: this.batteryLevel,
-      fgTimeout: BatteryTimeoutCalculator.getForegroundTimeout(
-        this.batteryLevel,
-      ),
-      bgTimeout: BatteryTimeoutCalculator.getBackgroundTimeout(
-        this.batteryLevel,
-      ),
-      interval: BatteryTimeoutCalculator.getPollingInterval(
-        this.batteryLevel,
-        this.backgroundMode,
-      ),
-      accuracyMode: BatteryTimeoutCalculator.getAccuracyMode(this.batteryLevel),
-    };
-  }
-
-  private backgroundTask = async (taskData: any) => {
-    const { delay, shippingId, authToken } = taskData;
-    if (shippingId && authToken) {
-      this.shippingId = shippingId;
-      this.authToken = authToken;
-    }
-    let bgPollCount = 0;
-
-    console.log('🔵 BACKGROUND TASK STARTED 🔵');
-    console.log(`🔵 Shipping ID: ${this.shippingId}`);
-    console.log(`🔵 Delay: ${delay}ms`);
-
-    while (BackgroundService.isRunning()) {
-      if (!this.isTracking) {
-        console.log('🔵 Tracking is off, waiting...');
-        await this.sleep(delay);
-        continue;
-      }
-      bgPollCount++;
-      console.log(
-        `🔵 BACKGROUND POLL #${bgPollCount} at ${new Date().toISOString()}`,
-      );
-
-      try {
-        const location = await this.getCurrentLocationWithRetry(true);
-        if (location) {
-          location.isBackground = true;
-          console.log(
-            `🔵📍 BACKGROUND LOCATION: ${location.latitude}, ${location.longitude}`,
-          );
-          console.log(`🔵📍 Accuracy: ${location.accuracy}m`);
-
-          await this.sendLocationToBackend(
-            location.latitude,
-            location.longitude,
-            location.accuracy,
-            true,
-          );
-        } else {
-          console.log('🔵❌ Failed to get background location');
-        }
-      } catch (error) {
-        console.log('🔵❌ Background location error:', error);
-      }
-      await this.sleep(delay);
-    }
-    console.log('🔵 BACKGROUND TASK ENDED 🔵');
-    return;
-  };
-
-  private sleep = (ms: number) =>
-    new Promise(resolve => setTimeout(() => resolve(undefined), ms));
-
-  async startBackgroundTask(): Promise<boolean> {
-    if (this.isBackgroundTaskRunning) {
-      console.log('🔵 Background task already running');
-      return true;
-    }
-    if (!this.shippingId || !this.authToken) {
-      console.log(
-        '🔵 Cannot start background task: missing shippingId or authToken',
-      );
-      return false;
-    }
-
-    const interval = BatteryTimeoutCalculator.getPollingInterval(
-      this.batteryLevel,
-      true,
-    );
-    console.log(`🔵 Starting background task with interval: ${interval}ms`);
-
-    const options = {
-      taskName: 'RiderLocationTracking',
-      taskTitle: 'TizzyGo',
-      taskDesc: `Tracking | Battery:${this.batteryLevel.toFixed(0)}%`,
-      taskIcon: { name: 'ic_launcher', type: 'mipmap' },
-      color: '#2563EB',
-      linkingURI: 'yourapp://home',
-      parameters: {
-        delay: interval,
-        shippingId: this.shippingId,
-        authToken: this.authToken,
-      },
-    };
-    try {
-      await BackgroundService.start(this.backgroundTask, options);
-      this.isBackgroundTaskRunning = true;
-      console.log('🔵 Background task started successfully');
-      return true;
-    } catch (error) {
-      console.log('🔵 Failed to start background task:', error);
-      return false;
-    }
-  }
-
-  async stopBackgroundTask(): Promise<boolean> {
-    if (!this.isBackgroundTaskRunning) return true;
-    try {
-      await BackgroundService.stop();
-      this.isBackgroundTaskRunning = false;
-      console.log('🔵 Background task stopped');
-      return true;
-    } catch (error) {
-      console.log('🔵 Failed to stop background task:', error);
-      return false;
-    }
-  }
-
-  private async getCurrentLocationWithRetry(
-    isBackground: boolean = false,
-  ): Promise<LocationData | null> {
-    const mode = isBackground ? 'BACKGROUND' : 'FOREGROUND';
-    if (this.isLocationRequestInProgress) {
-      console.log(`${mode} request in progress, skipping`);
-      return null;
-    }
-
-    const now = Date.now();
-    if (now - this.lastRequestTime < this.MIN_REQUEST_INTERVAL) {
-      console.log(`${mode} rate limited, waiting...`);
-      await this.sleep(
-        this.MIN_REQUEST_INTERVAL - (now - this.lastRequestTime),
-      );
-    }
-
-    this.isLocationRequestInProgress = true;
-    this.lastRequestTime = Date.now();
-
-    let attempt = 0;
-    const maxRetries = 2;
-    try {
-      while (attempt <= maxRetries) {
-        try {
-          const startTime = Date.now();
-          console.log(`${mode} getting location (attempt ${attempt + 1})...`);
-          const location = await this.getCurrentLocationPromise(isBackground);
-          const elapsed = Date.now() - startTime;
-
-          if (location && this.isValidLocation(location)) {
-            console.log(`${mode} location obtained in ${elapsed}ms`);
-            return location;
-          } else {
-            console.log(`${mode} invalid location received`);
-          }
-        } catch (error: any) {
-          console.log(`${mode} attempt ${attempt + 1} failed:`, error?.message);
-        }
-        attempt++;
-        if (attempt <= maxRetries) {
-          console.log(`${mode} retrying in 2 seconds...`);
-          await this.sleep(2000);
-        }
-      }
-      console.log(`${mode} all attempts failed`);
-      return null;
-    } finally {
-      this.isLocationRequestInProgress = false;
-    }
-  }
-
-  private getCurrentLocationPromise(
-    isBackground: boolean = false,
-  ): Promise<LocationData> {
-    return new Promise((resolve, reject) => {
-      let timeoutId: any = null;
-      let resolved = false;
-      const mode = isBackground ? 'BACKGROUND' : 'FOREGROUND';
-      const timeoutMs = isBackground
-        ? BatteryTimeoutCalculator.getBackgroundTimeout(this.batteryLevel)
-        : BatteryTimeoutCalculator.getForegroundTimeout(this.batteryLevel);
-
-      timeoutId = setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
-          console.log(`${mode} location timeout after ${timeoutMs}ms`);
-          reject(new Error('Location timeout'));
-        }
-      }, timeoutMs);
-
-      const accuracyMode = BatteryTimeoutCalculator.getAccuracyMode(
-        this.batteryLevel,
-      );
-      const useHighAccuracy = !isBackground && accuracyMode === 'high';
-      const options = {
-        enableHighAccuracy: useHighAccuracy,
-        timeout: Math.min(timeoutMs - 1000, 10000),
-        maxAge: 0,
-      };
-
-      console.log(`${mode} requesting location with options:`, options);
-
-      try {
-        GetLocation.getCurrentPosition(options)
-          .then((loc: any) => {
-            if (!resolved) {
-              resolved = true;
-              clearTimeout(timeoutId);
-              console.log(`${mode} location received:`, {
-                lat: loc.latitude,
-                lng: loc.longitude,
-                acc: loc.accuracy,
-              });
-              resolve({
-                latitude: loc.latitude,
-                longitude: loc.longitude,
-                accuracy: loc.accuracy || 0,
-                timestamp: Date.now(),
-                speed: loc.speed,
-              });
-            }
-          })
-          .catch((err: any) => {
-            if (!resolved) {
-              resolved = true;
-              clearTimeout(timeoutId);
-              console.log(`${mode} location error:`, err?.message);
-              reject(err);
-            }
-          });
-      } catch (err) {
-        if (!resolved) {
-          resolved = true;
-          clearTimeout(timeoutId);
-          reject(err);
-        }
-      }
-    });
-  }
-
-  private isValidLocation(loc: LocationData): boolean {
-    return (
-      !(loc.latitude === 0 && loc.longitude === 0) &&
-      loc.latitude >= -90 &&
-      loc.latitude <= 90 &&
-      loc.longitude >= -180 &&
-      loc.longitude <= 180
-    );
-  }
-
-  async checkRealPermissions(): Promise<boolean> {
-    if (Platform.OS !== 'android') return true;
-    try {
-      const fine = await PermissionsAndroid.check(
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-      );
-      let bg = true;
-      if (Platform.Version >= 29)
-        bg = await PermissionsAndroid.check(
-          PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
-        );
-      console.log(`🔐 Permissions - Fine: ${fine}, Background: ${bg}`);
-      return fine && bg;
-    } catch (error) {
-      console.log('🔐 Permission check error:', error);
-      return false;
-    }
-  }
-
-  async requestRealPermissions(): Promise<boolean> {
-    if (this.appState !== 'active') return false;
-    if (Platform.OS !== 'android') return this.requestIOSPermissions();
-    try {
-      let fine = await PermissionsAndroid.check(
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-      );
-      let bg = true;
-      if (Platform.Version >= 29)
-        bg = await PermissionsAndroid.check(
-          PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
-        );
-      if (fine && bg) return true;
-
-      const fineResult = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        {
-          title: 'Location Permission',
-          message: 'App needs location access to track deliveries',
-          buttonPositive: 'Allow',
-          buttonNegative: 'Deny',
-        },
-      );
-      if (fineResult !== PermissionsAndroid.RESULTS.GRANTED) return false;
-
-      if (Platform.Version >= 29) {
-        const bgResult = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
-          {
-            title: 'Background Location',
-            message: 'App needs background location even when screen is locked',
-            buttonPositive: 'Allow',
-            buttonNegative: 'Deny',
-          },
-        );
-        bg = bgResult === PermissionsAndroid.RESULTS.GRANTED;
-      }
-      return true;
-    } catch (error) {
-      console.log('🔐 Permission request error:', error);
-      return false;
-    }
-  }
-
-  private async requestIOSPermissions(): Promise<boolean> {
-    return new Promise(resolve => {
-      GetLocation.getCurrentPosition({
-        enableHighAccuracy: true,
-        timeout: 5000,
-      })
-        .then(() => resolve(true))
-        .catch(() => resolve(false));
-    });
-  }
-
-  async startTracking(shippingId: string, authToken: string): Promise<boolean> {
-    console.log('🎯 START TRACKING CALLED 🎯');
-    console.log(`🎯 Shipping ID: ${shippingId}`);
-    console.log(`🎯 Has Auth Token: ${!!authToken}`);
-
-    if (!(await this.checkRealPermissions())) {
-      console.log('🎯 Permission check failed');
-      return false;
-    }
-    if (this.isStarting || this.isTracking) {
-      console.log(
-        `🎯 Already tracking or starting - isStarting: ${this.isStarting}, isTracking: ${this.isTracking}`,
-      );
-      return false;
-    }
-
-    this.isStarting = true;
-    try {
-      this.stopPollingLoop();
-      this.isTracking = true;
-      this.shippingId = shippingId;
-      this.authToken = authToken;
-      this.pollCount = this.successCount = this.failCount = 0;
-
-      console.log('🎯 Tracking started successfully');
-      console.log(`🎯 Shipping ID set: ${this.shippingId}`);
-
-      await this.updateBatteryLevel();
-      this.startPollingLoop();
-      await this.startBackgroundTask();
-
-      console.log('🎯 FOREGROUND TRACKING ACTIVE 🎯');
-      return true;
-    } catch (error) {
-      console.log('🎯 Error starting tracking:', error);
-      return false;
-    } finally {
-      this.isStarting = false;
-    }
-  }
-
-  async stopTracking(): Promise<void> {
-    console.log('🛑 STOP TRACKING CALLED 🛑');
-    if (this.isStopping) return;
-    this.isStopping = true;
-    try {
-      this.isTracking = false;
-      this.stopPollingLoop();
-      await this.stopBackgroundTask();
-      this.shippingId = null;
-      this.authToken = null;
-      this.lastLocation = null;
-      console.log('🛑 Tracking stopped successfully');
-    } finally {
-      this.isStopping = false;
-    }
-  }
-
-  private onAppStateChange(nextState: AppStateStatus) {
-    console.log(`📱 App state changed to: ${nextState}`);
-    this.appState = nextState;
-    this.backgroundMode = nextState === 'background';
-
-    if (nextState === 'active') {
-      console.log('🟢 App in FOREGROUND - Active tracking');
-    } else {
-      console.log('🔵 App in BACKGROUND - Background tracking active');
-    }
-
-    if (this.isTracking) this.restartPollingWithNewInterval();
-  }
-
-  private restartPollingWithNewInterval() {
-    if (this.isTracking) {
-      this.stopPollingLoop();
-      this.startPollingLoop();
-    }
-  }
-
-  private startPollingLoop() {
-    if (this.pollingIntervalId) this.stopPollingLoop();
-    const interval = BatteryTimeoutCalculator.getPollingInterval(
-      this.batteryLevel,
-      this.backgroundMode,
-    );
-    this.currentIntervalMs = interval;
-
-    const mode = this.backgroundMode ? 'BACKGROUND' : 'FOREGROUND';
-    console.log(
-      `🔄 Starting ${mode} polling loop with interval: ${interval}ms`,
-    );
-
-    if (this.batteryUpdateCallback)
-      this.batteryUpdateCallback(this.getBatteryInfo());
-    this.executeLocationPoll();
-    this.pollingIntervalId = setInterval(
-      () => this.executeLocationPoll(),
-      interval,
-    );
-  }
-
-  private stopPollingLoop() {
-    if (this.pollingIntervalId) {
-      clearInterval(this.pollingIntervalId);
-      this.pollingIntervalId = null;
-      console.log('🔄 Polling loop stopped');
-    }
-  }
-
-  private async executeLocationPoll() {
-    if (!this.isTracking || this.isPollingInProgress) return;
-    this.pollCount++;
-    this.isPollingInProgress = true;
-
-    const mode = this.backgroundMode ? 'BACKGROUND' : 'FOREGROUND';
-    console.log(
-      `📍 ${mode} POLL #${this.pollCount} at ${new Date().toISOString()}`,
-    );
-
-    try {
-      const location = await this.getCurrentLocationWithRetry(false);
-      if (location) {
-        this.successCount++;
-        console.log(
-          `✅ ${mode} location successful - Total success: ${this.successCount}`,
-        );
-        await this.handleLocationUpdate(location);
-      } else {
-        this.failCount++;
-        console.log(
-          `❌ ${mode} location failed - Total fails: ${this.failCount}`,
-        );
-      }
-    } catch (error) {
-      console.log(`❌ ${mode} location error:`, error);
-    } finally {
-      this.isPollingInProgress = false;
-    }
-  }
-
-  private startBatteryMonitoring() {
-    this.batteryInterval = setInterval(async () => {
-      await this.updateBatteryLevel();
-      if (this.isTracking) {
-        const newInterval = BatteryTimeoutCalculator.getPollingInterval(
-          this.batteryLevel,
-          this.backgroundMode,
-        );
-        if (newInterval !== this.currentIntervalMs) {
-          console.log(
-            `🔋 Battery level changed to ${this.batteryLevel}%, updating interval to ${newInterval}ms`,
-          );
-          this.restartPollingWithNewInterval();
-        }
-      }
-    }, 60000);
-    this.updateBatteryLevel();
-  }
-
-  private async updateBatteryLevel() {
-    try {
-      const level = await DeviceInfo.getBatteryLevel();
-      this.batteryLevel = level * 100;
-    } catch {
-      this.batteryLevel = 50;
-    }
-    if (this.batteryUpdateCallback)
-      this.batteryUpdateCallback(this.getBatteryInfo());
-  }
-
-  private async handleLocationUpdate(location: LocationData) {
-    if (!this.isTracking || !this.shippingId || !this.authToken) {
-      console.log('⚠️ Cannot handle location update - missing data');
-      return;
-    }
-
-    const { latitude, longitude, accuracy } = location;
-    if (latitude === 0 && longitude === 0) {
-      console.log('⚠️ Invalid location (0,0), skipping');
-      return;
-    }
-
-    if (this.lastLocation) {
-      const distance = Math.hypot(
-        (latitude - this.lastLocation.latitude) * 111000,
-        (longitude - this.lastLocation.longitude) * 111000,
-      );
-      if (
-        distance < 10 &&
-        Math.abs(accuracy - this.lastLocation.accuracy) < 5
-      ) {
-        console.log(
-          `📍 Location change < 10m (${distance.toFixed(1)}m), skipping update`,
-        );
-        return;
-      }
-      console.log(`📍 Location changed by ${distance.toFixed(1)}m`);
-    }
-
-    this.lastLocation = {
-      latitude,
-      longitude,
-      accuracy,
-      timestamp: Date.now(),
-    };
-
-    const mode = this.backgroundMode ? 'BACKGROUND' : 'FOREGROUND';
-    console.log(
-      `📤 Sending ${mode} location to backend: ${latitude}, ${longitude}`,
-    );
-
-    await this.sendLocationToBackend(latitude, longitude, accuracy, false);
-  }
-
-  private async sendLocationToBackend(
-    lat: number,
-    lng: number,
-    acc: number,
-    isBg: boolean = false,
-  ) {
-    if (!this.shippingId || !this.authToken) {
-      console.log('⚠️ Cannot send location - missing shippingId or authToken');
-      return;
-    }
-
-    const mode = isBg ? 'BACKGROUND' : 'FOREGROUND';
-    console.log(`🌐 Sending ${mode} location to API...`);
-    console.log(`🌐 URL: ${API_BASE_URL}/api/v0/track/rider/location`);
-    console.log(`🌐 Payload:`, {
-      shippingId: this.shippingId,
-      action: 'update',
-      latitude: lat,
-      longitude: lng,
-      accuracy: acc,
-      timestamp: new Date().toISOString(),
-      updateType: 'tracking',
-      batteryLevel: this.batteryLevel,
-      isBackground: isBg,
-    });
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v0/track/rider/location`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.authToken}`,
-        },
-        body: JSON.stringify({
-          shippingId: this.shippingId,
-          action: 'update',
-          latitude: lat,
-          longitude: lng,
-          accuracy: acc,
-          timestamp: new Date().toISOString(),
-          updateType: 'tracking',
-          batteryLevel: this.batteryLevel,
-          isBackground: isBg,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok && data.success) {
-        console.log(`✅ ${mode} location sent successfully!`);
-        console.log(`✅ Response:`, data);
-      } else {
-        console.log(`❌ ${mode} location send failed:`, data);
-      }
-    } catch (error) {
-      console.log(`❌ ${mode} location network error:`, error);
-    }
-  }
-
-  destroy() {
-    console.log('🗑️ Destroying LocationTracker');
-    this.stopTracking();
-    if (this.appStateSubscription) this.appStateSubscription.remove();
-    if (this.batteryInterval) clearInterval(this.batteryInterval);
-    if (this.pollingIntervalId) clearInterval(this.pollingIntervalId);
-  }
-}
+const API_BASE_URL = 'http://10.171.84.121:5000';
 
 const getLocationOnce = (): Promise<{ lat: number; lng: number }> =>
   new Promise((res, rej) => {
+    console.log('📍📱 [GET_LOCATION_ONCE] Getting single location...');
     GetLocation.getCurrentPosition({
       enableHighAccuracy: false,
       timeout: 15000,
     })
-      .then(loc => res({ lat: loc.latitude, lng: loc.longitude }))
-      .catch(rej);
+      .then(loc => {
+        console.log('📍✅ [GET_LOCATION_ONCE] Location obtained:', {
+          lat: loc.latitude,
+          lng: loc.longitude,
+        });
+        res({ lat: loc.latitude, lng: loc.longitude });
+      })
+      .catch(err => {
+        console.log('📍❌ [GET_LOCATION_ONCE] Error:', err);
+        rej(err);
+      });
   });
 
 function useDebounce<T extends (...args: any[]) => any>(
@@ -906,7 +98,8 @@ function useDebounce<T extends (...args: any[]) => any>(
 }
 
 export async function requestLocationPermission(): Promise<boolean> {
-  return await LocationTracker.getInstance().requestRealPermissions();
+  console.log('🔐📱 [REQUEST_LOCATION_PERMISSION] Called from export');
+  return await LocationService.requestPermissions();
 }
 
 async function requestStoragePermission(): Promise<boolean> {
@@ -1086,73 +279,77 @@ const UploadField: React.FC<{
   </View>
 );
 
+// Simple Battery Info Card - Shows battery level only
 const BatteryInfoCard: React.FC<{
   batteryLevel: number;
-  fgTimeout: number;
-  bgTimeout: number;
-  interval: number;
-  accuracyMode: string;
-}> = ({ batteryLevel, fgTimeout, bgTimeout, interval, accuracyMode }) => (
-  <View style={styles.batteryCard}>
-    <View style={styles.batteryCardHeader}>
-      <Icon name="battery-charging-full" size={22} color="#2563EB" />
-      <Text style={styles.batteryCardTitle}>Battery & Performance</Text>
-    </View>
-    <View style={styles.batteryStatsRow}>
-      <View style={styles.batteryStatItem}>
-        <Fontisto
-          name={BatteryTimeoutCalculator.getBatteryIconName(batteryLevel)}
-          size={32}
-          color={BatteryTimeoutCalculator.getBatteryColor(batteryLevel)}
-        />
-        <Text
+}> = ({ batteryLevel }) => {
+  const getBatteryColor = (level: number) => {
+    if (level > 50) return '#10B981';
+    if (level > 20) return '#F59E0B';
+    return '#EF4444';
+  };
+
+  const getBatteryIcon = (level: number) => {
+    if (level > 90) return 'battery-full';
+    if (level > 70) return 'battery-three-quarters';
+    if (level > 50) return 'battery-half';
+    if (level > 30) return 'battery-quarter';
+    if (level > 15) return 'battery-empty';
+    return 'battery-warning';
+  };
+
+  return (
+    <View style={styles.batteryCard}>
+      <View style={styles.batteryCardHeader}>
+        <Icon name="battery-charging-full" size={22} color="#2563EB" />
+        <Text style={styles.batteryCardTitle}>Battery Status</Text>
+      </View>
+      <View style={styles.batteryStatsRow}>
+        <View style={styles.batteryStatItem}>
+          <Fontisto
+            name={getBatteryIcon(batteryLevel)}
+            size={32}
+            color={getBatteryColor(batteryLevel)}
+          />
+          <Text
+            style={[
+              styles.batteryStatValue,
+              { color: getBatteryColor(batteryLevel) },
+            ]}
+          >
+            {batteryLevel.toFixed(0)}%
+          </Text>
+          <Text style={styles.batteryStatLabel}>Battery</Text>
+        </View>
+        <View style={styles.batteryStatItem}>
+          <Icon name="speed" size={32} color="#2563EB" />
+          <Text style={[styles.batteryStatValue, { color: '#2563EB' }]}>
+            5s
+          </Text>
+          <Text style={styles.batteryStatLabel}>Interval</Text>
+        </View>
+        <View style={styles.batteryStatItem}>
+          <Icon name="gps-fixed" size={32} color="#10B981" />
+          <Text style={[styles.batteryStatValue, { color: '#10B981' }]}>
+            HIGH
+          </Text>
+          <Text style={styles.batteryStatLabel}>Accuracy</Text>
+        </View>
+      </View>
+      <View style={styles.batteryProgressBar}>
+        <View
           style={[
-            styles.batteryStatValue,
-            { color: BatteryTimeoutCalculator.getBatteryColor(batteryLevel) },
+            styles.batteryProgressFill,
+            {
+              width: `${batteryLevel}%`,
+              backgroundColor: getBatteryColor(batteryLevel),
+            },
           ]}
-        >
-          {batteryLevel.toFixed(0)}%
-        </Text>
-        <Text style={styles.batteryStatLabel}>Battery</Text>
-      </View>
-      <View style={styles.batteryStatItem}>
-        <Icon
-          name={BatteryTimeoutCalculator.getAccuracyIconName(accuracyMode)}
-          size={32}
-          color={BatteryTimeoutCalculator.getAccuracyColor(accuracyMode)}
         />
-        <Text
-          style={[
-            styles.batteryStatValue,
-            { color: BatteryTimeoutCalculator.getAccuracyColor(accuracyMode) },
-          ]}
-        >
-          {accuracyMode.toUpperCase()}
-        </Text>
-        <Text style={styles.batteryStatLabel}>Accuracy</Text>
-      </View>
-      <View style={styles.batteryStatItem}>
-        <Icon name="speed" size={32} color="#2563EB" />
-        <Text style={[styles.batteryStatValue, { color: '#2563EB' }]}>
-          {Math.round(interval / 1000)}s
-        </Text>
-        <Text style={styles.batteryStatLabel}>Interval</Text>
       </View>
     </View>
-    <View style={styles.batteryProgressBar}>
-      <View
-        style={[
-          styles.batteryProgressFill,
-          {
-            width: `${batteryLevel}%`,
-            backgroundColor:
-              BatteryTimeoutCalculator.getBatteryColor(batteryLevel),
-          },
-        ]}
-      />
-    </View>
-  </View>
-);
+  );
+};
 
 // ============================================================
 // MAIN SCREEN COMPONENT
@@ -1201,10 +398,6 @@ const RiderRegistrationScreen: React.FC = () => {
   const slideAnim = useRef(new Animated.Value(30)).current;
 
   const [batteryLevel, setBatteryLevel] = useState<number>(100);
-  const [fgTimeout, setFgTimeout] = useState<number>(15000);
-  const [bgTimeout, setBgTimeout] = useState<number>(20000);
-  const [pollingInterval, setPollingInterval] = useState<number>(10000);
-  const [accuracyMode, setAccuracyMode] = useState<string>('high');
 
   const [shippingType, setShippingType] = useState<ShippingType | null>(null);
   const [city, setCity] = useState<string>('');
@@ -1253,6 +446,17 @@ const RiderRegistrationScreen: React.FC = () => {
   const [shippingId, setShippingId] = useState<string | null>(null);
   const [showOnboarding, setShowOnboarding] = useState<boolean>(false);
 
+  // ============================================================
+  // 📍 LOCATION STATE (UI ONLY)
+  // ============================================================
+  const [lastLocation, setLastLocation] = useState<LocationWithMetadata | null>(
+    null,
+  );
+  const [isLocationAvailable, setIsLocationAvailable] =
+    useState<boolean>(false);
+  const locationSubscriptionRef = useRef<(() => void) | null>(null);
+  const locationUpdateCountRef = useRef<number>(0);
+
   const vehicleCategories: ItemType<VehicleCategory>[] = [
     { label: 'Car', value: 'Car' },
     { label: 'Bike', value: 'Bike' },
@@ -1272,10 +476,12 @@ const RiderRegistrationScreen: React.FC = () => {
   ];
 
   const checkPermissionStatus = useCallback(async () => {
-    const tracker = LocationTracker.getInstance();
-    const hasPermission = await tracker.checkRealPermissions();
+    console.log('🔐📱 [checkPermissionStatus] Checking permission status...');
+    const hasPermission = await LocationService.requestPermissions();
     setHasLocationPermission(hasPermission);
-    console.log(`🔐 Permission status: ${hasPermission}`);
+    console.log(
+      `🔐 [checkPermissionStatus] Permission status: ${hasPermission}`,
+    );
   }, []);
 
   const loadVehicleBrands = useCallback((category: VehicleCategory) => {
@@ -1319,8 +525,27 @@ const RiderRegistrationScreen: React.FC = () => {
     else setAllModels([]);
   }, [vehicleCategory, vehicleBrand, loadVehicleModels]);
 
+  // Get battery level
+  const updateBatteryLevel = async () => {
+    try {
+      const level = await DeviceInfo.getBatteryLevel();
+      setBatteryLevel(level * 100);
+    } catch {
+      setBatteryLevel(75);
+    }
+  };
+
+  // ============================================================
+  // 📱 MAIN useEffect - MOUNT & UNMOUNT
+  // ============================================================
   useEffect(() => {
+    console.log('==================================================');
+    console.log('📱 [SCREEN] ════════════════════════════════════');
+    console.log('📱 [SCREEN] 🏗️ MOUNTING RiderRegistrationScreen');
+    console.log('==================================================');
+
     isMounted.current = true;
+
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -1333,26 +558,70 @@ const RiderRegistrationScreen: React.FC = () => {
         useNativeDriver: true,
       }),
     ]).start();
+
     checkPermissionStatus();
-    const tracker = LocationTracker.getInstance();
-    tracker.setBatteryUpdateCallback(info => {
-      setBatteryLevel(info.level);
-      setFgTimeout(info.fgTimeout);
-      setBgTimeout(info.bgTimeout);
-      setPollingInterval(info.interval);
-      setAccuracyMode(info.accuracyMode);
-    });
+    updateBatteryLevel();
+
+    // ============================================================
+    // 📍 SUBSCRIBE TO LOCATION UPDATES - UI ONLY
+    // LocationService owns the API upload
+    // ============================================================
+
+    console.log('📱 [SCREEN] 📞 Subscribing to location updates (UI only)...');
+
+    locationSubscriptionRef.current = LocationService.subscribeToLocation(
+      (locationData: LocationWithMetadata) => {
+        console.log('==================================================');
+        console.log('📍 [SCREEN] ════════════════════════════════════');
+        console.log(
+          `📍 [SCREEN] 📍 LOCATION UPDATE #${++locationUpdateCountRef.current}`,
+        );
+        console.log(`📍 [SCREEN] 📅 Time: ${new Date().toISOString()}`);
+        console.log('📍 [SCREEN] ════════════════════════════════════');
+        console.log('📍 [SCREEN] 📊 Location Data:', {
+          lat: locationData.latitude,
+          lng: locationData.longitude,
+          accuracy: locationData.accuracy,
+          speed: locationData.speed,
+          batteryLevel: locationData.batteryLevel,
+          networkType: locationData.networkType,
+          isFresh: locationData.isFresh,
+          isCached: locationData.isCached,
+        });
+        console.log('==================================================');
+
+        if (!isMounted.current) {
+          console.log('📍 [SCREEN] ⏸️ Screen unmounted, ignoring location');
+          return;
+        }
+
+        // ✅ ONLY UPDATE UI - NO API CALL HERE
+        // LocationService handles the API upload
+        setLastLocation(locationData);
+        setIsLocationAvailable(true);
+      },
+    );
+
     return () => {
+      console.log('📱 [SCREEN] 🧹 UNMOUNTING RiderRegistrationScreen');
       isMounted.current = false;
-      tracker.destroy();
+
+      // Unsubscribe from location updates
+      if (locationSubscriptionRef.current) {
+        console.log('📱 [SCREEN] 📞 Unsubscribing from location updates...');
+        locationSubscriptionRef.current();
+        locationSubscriptionRef.current = null;
+      }
     };
   }, []);
 
   const handleRequestPermissions = async () => {
-    console.log('🔐 Requesting location permissions...');
+    console.log(
+      '🔐📱 [handleRequestPermissions] Requesting location permissions...',
+    );
     const granted = await requestLocationPermission();
     setHasLocationPermission(granted);
-    console.log(`🔐 Permission granted: ${granted}`);
+    console.log(`🔐 [handleRequestPermissions] Permission granted: ${granted}`);
     Toast.show({
       type: granted ? 'success' : 'error',
       text1: granted ? 'Permission Granted' : 'Permission Required',
@@ -1360,98 +629,88 @@ const RiderRegistrationScreen: React.FC = () => {
     });
   };
 
+  // ============================================================
+  // 🟢 GO ONLINE WITH LOCATION
+  // ============================================================
   const goOnlineWithLocation = async (
     shippingId: string,
     authToken: string,
   ): Promise<boolean> => {
-    console.log('🟢 GOING ONLINE WITH LOCATION 🟢');
-    console.log(`🟢 Shipping ID: ${shippingId}`);
+    console.log('🟢🚀 [GO_ONLINE_WITH_LOCATION] ===== GOING ONLINE =====');
+    console.log(`🟢🚀 [GO_ONLINE_WITH_LOCATION] Shipping ID: ${shippingId}`);
 
     try {
-      console.log('📍 Getting initial location...');
-      const { lat, lng } = await getLocationOnce();
-      console.log(`📍 Initial location: ${lat}, ${lng}`);
+      console.log('📍 [GO_ONLINE_WITH_LOCATION] Getting initial location...');
+      const location = await LocationService.getCurrentLocationOnce();
 
-      console.log('🌐 Sending start action to backend...');
-      await fetch(`${API_BASE_URL}/api/v0/track/rider/location`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({
-          shippingId: shippingId,
-          action: 'start',
-          latitude: lat,
-          longitude: lng,
-        }),
-      });
-      console.log('✅ Start action sent successfully');
+      if (location) {
+        console.log(
+          `📍 [GO_ONLINE_WITH_LOCATION] Initial location: ${location.latitude}, ${location.longitude}`,
+        );
+
+        console.log(
+          '🌐 [GO_ONLINE_WITH_LOCATION] Sending start action to backend...',
+        );
+        await fetch(`${API_BASE_URL}/api/v0/track/rider/location`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authToken}`,
+          },
+          body: JSON.stringify({
+            shippingId: shippingId,
+            action: 'start',
+            latitude: location.latitude,
+            longitude: location.longitude,
+          }),
+        });
+        console.log(
+          '✅ [GO_ONLINE_WITH_LOCATION] Start action sent successfully',
+        );
+      } else {
+        console.log(
+          '⚠️ [GO_ONLINE_WITH_LOCATION] No initial location available',
+        );
+      }
     } catch (error) {
-      console.log('⚠️ Error sending start action:', error);
+      console.log(
+        '⚠️ [GO_ONLINE_WITH_LOCATION] Error sending start action:',
+        error,
+      );
     }
 
-    console.log('🎯 Starting continuous tracking...');
-    const success = await LocationTracker.getInstance().startTracking(
-      shippingId,
-      authToken,
-    );
+    console.log('🎯 [GO_ONLINE_WITH_LOCATION] Starting continuous tracking...');
+
+    // ✅ PASS shippingId to startTracking
+    const success = await LocationService.startTracking(shippingId);
 
     if (isMounted.current && success) {
       setIsTrackingOn(true);
-      console.log('✅ Tracking started successfully');
+      console.log('✅ [GO_ONLINE_WITH_LOCATION] Tracking started successfully');
     } else {
-      console.log('❌ Failed to start tracking');
+      console.log('❌ [GO_ONLINE_WITH_LOCATION] Failed to start tracking');
     }
     return success;
   };
 
-  const startLiveTracking = async (
-    shippingId: string,
-    authToken: string,
-  ): Promise<boolean> => {
-    console.log('📍 START LIVE TRACKING 📍');
-    console.log(`📍 Shipping ID: ${shippingId}`);
-
-    const tracker = LocationTracker.getInstance();
-    if (!(await tracker.checkRealPermissions())) {
-      console.log('❌ No location permission');
-      Toast.show({
-        type: 'error',
-        text1: 'Permission Required',
-        text2: 'Please grant location permission first',
-      });
-      return false;
-    }
-
-    const success = await tracker.startTracking(shippingId, authToken);
-    if (success && isMounted.current) {
-      setIsTrackingOn(true);
-      console.log('✅ Live tracking started');
-      Toast.show({
-        type: 'success',
-        text1: 'Location Tracking Started',
-        text2: 'Continuous tracking active',
-      });
-      return true;
-    }
-    console.log('❌ Failed to start live tracking');
-    return false;
-  };
-
+  // ============================================================
+  // 🛑 STOP LIVE TRACKING
+  // ============================================================
   const stopLiveTracking = async (): Promise<boolean> => {
-    console.log('📍 STOP LIVE TRACKING 📍');
-    await LocationTracker.getInstance().stopTracking();
-    if (isMounted.current) {
+    console.log('📍🛑 [STOP_LIVE_TRACKING] ===== STOPPING LIVE TRACKING =====');
+    const success = await LocationService.stopTracking();
+    if (isMounted.current && success) {
       setIsTrackingOn(false);
-      console.log('✅ Live tracking stopped');
+      console.log('📍✅ [STOP_LIVE_TRACKING] Live tracking stopped');
     }
-    return true;
+    return success;
   };
 
   useFocusEffect(
     useCallback(() => {
-      console.log('📱 Screen focused - fetching shipping data');
+      console.log(
+        '📱🔍 [USE_FOCUS_EFFECT] Screen focused - fetching shipping data',
+      );
       fetchShippingData();
       checkPermissionStatus();
     }, []),
@@ -1460,9 +719,10 @@ const RiderRegistrationScreen: React.FC = () => {
   const getAuthToken = async (): Promise<string | null> => {
     try {
       const token = await AsyncStorage.getItem('authToken');
-      console.log(`🔑 Auth token present: ${!!token}`);
+      console.log(`🔑 [GET_AUTH_TOKEN] Auth token present: ${!!token}`);
       return token;
-    } catch {
+    } catch (error) {
+      console.log('🔑❌ [GET_AUTH_TOKEN] Error:', error);
       return null;
     }
   };
@@ -1473,13 +733,13 @@ const RiderRegistrationScreen: React.FC = () => {
       setCheckingExisting(true);
       const token = await getAuthToken();
       if (!token) {
-        console.log('No auth token found');
+        console.log('🔑 [FETCH_SHIPPING] No auth token found');
         setCheckingExisting(false);
         setShowOnboarding(true);
         return;
       }
 
-      console.log('Fetching shipping data from backend...');
+      console.log('🌐 [FETCH_SHIPPING] Fetching shipping data from backend...');
       const res = await fetch(`${API_BASE_URL}/api/v0/shipping/form/check`, {
         method: 'GET',
         headers: {
@@ -1492,7 +752,7 @@ const RiderRegistrationScreen: React.FC = () => {
         const data = await res.json();
         if (data.exists && data.shippingData) {
           const reg = data.shippingData;
-          console.log(`✅ Shipping data found: ${reg._id}`);
+          console.log(`✅ [FETCH_SHIPPING] Shipping data found: ${reg._id}`);
           setShippingId(reg._id);
           setShippingData(reg);
           setIsOnline(reg.isOnline || false);
@@ -1516,30 +776,36 @@ const RiderRegistrationScreen: React.FC = () => {
             reg.kycVerified === true;
 
           if (approved && kycVerified && reg.isOnline) {
-            console.log('🔄 Restarting tracking for existing online session');
-            await LocationTracker.getInstance().startTracking(reg._id, token);
+            console.log(
+              '🔄 [FETCH_SHIPPING] Restarting tracking for existing online session',
+            );
+            // ✅ PASS shippingId to startTracking
+            await LocationService.startTracking(reg._id);
             if (isMounted.current) setIsTrackingOn(true);
           }
         } else {
-          console.log('No shipping data found');
+          console.log('🔍 [FETCH_SHIPPING] No shipping data found');
           setShowOnboarding(true);
         }
       } else if (res.status === 404) {
-        console.log('No shipping registration found (404)');
+        console.log('🔍 [FETCH_SHIPPING] No shipping registration found (404)');
         if (isMounted.current) {
           setShippingData(null);
           setShowOnboarding(true);
         }
       }
     } catch (error) {
-      console.log('Error fetching shipping data:', error);
+      console.log('❌ [FETCH_SHIPPING] Error fetching shipping data:', error);
     } finally {
       if (isMounted.current) setCheckingExisting(false);
     }
   };
 
   const toggleOnlineStatusCore = async () => {
+    console.log('🔄🟢 [TOGGLE_ONLINE_CORE] ===== TOGGLING ONLINE STATUS =====');
+
     if (!shippingData) {
+      console.log('🔄❌ [TOGGLE_ONLINE_CORE] No shipping data');
       Toast.show({
         type: 'error',
         text1: 'No Registration',
@@ -1555,6 +821,7 @@ const RiderRegistrationScreen: React.FC = () => {
       shippingData.kycVerified === true;
 
     if (!approved || !kycVerified) {
+      console.log('🔄❌ [TOGGLE_ONLINE_CORE] Not approved/verified');
       Toast.show({
         type: 'error',
         text1: 'Verification Pending',
@@ -1564,20 +831,29 @@ const RiderRegistrationScreen: React.FC = () => {
       return;
     }
 
-    if (isUpdatingOnlineStatus) return;
+    if (isUpdatingOnlineStatus) {
+      console.log('🔄⚠️ [TOGGLE_ONLINE_CORE] Already updating, returning');
+      return;
+    }
     setIsUpdatingOnlineStatus(true);
 
     try {
       const token = await getAuthToken();
       if (!token) {
+        console.log('🔄❌ [TOGGLE_ONLINE_CORE] No auth token');
         navigation.navigate('Login');
         return;
       }
 
       const newStatus = !isOnline;
-      console.log(`🔄 Toggling online status to: ${newStatus}`);
+      console.log(
+        `🔄 [TOGGLE_ONLINE_CORE] Toggling online status to: ${newStatus}`,
+      );
       setIsOnline(newStatus);
 
+      console.log(
+        '🌐 [TOGGLE_ONLINE_CORE] Sending online status to backend...',
+      );
       const res = await fetch(`${API_BASE_URL}/api/v0/shipper/online-status`, {
         method: 'POST',
         headers: {
@@ -1588,6 +864,7 @@ const RiderRegistrationScreen: React.FC = () => {
       });
 
       const data = await res.json();
+      console.log('🌐 [TOGGLE_ONLINE_CORE] Response:', data);
 
       if (res.ok && data.success) {
         const now = new Date().toISOString();
@@ -1605,7 +882,9 @@ const RiderRegistrationScreen: React.FC = () => {
         );
 
         if (newStatus) {
-          console.log('🟢 Going online - starting location tracking');
+          console.log(
+            '🟢 [TOGGLE_ONLINE_CORE] Going online - starting location tracking',
+          );
           await goOnlineWithLocation(shippingData._id, token);
           Toast.show({
             type: 'success',
@@ -1613,7 +892,9 @@ const RiderRegistrationScreen: React.FC = () => {
             text2: 'Location tracking enabled',
           });
         } else {
-          console.log('🔴 Going offline - stopping location tracking');
+          console.log(
+            '🔴 [TOGGLE_ONLINE_CORE] Going offline - stopping location tracking',
+          );
           await stopLiveTracking();
           Toast.show({
             type: 'info',
@@ -1626,7 +907,10 @@ const RiderRegistrationScreen: React.FC = () => {
         throw new Error(data.message || 'Failed to update');
       }
     } catch (error: any) {
-      console.log('Error toggling online status:', error);
+      console.log(
+        '❌ [TOGGLE_ONLINE_CORE] Error toggling online status:',
+        error,
+      );
       Toast.show({
         type: 'error',
         text1: 'Update Failed',
@@ -1639,8 +923,17 @@ const RiderRegistrationScreen: React.FC = () => {
 
   const toggleOnlineStatus = useDebounce(toggleOnlineStatusCore, 1500);
 
+  // ============================================================
+  // 📍 TOGGLE LOCATION TRACKING
+  // ============================================================
   const toggleLocationTrackingCore = async () => {
+    console.log(
+      '📍🔄 [TOGGLE_TRACKING_CORE] ===== TOGGLING LOCATION TRACKING =====',
+    );
+    console.log(`📍🔄 [TOGGLE_TRACKING_CORE] isTrackingOn: ${isTrackingOn}`);
+
     if (!shippingData) {
+      console.log('📍❌ [TOGGLE_TRACKING_CORE] No shipping data');
       Toast.show({
         type: 'error',
         text1: 'No Registration',
@@ -1650,6 +943,7 @@ const RiderRegistrationScreen: React.FC = () => {
     }
 
     if (!isOnline) {
+      console.log('📍❌ [TOGGLE_TRACKING_CORE] Not online');
       Toast.show({
         type: 'error',
         text1: 'Go Online First',
@@ -1658,20 +952,27 @@ const RiderRegistrationScreen: React.FC = () => {
       return;
     }
 
-    if (isUpdatingTrackingStatus) return;
+    if (isUpdatingTrackingStatus) {
+      console.log('📍⚠️ [TOGGLE_TRACKING_CORE] Already updating, returning');
+      return;
+    }
+
     setIsUpdatingTrackingStatus(true);
 
     try {
       const token = await getAuthToken();
       if (!token) {
+        console.log('📍❌ [TOGGLE_TRACKING_CORE] No auth token');
         navigation.navigate('Login');
         return;
       }
 
       if (!isTrackingOn) {
-        console.log('📍 Starting location tracking');
-        const success = await startLiveTracking(shippingData._id, token);
+        console.log('📍🟢 [TOGGLE_TRACKING_CORE] Starting location tracking');
+        // ✅ PASS shippingId to startTracking
+        const success = await LocationService.startTracking(shippingData._id);
         if (success && isMounted.current) {
+          setIsTrackingOn(true);
           ReactNativeHapticFeedback.trigger(
             'notificationSuccess',
             hapticOptions,
@@ -1683,9 +984,10 @@ const RiderRegistrationScreen: React.FC = () => {
           });
         }
       } else {
-        console.log('📍 Stopping location tracking');
-        const success = await stopLiveTracking();
+        console.log('📍🔴 [TOGGLE_TRACKING_CORE] Stopping location tracking');
+        const success = await LocationService.stopTracking();
         if (success && isMounted.current) {
+          setIsTrackingOn(false);
           ReactNativeHapticFeedback.trigger(
             'notificationWarning',
             hapticOptions,
@@ -1698,7 +1000,10 @@ const RiderRegistrationScreen: React.FC = () => {
         }
       }
     } catch (error: any) {
-      console.log('Error toggling tracking:', error);
+      console.log(
+        '📍❌ [TOGGLE_TRACKING_CORE] Error toggling tracking:',
+        error,
+      );
       Toast.show({
         type: 'error',
         text1: 'Update Failed',
@@ -1960,13 +1265,7 @@ const RiderRegistrationScreen: React.FC = () => {
             </View>
           </View>
 
-          <BatteryInfoCard
-            batteryLevel={batteryLevel}
-            fgTimeout={fgTimeout}
-            bgTimeout={bgTimeout}
-            interval={pollingInterval}
-            accuracyMode={accuracyMode}
-          />
+          <BatteryInfoCard batteryLevel={batteryLevel} />
 
           <View style={styles.dashboardCard}>
             <View style={styles.profileRow}>
@@ -1987,8 +1286,8 @@ const RiderRegistrationScreen: React.FC = () => {
                   shippingData.status === 'approved'
                     ? styles.statusChipApproved
                     : shippingData.status === 'pending'
-                    ? styles.statusChipPending
-                    : styles.statusChipDeclined,
+                      ? styles.statusChipPending
+                      : styles.statusChipDeclined,
                 ]}
               >
                 <Text style={styles.statusChipText}>
@@ -2536,12 +1835,12 @@ const RiderRegistrationScreen: React.FC = () => {
                     item.value === 'Car'
                       ? 'directions-car'
                       : item.value === 'Bike'
-                      ? 'directions-bike'
-                      : item.value === 'Scooter'
-                      ? 'scooter'
-                      : item.value === 'Auto'
-                      ? 'local-taxi'
-                      : 'local-shipping'
+                        ? 'directions-bike'
+                        : item.value === 'Scooter'
+                          ? 'scooter'
+                          : item.value === 'Auto'
+                            ? 'local-taxi'
+                            : 'local-shipping'
                   }
                   size={24}
                   color={vehicleCategory === item.value ? '#2563EB' : '#64748B'}
@@ -2717,10 +2016,10 @@ const RiderRegistrationScreen: React.FC = () => {
                     item.value === 'Aadhaar'
                       ? 'badge'
                       : item.value === 'VoterID'
-                      ? 'how-to-vote'
-                      : item.value === 'Passport'
-                      ? 'card-travel'
-                      : 'credit-card'
+                        ? 'how-to-vote'
+                        : item.value === 'Passport'
+                          ? 'card-travel'
+                          : 'credit-card'
                   }
                   size={24}
                   color={identityType === item.value ? '#2563EB' : '#64748B'}

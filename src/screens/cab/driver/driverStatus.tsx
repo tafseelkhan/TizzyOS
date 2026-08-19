@@ -2,6 +2,6 @@
 import React from 'react';
 import DriverStatus from '../../../core/components/cab/driver/driverStatus';
 
-export default function driverStatusScreen() {
+export default function Status() {
   return <DriverStatus />;
 }

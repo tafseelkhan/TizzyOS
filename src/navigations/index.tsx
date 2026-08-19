@@ -1,6 +1,6 @@
 // src/navigations/index.tsx
 
-import React, { useEffect, useRef } from 'react';
+import React, { forwardRef, useImperativeHandle, useRef } from 'react';
 import {
   NavigationContainer,
   NavigationContainerRef,
@@ -66,7 +66,7 @@ import DriverAvailabilityScreen from '../screens/cab/driverAvailableStatus/drive
 // ============================================
 // 🚗 NEW DRIVER RIDE SCREENS
 // ============================================
-import ActiveTripScreen from '../screens/cab/rideRequest/ActiveTripScreen';
+import RideTrackingScreen from '../screens/cab/rideRequest/RideTracking';
 
 // ✅ Complete RootStackParamList with all screens
 export type RootStackParamList = {
@@ -125,20 +125,28 @@ export type RootStackParamList = {
   DriverRegistration: undefined;
   DriverStatus: undefined;
   DriverAvailability: undefined;
-
-  // ============================================
-  // 🚗 NEW DRIVER RIDE SCREENS
-  // ============================================
-  ActiveTrip: {
-    bookingId: string;
-  };
+  // ✅ FIX: ActiveTrip now expects trackingId as primary param
+  RideTracking: { trackingId: string; bookingId?: string };
 };
 
 const Stack = createStackNavigator<RootStackParamList>();
 
-export default function AppNavigator(): React.ReactElement {
+interface AppNavigatorProps {
+  onReady?: () => void;
+}
+
+const AppNavigator = forwardRef<
+  NavigationContainerRef<RootStackParamList>,
+  AppNavigatorProps
+>(({ onReady }, ref) => {
   const navigationRef =
     useRef<NavigationContainerRef<RootStackParamList>>(null);
+
+  // ✅ Expose navigation ref to parent
+  useImperativeHandle(
+    ref,
+    () => navigationRef.current as NavigationContainerRef<RootStackParamList>,
+  );
 
   // // Register navigation ref for Ads SDK
   // useEffect(() => {
@@ -147,6 +155,19 @@ export default function AppNavigator(): React.ReactElement {
   //   }
   // }, [navigationRef.current]);
 
+  const handleReady = () => {
+    console.log('[AppNavigator] ✅ NavigationContainer ready');
+
+    // Register navigation ref when ready
+    if (navigationRef.current) {
+      // AdsSDK.registerNavigationContainer(navigationRef.current);
+    }
+
+    if (onReady) {
+      onReady();
+    }
+  };
+
   return (
     <NavigationContainer
       ref={navigationRef}
@@ -154,12 +175,7 @@ export default function AppNavigator(): React.ReactElement {
         // Handle navigation state changes for ad tracking
         handleNavigationStateChange(state);
       }}
-      onReady={() => {
-        // Register navigation ref when ready
-        if (navigationRef.current) {
-          // AdsSDK.registerNavigationContainer(navigationRef.current);
-        }
-      }}
+      onReady={handleReady}
     >
       <Stack.Navigator
         initialRouteName="Splash"
@@ -213,9 +229,9 @@ export default function AppNavigator(): React.ReactElement {
         <Stack.Screen name="FWS" component={FWSMenuScreen} />
         <Stack.Screen name="FWSScannedOrders" component={FWSScannedOrders} />
         {/* <Stack.Screen name="EmployeeAttendance" component={EmployeeAttendance} />
-        <Stack.Screen name="EmployeeLeave" component={EmployeeLeave} />
-        <Stack.Screen name="EmployeePayroll" component={EmployeePayroll} />
-        <Stack.Screen name="EmployeeManagement" component={EmployeeManagement} /> */}
+          <Stack.Screen name="EmployeeLeave" component={EmployeeLeave} />
+          <Stack.Screen name="EmployeePayroll" component={EmployeePayroll} />
+          <Stack.Screen name="EmployeeManagement" component={EmployeeManagement} /> */}
 
         {/* CabDriver Screens - Add when needed */}
         <Stack.Screen name="CabDriver" component={CabDriverScreen} />
@@ -230,17 +246,14 @@ export default function AppNavigator(): React.ReactElement {
         />
 
         {/* ============================================
-            🚗 NEW DRIVER RIDE SCREENS
-            ============================================ */}
-        <Stack.Screen
-          name="ActiveTrip"
-          component={ActiveTripScreen}
-          options={{
-            presentation: 'modal',
-            gestureEnabled: true,
-          }}
-        />
+              🚗 NEW DRIVER RIDE SCREENS
+              ============================================ */}
+        <Stack.Screen name="RideTracking" component={RideTrackingScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
-}
+});
+
+AppNavigator.displayName = 'AppNavigator';
+
+export default AppNavigator;

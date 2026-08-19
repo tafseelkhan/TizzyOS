@@ -14,6 +14,8 @@ import {
   Dimensions,
   Animated,
   Platform,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import LinearGradient from 'react-native-linear-gradient';
@@ -21,20 +23,12 @@ import { driverStatusApi } from '../../../../api/features/private/driverLocation
 import { checkDriverStatus } from '../../../../api/features/private/driverCabRegisterPrivateSlice';
 
 // ============================================
-// 🔌 TWO DIFFERENT SOCKET SERVICES
+// 🔌 SOCKET SERVICE
 // ============================================
-import SocketService from '../../../utils/socket/socketUtils'; // Driver Status Socket
-import { socketService } from '../../../utils/socket/rideRequestUtils'; // Ride Request Socket
+import { socketService } from '../../../utils/socket/socketUtils';
 
 import LocationService from '../../../utils/cab/driverAvailability';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-
-// ============================================
-// 🚗 RIDE REQUEST IMPORTS
-// ============================================
-import RideRequestPopup from '../../../components/cab/rideRequest/RideRequestPopup';
-import { useRideRequest } from '../../../hooks/cab/useRideRequest';
-import { rideRequestHandler } from '../../../utils/socket/rideRequestHandler';
 
 const { width } = Dimensions.get('window');
 
@@ -62,17 +56,6 @@ const COLORS = {
 
 const DriverStatusScreen: React.FC = () => {
   const navigation = useNavigation();
-
-  // ============================================
-  // 🚗 RIDE REQUEST HOOK (NEW)
-  // ============================================
-  const {
-    currentRequest,
-    isRequestActive,
-    acceptRide,
-    rejectRide,
-    dismissRequest,
-  } = useRideRequest();
 
   // State
   const [userId, setUserId] = useState<string | null>(null);
@@ -112,44 +95,69 @@ const DriverStatusScreen: React.FC = () => {
   const isMounted = useRef<boolean>(true);
 
   // ============================================
-  // ✅ CONNECT BOTH SOCKETS
+  // ✅ AppState Handler
   // ============================================
-  const initBothSockets = async () => {
-    console.log('[Screen] Initializing both sockets...');
+  const handleAppStateChange = useCallback(
+    (nextAppState: AppStateStatus) => {
+      console.log(`📱 [AppState] Changed to: ${nextAppState}`);
+
+      if (nextAppState === 'active') {
+        console.log('📱 [AppState] App foreground - checking socket...');
+
+        if (isOnline && !socketService.isSocketConnected()) {
+          console.log(
+            '📱 [AppState] Driver is online but socket disconnected, reconnecting...',
+          );
+          socketService.connect();
+        } else if (isOnline && socketService.isSocketConnected()) {
+          console.log('📱 [AppState] Socket already connected');
+        } else {
+          console.log('📱 [AppState] Driver is offline, no socket needed');
+        }
+      }
+    },
+    [isOnline],
+  );
+
+  // ============================================
+  // ✅ Periodic Connection Check
+  // ============================================
+  useEffect(() => {
+    const connectionCheck = setInterval(() => {
+      if (isOnline && !socketService.isSocketConnected()) {
+        console.log(
+          '🔄 [Screen] Socket disconnected while online, reconnecting...',
+        );
+        socketService.connect();
+      }
+    }, 30000);
+
+    return () => {
+      clearInterval(connectionCheck);
+    };
+  }, [isOnline]);
+
+  // ============================================
+  // ✅ CONNECT SOCKET
+  // ============================================
+  const initSocket = async () => {
+    console.log('[Screen] Initializing socket...');
 
     try {
-      // 1️⃣ Connect Driver Status Socket (SocketUtils)
-      const driverSocket = await SocketService.connect();
-      console.log('[Screen] ✅ Driver Status Socket connected');
-
-      // 2️⃣ Connect Ride Request Socket (SocketService)
       await socketService.connect();
-      console.log('[Screen] ✅ Ride Request Socket connected');
+      console.log('[Screen] ✅ Socket connected');
 
-      // Setup listeners for both
-      setupDriverSocketListeners(driverSocket);
-      setupRideSocketListeners();
-
-      // Check connection status after 1 second
       setTimeout(() => {
         if (!isMounted.current) return;
 
-        const connected = SocketService.isSocketConnected();
-        const id = SocketService.getSocketId();
+        const connected = socketService.isSocketConnected();
+        const id = socketService.getSocketId();
         setSocketConnected(connected);
         setSocketId(id);
-        console.log(
-          '[Screen] Driver Status Socket - Connected:',
-          connected,
-          'ID:',
-          id,
-        );
-
-        const rideConnected = socketService.isSocketConnected();
-        console.log('[Screen] Ride Request Socket - Connected:', rideConnected);
+        console.log('[Screen] Socket - Connected:', connected, 'ID:', id);
       }, 1000);
     } catch (error) {
-      console.error('[Screen] Failed to init sockets:', error);
+      console.error('[Screen] Failed to init socket:', error);
       Alert.alert(
         'Socket Error',
         'Failed to connect to server. Please try again.',
@@ -158,34 +166,11 @@ const DriverStatusScreen: React.FC = () => {
   };
 
   // ============================================
-  // 🎯 DRIVER STATUS SOCKET LISTENERS (SocketUtils)
+  // 🎯 SOCKET LISTENERS
   // ============================================
-  const setupDriverSocketListeners = (socket: any) => {
-    socket.on('connect', () => {
-      console.log('[Screen] Driver Status Socket CONNECT event');
-      if (!isMounted.current) return;
-      setSocketConnected(true);
-      const id = socket.id;
-      setSocketId(id);
-
-      const extractedUserId = SocketService.getUserId();
-      if (extractedUserId) {
-        setUserId(extractedUserId);
-        socket.emit('driver:register', { userId: extractedUserId });
-      }
-    });
-
-    socket.on('disconnect', () => {
-      console.log('[Screen] Driver Status Socket DISCONNECT event');
-      if (!isMounted.current) return;
-      setSocketConnected(false);
-      setSocketId(null);
-      setSocketRegistered(false);
-    });
-
-    socket.on('driver:registered', (data: any) => {
-      console.log('[Screen] DRIVER:REGISTERED event:', data);
-      if (!isMounted.current) return;
+  const setupSocketListeners = () => {
+    socketService.on('driver:registered', (data: any) => {
+      console.log('[Screen] DRIVER:REGISTERED:', data);
       setSocketRegistered(true);
       if (data.data?.socketId) {
         setSocketId(data.data.socketId);
@@ -195,11 +180,9 @@ const DriverStatusScreen: React.FC = () => {
       }
     });
 
-    socket.on('driver:status-changed', (data: any) => {
+    socketService.on('driver:status-changed', (data: any) => {
       console.log('[Screen] DRIVER:STATUS-CHANGED:', data);
-      if (!isMounted.current) return;
-      const currentUserId = SocketService.getUserId();
-      if (data.userId === currentUserId) {
+      if (data.userId === userId) {
         setIsOnline(data.isOnline);
         setIsAvailable(data.isAvailable);
         if (data.lastSeen) {
@@ -208,29 +191,20 @@ const DriverStatusScreen: React.FC = () => {
       }
     });
 
-    socket.on('driver:error', (data: any) => {
+    socketService.on('driver:error', (data: any) => {
       console.error('[Screen] DRIVER:ERROR:', data);
       Alert.alert('Socket Error', data.message || 'Something went wrong');
     });
 
-    socket.on('welcome', (data: any) => {
+    socketService.on('welcome', (data: any) => {
       console.log('[Screen] Welcome from server:', data);
     });
-  };
-
-  // ============================================
-  // 🎯 RIDE REQUEST SOCKET LISTENERS (SocketService)
-  // ============================================
-  const setupRideSocketListeners = () => {
-    // Ride request handler already handles these
-    // But we can add additional logging
-    console.log('[Screen] Ride Request Socket listeners ready');
   };
 
   // ✅ Initialize on Mount
   useEffect(() => {
     isMounted.current = true;
-    console.log('[Screen] Mounted');
+    console.log('[Screen] 🚀 Mounted - Setting up UI only');
 
     Animated.parallel([
       Animated.timing(fadeAnim, {
@@ -245,11 +219,8 @@ const DriverStatusScreen: React.FC = () => {
       }),
     ]).start();
 
-    // ============================================
-    // 🔌 CONNECT BOTH SOCKETS
-    // ============================================
-    initBothSockets();
-
+    initSocket();
+    setupSocketListeners();
     fetchDriverStatus();
     checkDriverRegistration();
     startPulseAnimation();
@@ -257,40 +228,48 @@ const DriverStatusScreen: React.FC = () => {
     checkLocationPermissions();
     checkLocationStatus();
 
-    // ============================================
-    // 🚗 SETUP RIDE REQUEST HANDLER
-    // ============================================
-    rideRequestHandler.setup();
+    const subscription = AppState.addEventListener(
+      'change',
+      handleAppStateChange,
+    );
+
+    const statusInterval = setInterval(() => {
+      if (isMounted.current) {
+        const connected = socketService.isSocketConnected();
+        const id = socketService.getSocketId();
+        setSocketConnected(connected);
+        setSocketId(id);
+      }
+    }, 5000);
 
     return () => {
+      console.log('[Screen] 🧹 Unmounting - Cleaning up UI only');
       isMounted.current = false;
 
-      // Cleanup Driver Status Socket
-      const driverSocket = SocketService.getSocket();
-      if (driverSocket) {
-        driverSocket.off('driver:status-changed');
-        driverSocket.off('connect');
-        driverSocket.off('disconnect');
-        driverSocket.off('driver:registered');
-        driverSocket.off('driver:error');
-      }
-
-      // Cleanup Ride Request Socket
-      socketService.cleanup();
+      subscription.remove();
+      clearInterval(statusInterval);
 
       if (locationIntervalRef.current) {
         clearInterval(locationIntervalRef.current);
+        locationIntervalRef.current = null;
       }
 
-      rideRequestHandler.cleanup();
+      // ✅ DO NOT cleanup socket - it's global!
+      console.log('[Screen] ✅ Unmount complete - Socket still alive');
     };
   }, []);
 
-  // ✅ Jab screen focus mein aaye, status check karo (tracking continue rahegi)
+  // ✅ Jab screen focus mein aaye
   useFocusEffect(
     useCallback(() => {
       console.log('[Screen] Focused - Checking location status');
       checkLocationStatus();
+
+      const connected = socketService.isSocketConnected();
+      const id = socketService.getSocketId();
+      setSocketConnected(connected);
+      setSocketId(id);
+
       return () => {
         console.log('[Screen] Unfocused - Location tracking continues...');
       };
@@ -412,7 +391,9 @@ const DriverStatusScreen: React.FC = () => {
     }
   };
 
-  // Toggle Status
+  // ============================================
+  // 🎯 TOGGLE STATUS
+  // ============================================
   const handleToggleStatus = async () => {
     if (!isDriverRegistered) {
       Alert.alert(
@@ -441,19 +422,68 @@ const DriverStatusScreen: React.FC = () => {
     }
 
     setUpdating(true);
+
     try {
-      const socketId = SocketService.getSocketId();
-      const response = await driverStatusApi.toggleDriverStatus(socketId);
+      // ✅ CASE: GOING OFFLINE
+      if (isOnline) {
+        console.log('🔄 [Screen] Going OFFLINE...');
 
-      if (!isMounted.current) return;
+        const response = await driverStatusApi.toggleDriverStatus(null);
 
-      if (response.success) {
-        const newStatus = response.data.isOnline;
-        setIsOnline(newStatus);
-        setIsAvailable(response.data.isAvailable);
-        setLastSeen(response.data.lastSeen);
+        if (!isMounted.current) return;
 
-        if (newStatus) {
+        if (response.success) {
+          setIsOnline(false);
+          setIsAvailable(response.data.isAvailable);
+          setLastSeen(response.data.lastSeen);
+
+          await LocationService.stopTracking();
+          if (isMounted.current) {
+            setIsLocationTracking(false);
+          }
+
+          socketService.disconnect();
+          setSocketConnected(false);
+          setSocketId(null);
+
+          console.log('🔄 [Screen] ✅ Offline complete - Socket disconnected');
+        } else {
+          Alert.alert('Error', response.message || 'Failed to go offline');
+        }
+      }
+
+      // ✅ CASE: GOING ONLINE
+      else {
+        console.log('🔄 [Screen] Going ONLINE...');
+
+        await socketService.connect();
+        const socketId = await socketService.waitForConnection(10000);
+
+        if (!socketId) {
+          console.error('❌ [Screen] Failed to get socket ID');
+          Alert.alert(
+            'Connection Error',
+            'Failed to establish socket connection. Please check your network and try again.',
+          );
+          setUpdating(false);
+          return;
+        }
+
+        console.log('✅ [Screen] Socket connected with ID:', socketId);
+
+        const response = await driverStatusApi.toggleDriverStatus(socketId);
+
+        if (!isMounted.current) return;
+
+        if (response.success) {
+          setIsOnline(true);
+          setIsAvailable(response.data.isAvailable);
+          setLastSeen(response.data.lastSeen);
+          setSocketConnected(true);
+          setSocketId(socketId);
+
+          console.log('✅ [Screen] Online complete - Socket:', socketId);
+
           Alert.alert(
             'Enable Location',
             'You are ready for FWS services. Please enable location before starting your work.',
@@ -463,16 +493,25 @@ const DriverStatusScreen: React.FC = () => {
             ],
           );
         } else {
-          await LocationService.stopTracking();
-          if (isMounted.current) {
-            setIsLocationTracking(false);
-          }
+          console.error(
+            '❌ [Screen] Backend online API failed:',
+            response.message,
+          );
+          socketService.disconnect();
+          setSocketConnected(false);
+          setSocketId(null);
+          Alert.alert('Error', response.message || 'Failed to go online');
         }
-      } else {
-        Alert.alert('Error', response.message || 'Failed to toggle status');
       }
     } catch (err: any) {
       console.error('[Screen] Error toggling:', err);
+
+      if (!isOnline) {
+        socketService.disconnect();
+        setSocketConnected(false);
+        setSocketId(null);
+      }
+
       Alert.alert('Error', err.message || 'Failed to toggle status');
     } finally {
       if (isMounted.current) {
@@ -552,17 +591,10 @@ const DriverStatusScreen: React.FC = () => {
     await fetchDriverStatus();
     await checkDriverRegistration();
 
-    // Check both sockets
-    const connected = SocketService.isSocketConnected();
-    const id = SocketService.getSocketId();
-    const uid = SocketService.getUserId();
+    const connected = socketService.isSocketConnected();
+    const id = socketService.getSocketId();
     setSocketConnected(connected);
     setSocketId(id);
-    if (uid) setUserId(uid);
-
-    // Check ride socket
-    const rideConnected = socketService.isSocketConnected();
-    console.log('[Screen] Ride Socket connected:', rideConnected);
 
     setRefreshing(false);
   }, []);
@@ -1005,18 +1037,9 @@ const DriverStatusScreen: React.FC = () => {
       </ScrollView>
 
       {/* ============================================
-          🚗 RIDE REQUEST POPUP - GLOBAL OVERLAY
-          Shows on ANY screen when ride request arrives
+          🚗 RIDE REQUEST POPUP - REMOVED FROM HERE
+          Now rendered globally from App.tsx via GlobalRideRequestPopup
           ============================================ */}
-      {currentRequest && isRequestActive && (
-        <RideRequestPopup
-          visible={true}
-          requestData={currentRequest}
-          onAccept={acceptRide}
-          onReject={rejectRide}
-          onTimeout={dismissRequest}
-        />
-      )}
     </View>
   );
 };

@@ -55,8 +55,8 @@ export const SOCKET_EVENTS = {
   DRIVER_LOCATION_UPDATE: 'driver-location-update',
   DRIVER_RESPONSE: 'driver-response',
   NEW_RIDE_REQUEST: 'new-ride-request',
-  RIDE_ACCEPTED: 'ride-accepted',
-  RIDE_REJECTED: 'ride-rejected',
+  RIDE_ACCEPTED: 'accept',
+  RIDE_REJECTED: 'reject',
   DRIVER_TIMEOUT: 'driver-timeout',
   RIDE_STATUS_CHANGE: 'ride-status-change',
 } as const;

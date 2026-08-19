@@ -2,6 +2,6 @@
 import React from 'react';
 import DriverRegister from '../../../core/components/cab/driver/driverRegistration';
 
-export default function driverRegisterScreen() {
+export default function Register() {
   return <DriverRegister />;
 }

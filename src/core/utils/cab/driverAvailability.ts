@@ -96,7 +96,7 @@ const getCurrentLocation = async (): Promise<any> => {
   try {
     const location = await Geolocation.getCurrentPosition({
       enableHighAccuracy: false,
-      timeout: 10000,
+      timeout: 15000,
     });
 
     lastLocationData = location;

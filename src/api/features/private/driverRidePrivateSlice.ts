@@ -1,4 +1,4 @@
-// src/api/features/private/driverRidePrivateSlice.ts
+// src/api/v0/features/private/driverRidePrivateSlice.ts
 
 import { API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
 import { getToken } from '../../connections/token/tokenSlice';
@@ -8,13 +8,13 @@ import { Booking, Tracking } from '../../../core/types/RideTypes';
 export const driverRideApi = {
   /**
    * Get active trip for the driver
-   * GET /api/ride/tracking/active?type=driver
+   * GET /api/v0/ride/tracking/active?type=driver
    */
   getActiveTrip: async (): Promise<Tracking | null> => {
     try {
       const token = await getToken();
       const response = await fetchHandler(
-        `${API_BASE_URL}/api/ride/tracking/active?type=driver`,
+        `${API_BASE_URL}/api/v0/ride/tracking/active?type=driver`,
         {
           method: 'GET',
           headers: { Authorization: `Bearer ${token}` },
@@ -28,12 +28,12 @@ export const driverRideApi = {
 
   /**
    * Get full trip details by booking ID
-   * GET /api/ride/booking/:bookingId
+   * GET /api/v0/ride/booking/:bookingId
    */
   getTripDetails: async (bookingId: string): Promise<Booking> => {
     const token = await getToken();
     const response = await fetchHandler(
-      `${API_BASE_URL}/api/ride/booking/${bookingId}`,
+      `${API_BASE_URL}/api/v0/ride/booking/${bookingId}`,
       {
         method: 'GET',
         headers: { Authorization: `Bearer ${token}` },
@@ -46,27 +46,56 @@ export const driverRideApi = {
   },
 
   /**
-   * Get tracking by booking ID
-   * GET /api/ride/tracking/booking/:bookingId
+   * ✅ FIX: Get tracking data by trackingId
+   * GET /api/v0/ride/tracking/:trackingId
    */
-  getTrackingByBooking: async (bookingId: string): Promise<Tracking> => {
+  getTrackingByBooking: async (trackingId: string): Promise<Tracking> => {
     const token = await getToken();
-    const response = await fetchHandler(
-      `${API_BASE_URL}/api/ride/tracking/booking/${bookingId}`,
-      {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${token}` },
-      },
+    console.log(
+      '[driverRideApi] 📡 getTrackingByBooking called with trackingId:',
+      trackingId,
     );
-    if (!response.success) {
-      throw new Error(response.message || 'Failed to fetch tracking');
+    console.log(
+      '[driverRideApi] 🔗 URL:',
+      `${API_BASE_URL}/api/v0/ride/tracking/${trackingId}`,
+    );
+
+    try {
+      const response = await fetchHandler(
+        `${API_BASE_URL}/api/v0/ride/tracking/${trackingId}`,
+        {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+
+      console.log(
+        '[driverRideApi] 📦 getTrackingByBooking response:',
+        JSON.stringify(response, null, 2),
+      );
+
+      if (!response.success) {
+        console.error(
+          '[driverRideApi] ❌ getTrackingByBooking failed:',
+          response.message,
+        );
+        throw new Error(response.message || 'Failed to fetch tracking');
+      }
+
+      console.log('[driverRideApi] ✅ getTrackingByBooking success');
+      return response.data;
+    } catch (error: any) {
+      console.error(
+        '[driverRideApi] ❌ getTrackingByBooking error:',
+        error.message,
+      );
+      throw error;
     }
-    return response.data;
   },
 
   /**
    * Update ride status
-   * PUT /api/ride/tracking/:trackingId/status
+   * PUT /api/v0/ride/tracking/:trackingId/status
    */
   updateRideStatus: async (
     trackingId: string,
@@ -74,7 +103,7 @@ export const driverRideApi = {
   ): Promise<Tracking> => {
     const token = await getToken();
     const response = await fetchHandler(
-      `${API_BASE_URL}/api/ride/tracking/${trackingId}/status`,
+      `${API_BASE_URL}/api/v0/ride/tracking/${trackingId}/status`,
       {
         method: 'PUT',
         headers: {
@@ -92,12 +121,12 @@ export const driverRideApi = {
 
   /**
    * Cancel booking
-   * POST /api/ride/cancel/:bookingId
+   * POST /api/v0/ride/cancel/:bookingId
    */
   cancelBooking: async (bookingId: string, reason: string): Promise<void> => {
     const token = await getToken();
     const response = await fetchHandler(
-      `${API_BASE_URL}/api/ride/cancel/${bookingId}`,
+      `${API_BASE_URL}/api/v0/ride/cancel/${bookingId}`,
       {
         method: 'POST',
         headers: {
@@ -114,7 +143,7 @@ export const driverRideApi = {
 
   /**
    * Get driver booking history
-   * GET /api/ride/bookings/driver
+   * GET /api/v0/ride/bookings/driver
    */
   getDriverBookings: async (
     page: number = 1,
@@ -122,7 +151,7 @@ export const driverRideApi = {
   ): Promise<{ bookings: Booking[]; total: number }> => {
     const token = await getToken();
     const response = await fetchHandler(
-      `${API_BASE_URL}/api/ride/bookings/driver?page=${page}&limit=${limit}`,
+      `${API_BASE_URL}/api/v0/ride/bookings/driver?page=${page}&limit=${limit}`,
       {
         method: 'GET',
         headers: { Authorization: `Bearer ${token}` },
@@ -136,12 +165,12 @@ export const driverRideApi = {
 
   /**
    * Verify pickup with QR token
-   * POST /api/ride/qr/verify-pickup
+   * POST /api/v0/ride/qr/verify-pickup
    */
   verifyPickup: async (qrToken: string): Promise<void> => {
     const token = await getToken();
     const response = await fetchHandler(
-      `${API_BASE_URL}/api/ride/qr/verify-pickup`,
+      `${API_BASE_URL}/api/v0/ride/qr/verify-pickup`,
       {
         method: 'POST',
         headers: {
@@ -158,12 +187,12 @@ export const driverRideApi = {
 
   /**
    * Verify drop with QR token
-   * POST /api/ride/qr/verify-drop
+   * POST /api/v0/ride/qr/verify-drop
    */
   verifyDrop: async (qrToken: string): Promise<void> => {
     const token = await getToken();
     const response = await fetchHandler(
-      `${API_BASE_URL}/api/ride/qr/verify-drop`,
+      `${API_BASE_URL}/api/v0/ride/qr/verify-drop`,
       {
         method: 'POST',
         headers: {
@@ -180,12 +209,15 @@ export const driverRideApi = {
 
   /**
    * Accept ride request (REST fallback)
-   * POST /api/ride/requests/:requestId/accept
+   * POST /api/v0/ride/requests/:requestId/accept
+   * ✅ Returns trackingId from backend
    */
-  acceptRideRequest: async (requestId: string): Promise<void> => {
+  acceptRideRequest: async (
+    requestId: string,
+  ): Promise<{ trackingId: string }> => {
     const token = await getToken();
     const response = await fetchHandler(
-      `${API_BASE_URL}/api/ride/requests/${requestId}/accept`,
+      `${API_BASE_URL}/api/v0/ride/requests/${requestId}/accept`,
       {
         method: 'POST',
         headers: {
@@ -197,16 +229,20 @@ export const driverRideApi = {
     if (!response.success) {
       throw new Error(response.message || 'Failed to accept ride');
     }
+    // ✅ Return trackingId from response
+    return {
+      trackingId: response.data?.trackingId || '',
+    };
   },
 
   /**
    * Reject ride request (REST fallback)
-   * POST /api/ride/requests/:requestId/reject
+   * POST /api/v0/ride/requests/:requestId/reject
    */
   rejectRideRequest: async (requestId: string): Promise<void> => {
     const token = await getToken();
     const response = await fetchHandler(
-      `${API_BASE_URL}/api/ride/requests/${requestId}/reject`,
+      `${API_BASE_URL}/api/v0/ride/requests/${requestId}/reject`,
       {
         method: 'POST',
         headers: {
