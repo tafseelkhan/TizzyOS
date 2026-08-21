@@ -2,7 +2,7 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
-const API_BASE_URL = 'http://10.171.84.121:5000'; // Replace with your actual API URL
+const API_BASE_URL = 'http://10.133.59.121:5000'; // Replace with your actual API URL
 
 // Define a proper file interface for React Native
 export interface FileObject {
