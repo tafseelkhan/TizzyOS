@@ -104,6 +104,72 @@ export interface Tracking {
   lastLocationUpdate: string;
 }
 
+// ============================================================
+// NEW LIVE TRACKING RESPONSE TYPE
+// ============================================================
+
+export interface LiveTrackingData {
+  bookingId: string;
+  trackingId?: string;
+  rideCode: string;
+  status: string;
+  
+  pickup: {
+    latitude: number;
+    longitude: number;
+    address: string;
+    googlePlaceId?: string;
+  };
+  
+  destination: {
+    latitude: number;
+    longitude: number;
+    address: string;
+    googlePlaceId?: string;
+  };
+  
+  driver: {
+    userId: string;
+    driverCode?: string;
+    location: {
+      latitude: number;
+      longitude: number;
+    } | null;
+    heading?: number;
+    speed?: number;
+    accuracy?: number;
+    bearing?: number;
+    altitude?: number;
+    provider?: string;
+    batteryLevel?: number;
+    networkType?: string;
+    isMockLocation?: boolean;
+    locationUpdatedAt?: string;
+    isTrackingOn: boolean;
+    cachedLocation?: {
+      latitude: number;
+      longitude: number;
+      heading: number;
+      speed: number;
+      timestamp: string;
+    } | null;
+  };
+  
+  customer: {
+    userId: string;
+    location: {
+      latitude: number;
+      longitude: number;
+      address?: string;
+      city?: string;
+      state?: string;
+      country?: string;
+      pinCode?: string;
+      landmark?: string;
+    } | null;
+  };
+}
+
 export interface DriverStatus {
   isOnline: boolean;
   isAvailable: boolean;

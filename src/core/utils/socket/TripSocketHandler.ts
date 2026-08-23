@@ -1,6 +1,6 @@
 // src/services/socket/TripSocketHandler.ts
-import { socketService } from './socketUtils';
-import { SOCKET_EVENTS } from '../../../api/constants/rideRequestConfig';
+
+import { rideStatusSocketHandler } from '../../../api/connections/handlers/sockets/rideStatusSocketHandler';
 
 export type TripStatusCallback = (data: any) => void;
 export type TripCallback = (data: any) => void;
@@ -8,18 +8,17 @@ export type TripCallback = (data: any) => void;
 /**
  * TripSocketHandler - Domain-specific handler for active trip events
  * 
- * Responsibilities:
- * - Subscribe/unsubscribe to ride status changes
- * - Subscribe/unsubscribe to ride cancellations
- * - Emit ride status changes
- * 
- * This handles events for active trips, separate from ride requests.
+ * ✅ NOW USING HANDLERS instead of direct socketService
  */
 class TripSocketHandler {
   private static instance: TripSocketHandler;
   private statusListeners: Set<TripStatusCallback> = new Set();
   private cancelListeners: Set<TripCallback> = new Set();
   private isListening: boolean = false;
+
+  // Cleanup refs
+  private statusUnsubscribe: (() => void) | null = null;
+  private cancelUnsubscribe: (() => void) | null = null;
 
   private constructor() {}
 
@@ -31,7 +30,7 @@ class TripSocketHandler {
   }
 
   /**
-   * Start listening for trip events
+   * Start listening for trip events - USING HANDLERS
    */
   startListening(): void {
     if (this.isListening) {
@@ -39,11 +38,20 @@ class TripSocketHandler {
       return;
     }
 
-    console.log('[TripSocketHandler] Starting to listen for trip events');
-    
-    socketService.on(SOCKET_EVENTS.RIDE_STATUS_CHANGE, this.handleStatusChange);
-    socketService.on('cancel-ride', this.handleCancelRide);
-    
+    console.log('[TripSocketHandler] Starting to listen for trip events via handlers');
+
+    // ✅ Use rideStatusSocketHandler for status changes
+    rideStatusSocketHandler.on(
+      'ride-status-change',
+      this.handleStatusChange
+    );
+
+    // ✅ Use rideStatusSocketHandler for cancellations
+    rideStatusSocketHandler.on(
+      'cancel-ride',
+      this.handleCancelRide
+    );
+
     this.isListening = true;
   }
 
@@ -57,10 +65,17 @@ class TripSocketHandler {
     }
 
     console.log('[TripSocketHandler] Stopping trip event listening');
-    
-    socketService.off(SOCKET_EVENTS.RIDE_STATUS_CHANGE, this.handleStatusChange);
-    socketService.off('cancel-ride', this.handleCancelRide);
-    
+
+    // ✅ Cleanup via handlers
+    if (this.statusUnsubscribe) {
+      this.statusUnsubscribe();
+      this.statusUnsubscribe = null;
+    }
+    if (this.cancelUnsubscribe) {
+      this.cancelUnsubscribe();
+      this.cancelUnsubscribe = null;
+    }
+
     this.isListening = false;
     this.statusListeners.clear();
     this.cancelListeners.clear();
@@ -73,7 +88,7 @@ class TripSocketHandler {
   subscribeToStatusChanges(callback: TripStatusCallback): () => void {
     console.log('[TripSocketHandler] New status subscriber added');
     this.statusListeners.add(callback);
-    
+
     return () => {
       console.log('[TripSocketHandler] Status subscriber removed');
       this.statusListeners.delete(callback);
@@ -87,7 +102,7 @@ class TripSocketHandler {
   subscribeToCancellations(callback: TripCallback): () => void {
     console.log('[TripSocketHandler] New cancel subscriber added');
     this.cancelListeners.add(callback);
-    
+
     return () => {
       console.log('[TripSocketHandler] Cancel subscriber removed');
       this.cancelListeners.delete(callback);
@@ -95,19 +110,19 @@ class TripSocketHandler {
   }
 
   /**
-   * Emit a ride status change
+   * Emit a ride status change - USING HANDLERS
    */
   emitStatusChange(data: { bookingId: string; status: string }): void {
     console.log('[TripSocketHandler] Emitting status change:', data);
-    socketService.emit(SOCKET_EVENTS.RIDE_STATUS_CHANGE, data);
+    rideStatusSocketHandler.emitStatusChange(data);
   }
 
   /**
-   * Emit a ride cancellation
+   * Emit a ride cancellation - USING HANDLERS
    */
   emitCancelRide(data: { bookingId: string }): void {
     console.log('[TripSocketHandler] Emitting cancel ride:', data);
-    socketService.emit('cancel-ride', data);
+    rideStatusSocketHandler.emitCancelRide(data);
   }
 
   /**

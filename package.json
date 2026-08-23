@@ -5,12 +5,14 @@
   "scripts": {
     "android": "react-native run-android",
     "ios": "react-native run-ios",
+    "postinstall": "patch-package",
     "lint": "eslint .",
     "start": "react-native start",
     "test": "jest"
   },
   "dependencies": {
     "@flixora/zeptpay-react-native": "^0.0.7",
+    "@googlemaps/react-native-navigation-sdk": "^0.16.3",
     "@notifee/react-native": "^9.1.8",
     "@react-native-async-storage/async-storage": "^3.1.1",
     "@react-native-community/datetimepicker": "^9.1.0",
@@ -46,7 +48,6 @@
     "react-native-image-crop-picker": "^0.51.1",
     "react-native-image-picker": "^8.2.1",
     "react-native-linear-gradient": "^2.8.3",
-    "react-native-maps": "^1.29.0",
     "react-native-nitro-image": "^0.15.1",
     "react-native-nitro-modules": "^0.36.5",
     "react-native-paper": "^5.15.3",
@@ -83,6 +84,7 @@
     "@types/react-test-renderer": "^19.1.0",
     "eslint": "^10.8.1",
     "jest": "^30.4.2",
+    "patch-package": "^8.0.1",
     "prettier": "^3.8.4",
     "react-test-renderer": "^19.2.7",
     "typescript": "^7.0.2"

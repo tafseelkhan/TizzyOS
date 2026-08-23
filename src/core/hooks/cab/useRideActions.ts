@@ -1,10 +1,10 @@
 // src/hooks/cab/useRideActions.ts
 
 import { useCallback, useState, useRef } from 'react';
-import { socketService } from '../../utils/socket/socketUtils';
-import { SOCKET_EVENTS } from '../../../api/constants/rideRequestConfig';
+import { socketService } from '../../../core/utils/socket/socketUtils';
+import { rideRequestSocketHandler } from '../../../api/connections/handlers/sockets/rideRequestSocketHandler';
+import { rideStatusSocketHandler } from '../../../api/connections/handlers/sockets/rideStatusSocketHandler';
 import { driverRideApi } from '../../../api/features/private/driverRidePrivateSlice';
-import { rideRequestHandler } from '../../utils/socket/rideRequestHandler';
 import { NavigationService } from '../../services/navigation/NavigationService';
 import { getToken } from '../../../api/connections/token/tokenSlice';
 
@@ -80,6 +80,9 @@ export const useRideActions = (): UseRideActionsReturn => {
     [cleanupListeners],
   );
 
+  // ============================================================
+  // ACCEPT RIDE - Using Handlers
+  // ============================================================
   const acceptRide = useCallback(
     async (requestId: string, bookingId: string): Promise<void> => {
       const key = `${requestId}-accept`;
@@ -123,7 +126,9 @@ export const useRideActions = (): UseRideActionsReturn => {
           let trackingReceived = false;
           let navigationDone = false;
 
-          // ✅ Handler for ride-accepted event
+          // ============================================================
+          // ✅ HANDLER 1: RIDE ACCEPTED - Using rideRequestSocketHandler
+          // ============================================================
           const rideAcceptedHandler = (data: any) => {
             console.log('[useRideActions] ✅ RIDE_ACCEPTED handler triggered!');
             console.log(
@@ -141,14 +146,16 @@ export const useRideActions = (): UseRideActionsReturn => {
               trackingReceived = true;
               navigationDone = true;
               console.log(
-                '[useRideActions] ✅ Navigating with trackingId from ride-accepted:',
+                '[useRideActions] ✅ Navigating with trackingId from accept:',
                 tid,
               );
               navigateToRideTracking(tid, bid);
             }
           };
 
-          // ✅ Handler for ride-status-change event
+          // ============================================================
+          // ✅ HANDLER 2: RIDE STATUS CHANGE - Using rideStatusSocketHandler
+          // ============================================================
           const statusChangeHandler = (data: any) => {
             console.log(
               '[useRideActions] ✅ RIDE_STATUS_CHANGE handler triggered!',
@@ -173,48 +180,47 @@ export const useRideActions = (): UseRideActionsReturn => {
               trackingReceived = true;
               navigationDone = true;
               console.log(
-                '[useRideActions] ✅ Navigating with trackingId from status change:',
+                '[useRideActions] ✅ Navigating with trackingId from ride-status-change:',
                 tid,
               );
               navigateToRideTracking(tid, bid);
             }
           };
 
-          // ✅ Register listeners
-          console.log('[useRideActions] 📡 Registering listeners...');
-
-          const rideAcceptedEvent = 'ride-accepted';
-          const statusChangeEvent = 'ride-status-change';
-          const driverResponseEvent = 'driver-response';
-
+          // ============================================================
+          // ✅ REGISTER LISTENERS (USING HANDLERS - NOT DIRECT socketService)
+          // ============================================================
           console.log(
-            `[useRideActions] 📡 Registering: "${rideAcceptedEvent}"`,
+            '[useRideActions] 📡 Registering listeners via handlers...',
           );
-          socketService.on(rideAcceptedEvent, rideAcceptedHandler);
 
-          console.log(
-            `[useRideActions] 📡 Registering: "${statusChangeEvent}"`,
-          );
-          socketService.on(statusChangeEvent, statusChangeHandler);
+          // ✅ Use rideRequestSocketHandler for 'accept' event
+          rideRequestSocketHandler.on('accept', rideAcceptedHandler);
+
+          // ✅ Use rideStatusSocketHandler for 'ride-status-change' event
+          rideStatusSocketHandler.on('ride-status-change', statusChangeHandler);
 
           cleanupRef.current = () => {
             console.log('[useRideActions] 🧹 Cleaning up socket listeners');
-            socketService.off(rideAcceptedEvent, rideAcceptedHandler);
-            socketService.off(statusChangeEvent, statusChangeHandler);
+            rideRequestSocketHandler.off('accept', rideAcceptedHandler);
+            rideStatusSocketHandler.off(
+              'ride-status-change',
+              statusChangeHandler,
+            );
           };
 
-          // ✅ Emit only once
-          console.log(
-            `[useRideActions] 📤 Emitting: "${driverResponseEvent}" with driverId:`,
+          // ============================================================
+          // ✅ EMIT DRIVER RESPONSE - Using rideRequestSocketHandler
+          // ============================================================
+          rideRequestSocketHandler.emitDriverResponse(
+            requestId,
+            'accepted',
             driverId,
           );
-          socketService.emit(driverResponseEvent, {
-            requestId,
-            action: 'accept',
-            driverId: driverId,
-          });
 
-          // ✅ Timeout fallback
+          // ============================================================
+          // ✅ TIMEOUT FALLBACK
+          // ============================================================
           navigationTimeoutRef.current = setTimeout(async () => {
             if (!trackingReceived && !navigationDone) {
               console.warn(
@@ -246,7 +252,7 @@ export const useRideActions = (): UseRideActionsReturn => {
           }
         }
 
-        rideRequestHandler.acceptRide(requestId);
+        // ✅ Remove rideRequestHandler.acceptRide() - it doesn't exist
       } catch (err: any) {
         console.error('[useRideActions] ❌ Error accepting ride:', err);
         setError(err.message || 'Failed to accept ride');
@@ -263,6 +269,9 @@ export const useRideActions = (): UseRideActionsReturn => {
     [isProcessing, cleanupListeners, navigateToRideTracking],
   );
 
+  // ============================================================
+  // REJECT RIDE - Using Handlers
+  // ============================================================
   const rejectRide = useCallback(
     async (requestId: string, bookingId?: string): Promise<void> => {
       const key = `${requestId}-reject`;
@@ -300,22 +309,18 @@ export const useRideActions = (): UseRideActionsReturn => {
         console.log('[useRideActions] 📊 Socket connected:', isSocketConnected);
 
         if (isSocketConnected) {
-          const driverResponseEvent = 'driver-response';
-
-          console.log(
-            `[useRideActions] 📤 Emitting: "${driverResponseEvent}" (reject)`,
-          );
-          socketService.emit(driverResponseEvent, {
+          // ✅ Use rideRequestSocketHandler for reject
+          rideRequestSocketHandler.emitDriverResponse(
             requestId,
-            action: 'reject',
-            driverId: driverId,
-          });
+            'rejected',
+            driverId,
+          );
         } else {
           console.log('[useRideActions] ⚠️ Socket not connected, using REST');
           await driverRideApi.rejectRideRequest(requestId);
         }
 
-        rideRequestHandler.rejectRide(requestId);
+        // ✅ Remove rideRequestHandler.rejectRide() - it doesn't exist
       } catch (err: any) {
         console.error('[useRideActions] ❌ Error rejecting ride:', err);
         setError(err.message || 'Failed to reject ride');

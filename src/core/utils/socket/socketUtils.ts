@@ -74,7 +74,7 @@ class SocketService {
       };
 
       this.socket = io(API_BASE_URL, options);
-      this.setupListeners();
+      this.setupCoreListeners();
       this.socket.connect();
     } catch (error) {
       console.error('❌ [SocketService] Connection failed:', error);
@@ -159,11 +159,14 @@ class SocketService {
     }
   }
 
-  private setupListeners(): void {
+  private setupCoreListeners(): void {
     if (!this.socket) return;
 
-    console.log('📡 [SocketService] Setting up event listeners...');
+    console.log('📡 [SocketService] Setting up core event listeners...');
 
+    // ============================================================
+    // CORE CONNECTION EVENTS
+    // ============================================================
     this.socket.on('connect', () => {
       console.log('✅ [SocketService] SOCKET CONNECTED!');
       console.log('📡 [SocketService] Socket ID:', this.socket?.id);
@@ -228,60 +231,9 @@ class SocketService {
       }
     });
 
-    // DRIVER STATUS EVENTS
-    this.socket.on('driver:registered', (data: any) => {
-      console.log('✅ [SocketService] DRIVER:REGISTERED:', data);
-      this.emitEvent('driver:registered', data);
-    });
-
-    this.socket.on('driver:status-changed', (data: any) => {
-      console.log('📊 [SocketService] DRIVER:STATUS-CHANGED:', data);
-      this.emitEvent('driver:status-changed', data);
-    });
-
-    this.socket.on('driver:error', (data: any) => {
-      console.error('❌ [SocketService] DRIVER:ERROR:', data);
-      this.emitEvent('driver:error', data);
-    });
-
-    this.socket.on('welcome', (data: any) => {
-      console.log('👋 [SocketService] Welcome:', data);
-      this.emitEvent('welcome', data);
-    });
-
-    // RIDE REQUEST EVENTS
-    this.socket.on(SOCKET_EVENTS.NEW_RIDE_REQUEST, (data: any) => {
-      console.log('🚗 [SocketService] NEW RIDE REQUEST RECEIVED');
-      console.log('📡 [SocketService] Data:', JSON.stringify(data, null, 2));
-      this.emitEvent(SOCKET_EVENTS.NEW_RIDE_REQUEST, data);
-    });
-
-    this.socket.on(SOCKET_EVENTS.RIDE_ACCEPTED, (data: any) => {
-      console.log('✅ [SocketService] RIDE ACCEPTED');
-      this.emitEvent(SOCKET_EVENTS.RIDE_ACCEPTED, data);
-    });
-
-    this.socket.on(SOCKET_EVENTS.RIDE_REJECTED, (data: any) => {
-      console.log('❌ [SocketService] RIDE REJECTED');
-      this.emitEvent(SOCKET_EVENTS.RIDE_REJECTED, data);
-    });
-
-    this.socket.on(SOCKET_EVENTS.DRIVER_TIMEOUT, (data: any) => {
-      console.log('⏰ [SocketService] DRIVER TIMEOUT');
-      this.emitEvent(SOCKET_EVENTS.DRIVER_TIMEOUT, data);
-    });
-
-    this.socket.on(SOCKET_EVENTS.RIDE_STATUS_CHANGE, (data: any) => {
-      console.log('🚦 [SocketService] RIDE STATUS CHANGE');
-      this.emitEvent(SOCKET_EVENTS.RIDE_STATUS_CHANGE, data);
-    });
-
-    this.socket.on('driver-location-updated', (data: any) => {
-      console.log('📍 [SocketService] DRIVER LOCATION UPDATED');
-      this.emitEvent('driver-location-updated', data);
-    });
-
+    // ============================================================
     // AUTH EVENTS
+    // ============================================================
     this.socket.on('authenticated', (data: any) => {
       console.log('🔐 [SocketService] AUTHENTICATED');
       this.isAuthenticated = true;
@@ -292,19 +244,17 @@ class SocketService {
       this.isAuthenticated = false;
     });
 
-    // ✅ FIXED: ERROR EVENT HANDLER
+    // ============================================================
+    // ERROR HANDLER
+    // ============================================================
     this.socket.on('error', (error: any) => {
       console.warn('⚠️ [SocketService] SOCKET ERROR:', error);
 
-      // ✅ Ignore "Request is no longer pending" error
       if (error?.message === 'Request is no longer pending') {
-        console.log(
-          'ℹ️ [SocketService] Request already processed, ignoring error',
-        );
+        console.log('ℹ️ [SocketService] Request already processed, ignoring error');
         return;
       }
 
-      // ✅ Ignore duplicate reject errors
       if (
         error?.message?.includes('already rejected') ||
         error?.message?.includes('already processed') ||
@@ -317,18 +267,9 @@ class SocketService {
       this.emitEvent('socket-error', error);
     });
 
-    this.socket.on('response-processed', (data: any) => {
-      console.log('✅ [SocketService] Response processed:', data);
-      this.isProcessing = false;
-    });
-
-    this.socket.on('no-driver-found', (data: any) => {
-      console.log('❌ [SocketService] No driver found:', data);
-      this.isProcessing = false;
-      this.emitEvent('no-driver-found', data);
-    });
-
-    // FORWARD ALL EVENTS
+    // ============================================================
+    // FORWARD ALL OTHER EVENTS
+    // ============================================================
     this.socket.onAny((event: string, ...args: any[]) => {
       const skipEvents = [
         'connect',
@@ -340,80 +281,20 @@ class SocketService {
         'pong',
         'ping',
         'error',
-        'response-processed',
-        'no-driver-found',
-        SOCKET_EVENTS.NEW_RIDE_REQUEST,
-        SOCKET_EVENTS.RIDE_ACCEPTED,
-        SOCKET_EVENTS.RIDE_REJECTED,
-        SOCKET_EVENTS.DRIVER_TIMEOUT,
-        SOCKET_EVENTS.RIDE_STATUS_CHANGE,
         'authenticated',
         'auth-error',
-        'driver:registered',
-        'driver:status-changed',
-        'driver:error',
-        'welcome',
-        'driver-location-updated',
       ];
       if (skipEvents.includes(event)) return;
-      console.log(`📡 [SocketService] Event: ${event}`, args);
+      // Forward to app listeners
       this.emitEvent(event, ...args);
     });
 
-    console.log('📡 [SocketService] ✅ All event listeners registered');
+    console.log('📡 [SocketService] ✅ Core listeners registered');
   }
 
-  // ============================================
-  // ✅ DRIVER RESPONSE WITH CORRECT FIELD NAME
-  // ============================================
-  driverResponse(
-    requestId: string,
-    status: 'accepted' | 'rejected',
-    driverId: string,
-  ): void {
-    console.log('📤 [SocketService] driverResponse() called:', {
-      requestId,
-      status,
-      driverId,
-    });
-
-    if (this.isProcessing) {
-      console.warn('⚠️ [SocketService] Already processing, ignoring duplicate');
-      return;
-    }
-
-    const key = `${requestId}-${status}`;
-    if (this.processedRequests.has(key)) {
-      console.warn('⚠️ [SocketService] Request already processed:', key);
-      return;
-    }
-
-    this.isProcessing = true;
-    this.processedRequests.add(key);
-
-    // ✅ FIX: Convert status to action (accept/reject)
-    const action = status === 'accepted' ? 'accept' : 'reject';
-
-    // ✅ Emit with correct field name "action"
-    this.emit('driver-response', {
-      requestId: requestId,
-      action: action, // ✅ "accept" or "reject"
-      driverId: driverId,
-      timestamp: new Date().toISOString(),
-    });
-
-    setTimeout(() => {
-      this.isProcessing = false;
-    }, 2000);
-
-    setTimeout(() => {
-      this.processedRequests.delete(key);
-    }, 5000);
-  }
-
-  // ============================================
-  // 🔑 REGISTER DRIVER
-  // ============================================
+  // ============================================================
+  // DRIVER REGISTRATION
+  // ============================================================
   private registerDriver(): void {
     const auth = this.socket?.auth;
     const token =
@@ -462,6 +343,55 @@ class SocketService {
     }
   }
 
+  // ============================================================
+  // DRIVER RESPONSE
+  // ============================================================
+  driverResponse(
+    requestId: string,
+    status: 'accepted' | 'rejected',
+    driverId: string,
+  ): void {
+    console.log('📤 [SocketService] driverResponse() called:', {
+      requestId,
+      status,
+      driverId,
+    });
+
+    if (this.isProcessing) {
+      console.warn('⚠️ [SocketService] Already processing, ignoring duplicate');
+      return;
+    }
+
+    const key = `${requestId}-${status}`;
+    if (this.processedRequests.has(key)) {
+      console.warn('⚠️ [SocketService] Request already processed:', key);
+      return;
+    }
+
+    this.isProcessing = true;
+    this.processedRequests.add(key);
+
+    const action = status === 'accepted' ? 'accept' : 'reject';
+
+    this.emit('driver-response', {
+      requestId: requestId,
+      action: action,
+      driverId: driverId,
+      timestamp: new Date().toISOString(),
+    });
+
+    setTimeout(() => {
+      this.isProcessing = false;
+    }, 2000);
+
+    setTimeout(() => {
+      this.processedRequests.delete(key);
+    }, 5000);
+  }
+
+  // ============================================================
+  // PUBLIC METHODS
+  // ============================================================
   emit<T = any>(event: string, data?: T): void {
     if (!this.socket?.connected) {
       console.warn(

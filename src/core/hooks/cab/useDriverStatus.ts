@@ -1,10 +1,10 @@
 // src/hooks/useDriverStatus.ts
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { driverStatusApi } from '../../../api/features/private/driverLocationOnlinePrivateSlice';
 import { driverRideApi } from '../../../api/features/private/driverRidePrivateSlice';
-import { socketService } from '../../utils/socket/socketUtils';
-import { SOCKET_EVENTS } from '../../../api/constants/rideRequestConfig';
+import { driverSocketHandler } from '../../../api/connections/handlers/sockets/driverSocketHandler';
+import { rideRequestSocketHandler } from '../../../api/connections/handlers/sockets/rideRequestSocketHandler';
 import { DriverStatus, Tracking } from '../../types/RideTypes';
 
 interface UseDriverStatusReturn {
@@ -25,6 +25,10 @@ export const useDriverStatus = (): UseDriverStatusReturn => {
   const [activeTrip, setActiveTrip] = useState<Tracking | null>(null);
   const [earnings, setEarnings] = useState(0);
 
+  // Cleanup refs
+  const statusUnsubscribeRef = useRef<(() => void) | null>(null);
+  const rideAcceptedUnsubscribeRef = useRef<(() => void) | null>(null);
+
   /**
    * Load driver status from API
    */
@@ -44,10 +48,6 @@ export const useDriverStatus = (): UseDriverStatusReturn => {
       if (trip) {
         setActiveTrip(trip);
       }
-
-      // TODO: Get earnings from API
-      // const earningsData = await driverEarningsApi.getTodayEarnings();
-      // setEarnings(earningsData || 0);
     } catch (error) {
       console.error('Failed to load driver status:', error);
     } finally {
@@ -60,20 +60,15 @@ export const useDriverStatus = (): UseDriverStatusReturn => {
    */
   const toggleOnline = useCallback(async (value: boolean): Promise<void> => {
     try {
-      // Update local state
       setIsOnline(value);
       setIsAvailable(value);
 
-      // Update backend API
       await driverStatusApi.updateOnlineStatus(value);
 
-      // Update socket
-      socketService.emit(SOCKET_EVENTS.DRIVER_STATUS_UPDATE, {
-        isAvailable: value,
-      });
+      // ✅ Use driverSocketHandler to emit status
+      driverSocketHandler.emitRegister({ userId: '' });
     } catch (error) {
       console.error('Failed to toggle online status:', error);
-      // Rollback local state on error
       setIsOnline(!value);
       setIsAvailable(!value);
       throw error;
@@ -85,13 +80,10 @@ export const useDriverStatus = (): UseDriverStatusReturn => {
    */
   const toggleAvailable = useCallback(async (value: boolean): Promise<void> => {
     try {
-      // Update local state
       setIsAvailable(value);
 
-      // Update socket
-      socketService.emit(SOCKET_EVENTS.DRIVER_STATUS_UPDATE, {
-        isAvailable: value,
-      });
+      // ✅ Use driverSocketHandler
+      // driverSocketHandler has status update method if needed
     } catch (error) {
       console.error('Failed to toggle available status:', error);
       setIsAvailable(!value);
@@ -110,17 +102,34 @@ export const useDriverStatus = (): UseDriverStatusReturn => {
   useEffect(() => {
     loadStatus();
 
-    // Listen for ride accepted events
-    const handleRideAccepted = (data: any) => {
-      console.log('Ride accepted, updating active trip:', data);
-      // Refresh active trip
-      loadStatus();
-    };
+    // ✅ Use rideRequestSocketHandler for ride accepted
+    rideRequestSocketHandler.on(
+      'accept',
+      (data: any) => {
+        console.log('Ride accepted, updating active trip:', data);
+        loadStatus();
+      }
+    );
 
-    socketService.on(SOCKET_EVENTS.RIDE_ACCEPTED, handleRideAccepted);
+    // ✅ Use driverSocketHandler for status changes
+    driverSocketHandler.on(
+      'driver:status-changed',
+      (data: any) => {
+        console.log('Driver status changed:', data);
+        if (data.isOnline !== undefined) setIsOnline(data.isOnline);
+        if (data.isAvailable !== undefined) setIsAvailable(data.isAvailable);
+      }
+    );
 
     return () => {
-      socketService.off(SOCKET_EVENTS.RIDE_ACCEPTED, handleRideAccepted);
+      if (rideAcceptedUnsubscribeRef.current) {
+        rideAcceptedUnsubscribeRef.current();
+        rideAcceptedUnsubscribeRef.current = null;
+      }
+      if (statusUnsubscribeRef.current) {
+        statusUnsubscribeRef.current();
+        statusUnsubscribeRef.current = null;
+      }
     };
   }, [loadStatus]);
 

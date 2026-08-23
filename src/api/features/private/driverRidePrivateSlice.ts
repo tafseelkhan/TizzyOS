@@ -3,7 +3,7 @@
 import { API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
 import { getToken } from '../../connections/token/tokenSlice';
 import { fetchHandler } from '../../../core/utils/handler/fetchHandler';
-import { Booking, Tracking } from '../../../core/types/RideTypes';
+import { Booking, Tracking, LiveTrackingData } from '../../../core/types/RideTypes';
 
 export const driverRideApi = {
   /**
@@ -46,7 +46,48 @@ export const driverRideApi = {
   },
 
   /**
-   * ✅ FIX: Get tracking data by trackingId
+   * ✅ NEW: Get live tracking data by trackingId
+   * GET /cab/ride/tracking/:bookingId/:trackingId
+   * 
+   * This is the NEW Live Tracking API that provides:
+   * - Driver location (from RideDriverLocation)
+   * - Customer location (from BuyerLocation)
+   * - Pickup and destination details
+   * - Ride status and metadata
+   */
+  getLiveTracking: async (bookingId: string, trackingId: string): Promise<LiveTrackingData> => {
+    const token = await getToken();
+    console.log('[driverRideApi] 📡 getLiveTracking called:');
+    console.log('[driverRideApi] 📦 bookingId:', bookingId);
+    console.log('[driverRideApi] 📦 trackingId:', trackingId);
+    console.log('[driverRideApi] 🔗 URL:', `${API_BASE_URL}/api/v0/ride/live/tracking/connect/${bookingId}/session/${trackingId}`);
+
+    try {
+      const response = await fetchHandler(
+        `${API_BASE_URL}/api/v0/ride/live/tracking/connect/${bookingId}/session/${trackingId}`,
+        {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+
+      console.log('[driverRideApi] 📦 getLiveTracking response:', JSON.stringify(response, null, 2));
+
+      if (!response.success) {
+        console.error('[driverRideApi] ❌ getLiveTracking failed:', response.message);
+        throw new Error(response.message || 'Failed to fetch live tracking data');
+      }
+
+      console.log('[driverRideApi] ✅ getLiveTracking success');
+      return response.data;
+    } catch (error: any) {
+      console.error('[driverRideApi] ❌ getLiveTracking error:', error.message);
+      throw error;
+    }
+  },
+
+  /**
+   * Get tracking data by trackingId (OLD - kept for backward compatibility)
    * GET /api/v0/ride/tracking/:trackingId
    */
   getTrackingByBooking: async (trackingId: string): Promise<Tracking> => {

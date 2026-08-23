@@ -1,4 +1,4 @@
-// SellerInformation.tsx - FIXED GOOGLE MAPS API ENDPOINTS
+// SellerInformation.tsx - USING @googlemaps/react-native-navigation-sdk
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
@@ -22,7 +22,11 @@ import { Config } from 'react-native-config';
 import Icon from 'react-native-vector-icons/Ionicons';
 import Fontisto from 'react-native-vector-icons/Fontisto';
 import GetLocation from 'react-native-get-location';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import {
+  MapView as GoogleMapView,
+  MapViewController,
+  MapViewType,
+} from '@googlemaps/react-native-navigation-sdk';
 
 export interface SellerLocation {
   address: string;
@@ -57,9 +61,12 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
     latitudeDelta: 0.01,
     longitudeDelta: 0.01,
   });
+  const [isMapReady, setIsMapReady] = useState(false);
 
   const isMountedRef = useRef(true);
-  const mapRef = useRef<MapView>(null);
+  const mapControllerRef = useRef<MapViewController | null>(null);
+  const fullMapControllerRef = useRef<MapViewController | null>(null);
+  const markerIdRef = useRef<string>('seller-location-marker');
 
   // ✅ Google API Key validation
   const GOOGLE_API_KEY = Config.GOOGLE_SERVICES_ACCOUNT_KEY;
@@ -71,7 +78,7 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
     };
   }, []);
 
-  // Update map region when seller location changes
+  // Update marker and camera when seller location changes
   useEffect(() => {
     if (sellerLocation.latitude !== 0 && sellerLocation.longitude !== 0) {
       setMapRegion({
@@ -80,16 +87,95 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
         latitudeDelta: 0.01,
         longitudeDelta: 0.01,
       });
-      if (mapRef.current) {
-        mapRef.current.animateToRegion({
-          latitude: sellerLocation.latitude,
-          longitude: sellerLocation.longitude,
-          latitudeDelta: 0.01,
-          longitudeDelta: 0.01,
-        });
-      }
+      // Update marker position
+      updateMarkerPosition(sellerLocation.latitude, sellerLocation.longitude);
+      // Move camera to the new location
+      moveCameraToLocation(sellerLocation.latitude, sellerLocation.longitude);
     }
   }, [sellerLocation.latitude, sellerLocation.longitude]);
+
+  // Update marker when map becomes ready
+  useEffect(() => {
+    if (isMapReady) {
+      const lat =
+        sellerLocation.latitude !== 0
+          ? sellerLocation.latitude
+          : mapRegion.latitude;
+      const lng =
+        sellerLocation.longitude !== 0
+          ? sellerLocation.longitude
+          : mapRegion.longitude;
+      addMarkerToMap(lat, lng);
+    }
+  }, [isMapReady]);
+
+  // Initialize map and add marker when map is ready
+  const onMapViewControllerCreated = (mapViewController: MapViewController) => {
+    mapControllerRef.current = mapViewController;
+    setIsMapReady(true);
+  };
+
+  const addMarkerToMap = (latitude: number, longitude: number) => {
+    const mapViewController = mapControllerRef.current;
+    if (!mapViewController) return;
+
+    try {
+      // Add marker with stable ID - SDK updates existing marker with same ID
+      const markerOptions = {
+        id: markerIdRef.current,
+        position: { lat: latitude, lng: longitude },
+        title: 'Business Location',
+        snippet: sellerLocation.address || 'Selected location',
+        draggable: true,
+      };
+
+      mapViewController.addMarker(markerOptions);
+    } catch (error) {
+      console.error('Error adding marker:', error);
+    }
+  };
+
+  const updateMarkerPosition = (latitude: number, longitude: number) => {
+    const mapViewController = mapControllerRef.current;
+    if (!mapViewController) return;
+
+    try {
+      // Add marker with same ID to update it
+      const markerOptions = {
+        id: markerIdRef.current,
+        position: { lat: latitude, lng: longitude },
+        title: 'Business Location',
+        snippet: sellerLocation.address || 'Selected location',
+        draggable: true,
+      };
+
+      mapViewController.addMarker(markerOptions);
+    } catch (error) {
+      console.error('Error updating marker position:', error);
+    }
+  };
+
+  const moveCameraToLocation = (latitude: number, longitude: number) => {
+    const mapViewController = mapControllerRef.current;
+    if (!mapViewController) return;
+
+    try {
+      // Move camera to the location
+      mapViewController.moveCamera({
+        target: { lat: latitude, lng: longitude },
+        zoom: 15,
+      });
+    } catch (error) {
+      console.error('Error moving camera:', error);
+    }
+  };
+
+  // Handle map tap to select location
+  const onMapClick = (latLng: any) => {
+    if (latLng && latLng.lat !== undefined && latLng.lng !== undefined) {
+      reverseGeocodeAndUpdate(latLng.lat, latLng.lng);
+    }
+  };
 
   // Request location permissions for Android
   const requestLocationPermission = async (): Promise<boolean> => {
@@ -164,6 +250,10 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
           latitudeDelta: 0.01,
           longitudeDelta: 0.01,
         });
+
+        // Update marker position
+        updateMarkerPosition(location.latitude, location.longitude);
+        moveCameraToLocation(location.latitude, location.longitude);
 
         // Reverse geocode to get address from coordinates
         await reverseGeocodeAndUpdate(location.latitude, location.longitude);
@@ -493,6 +583,10 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
                 longitudeDelta: 0.01,
               });
 
+              // Update marker and camera
+              updateMarkerPosition(lat, lng);
+              moveCameraToLocation(lat, lng);
+
               setSuggestions([]);
               setQuery(details.formatted_address || '');
               setMapError(null);
@@ -565,11 +659,6 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
     setShowFullMapModal(true);
   };
 
-  const handleMapPress = (event: any) => {
-    const { coordinate } = event.nativeEvent;
-    reverseGeocodeAndUpdate(coordinate.latitude, coordinate.longitude);
-  };
-
   const isLocationInvalid =
     sellerLocation.latitude === 0 && sellerLocation.longitude === 0;
 
@@ -633,40 +722,29 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
         onPress={openFullMap}
         activeOpacity={0.95}
       >
-        <MapView
-          ref={mapRef}
+        <GoogleMapView
           style={styles.map}
-          provider={PROVIDER_GOOGLE}
-          region={mapRegion}
-          onPress={handleMapPress}
-          scrollEnabled={false}
-          zoomEnabled={false}
-          rotateEnabled={false}
-        >
-          {(sellerLocation.latitude !== 0 || mapRegion.latitude !== 0) && (
-            <Marker
-              coordinate={{
-                latitude:
-                  sellerLocation.latitude !== 0
-                    ? sellerLocation.latitude
-                    : mapRegion.latitude,
-                longitude:
-                  sellerLocation.longitude !== 0
-                    ? sellerLocation.longitude
-                    : mapRegion.longitude,
-              }}
-              draggable
-              onDragEnd={e => {
-                const { latitude, longitude } = e.nativeEvent.coordinate;
-                reverseGeocodeAndUpdate(latitude, longitude);
-              }}
-            >
-              <View style={styles.markerContainer}>
-                <Fontisto name="map-marker-alt" size={32} color="#ef4444" />
-              </View>
-            </Marker>
-          )}
-        </MapView>
+          initialCameraPosition={{
+            target: {
+              lat:
+                sellerLocation.latitude !== 0
+                  ? sellerLocation.latitude
+                  : mapRegion.latitude,
+              lng:
+                sellerLocation.longitude !== 0
+                  ? sellerLocation.longitude
+                  : mapRegion.longitude,
+            },
+            zoom: 15,
+          }}
+          mapType={MapViewType.MAP}
+          scrollGesturesEnabled={false}
+          zoomGesturesEnabled={false}
+          rotateGesturesEnabled={false}
+          tiltGesturesEnabled={false}
+          onMapViewControllerCreated={onMapViewControllerCreated}
+          onMapClick={onMapClick}
+        />
         <View style={styles.mapOverlay}>
           <Text style={styles.mapTapText}>Tap to open full map</Text>
         </View>
@@ -772,41 +850,76 @@ export const SellerInformation: React.FC<SellerInformationProps> = ({
               </TouchableOpacity>
             )}
           </View>
-          <MapView
+          <GoogleMapView
             style={styles.fullMap}
-            provider={PROVIDER_GOOGLE}
-            region={mapRegion}
-            onPress={handleMapPress}
-            showsUserLocation={true}
-            showsMyLocationButton={true}
-          >
-            {(sellerLocation.latitude !== 0 || mapRegion.latitude !== 0) && (
-              <Marker
-                coordinate={{
-                  latitude:
-                    sellerLocation.latitude !== 0
-                      ? sellerLocation.latitude
-                      : mapRegion.latitude,
-                  longitude:
-                    sellerLocation.longitude !== 0
-                      ? sellerLocation.longitude
-                      : mapRegion.longitude,
-                }}
-                draggable
-                onDragEnd={e => {
-                  const { latitude, longitude } = e.nativeEvent.coordinate;
-                  reverseGeocodeAndUpdate(latitude, longitude);
-                }}
-              >
-                <View style={styles.markerContainer}>
-                  <Fontisto name="map-marker-alt" size={40} color="#ef4444" />
-                </View>
-              </Marker>
-            )}
-          </MapView>
+            initialCameraPosition={{
+              target: {
+                lat:
+                  sellerLocation.latitude !== 0
+                    ? sellerLocation.latitude
+                    : mapRegion.latitude,
+                lng:
+                  sellerLocation.longitude !== 0
+                    ? sellerLocation.longitude
+                    : mapRegion.longitude,
+              },
+              zoom: 15,
+            }}
+            mapType={MapViewType.MAP}
+            scrollGesturesEnabled={true}
+            zoomGesturesEnabled={true}
+            rotateGesturesEnabled={true}
+            tiltGesturesEnabled={true}
+            myLocationEnabled={true}
+            myLocationButtonEnabled={true}
+            compassEnabled={true}
+            onMapViewControllerCreated={(
+              mapViewController: MapViewController,
+            ) => {
+              fullMapControllerRef.current = mapViewController;
+              // Add marker on full map
+              const lat =
+                sellerLocation.latitude !== 0
+                  ? sellerLocation.latitude
+                  : mapRegion.latitude;
+              const lng =
+                sellerLocation.longitude !== 0
+                  ? sellerLocation.longitude
+                  : mapRegion.longitude;
+              const markerOptions = {
+                id: 'full-map-marker',
+                position: { lat, lng },
+                title: 'Business Location',
+                snippet: sellerLocation.address || 'Selected location',
+                draggable: true,
+              };
+              mapViewController.addMarker(markerOptions);
+            }}
+            onMapClick={(latLng: any) => {
+              if (
+                latLng &&
+                latLng.lat !== undefined &&
+                latLng.lng !== undefined
+              ) {
+                reverseGeocodeAndUpdate(latLng.lat, latLng.lng);
+                // Update marker on full map
+                const mapViewController = fullMapControllerRef.current;
+                if (mapViewController) {
+                  const markerOptions = {
+                    id: 'full-map-marker',
+                    position: { lat: latLng.lat, lng: latLng.lng },
+                    title: 'Business Location',
+                    snippet: sellerLocation.address || 'Selected location',
+                    draggable: true,
+                  };
+                  mapViewController.addMarker(markerOptions);
+                }
+              }
+            }}
+          />
           <View style={styles.fullMapFooter}>
             <Text style={styles.fullMapFooterText}>
-              Tap anywhere on map or drag the marker to set location
+              Tap anywhere on map to set location
             </Text>
           </View>
         </SafeAreaView>

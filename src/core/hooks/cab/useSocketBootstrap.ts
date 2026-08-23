@@ -1,20 +1,16 @@
 // src/core/hooks/cab/useSocketBootstrap.ts
+
 import { useEffect, useRef } from 'react';
 import { useAuth } from '../../contexts/auth/UserContext';
 import { socketService } from '../../utils/socket/socketUtils';
+import { registerSocketHandlers, unregisterSocketHandlers } from '../../utils/socket';
 import { rideRequestHandler } from '../../utils/socket/rideRequestHandler';
 import { tripSocketHandler } from '../../utils/socket/TripSocketHandler';
 
 /**
  * useSocketBootstrap - Single hook to manage socket lifecycle
  * 
- * This hook handles:
- * - Socket connection when user authenticates
- * - Starting/stopping domain handlers
- * - Cleanup on logout
- * - Prevention of duplicate initialization
- * 
- * ✅ Must be used inside AuthProvider
+ * ✅ NOW USING registerSocketHandlers() for all handlers
  */
 export const useSocketBootstrap = (): void => {
   const { user, loading } = useAuth();
@@ -29,12 +25,15 @@ export const useSocketBootstrap = (): void => {
         console.log('[useSocketBootstrap] Initializing socket connection...');
         socketInitialized.current = true;
 
-        // Connect socket
+        // ✅ Connect socket
         socketService.connect().catch(error => {
           console.error('[useSocketBootstrap] Socket connection failed:', error);
         });
 
-        // Start domain handlers
+        // ✅ Register ALL handlers via central registration
+        registerSocketHandlers();
+
+        // ✅ Start legacy domain handlers (if still needed)
         rideRequestHandler.startListening();
         tripSocketHandler.startListening();
       }
@@ -44,7 +43,10 @@ export const useSocketBootstrap = (): void => {
         console.log('[useSocketBootstrap] Cleaning up socket...');
         socketInitialized.current = false;
 
-        // Stop handlers
+        // ✅ Unregister ALL handlers
+        unregisterSocketHandlers();
+
+        // Stop legacy handlers
         rideRequestHandler.stopListening();
         tripSocketHandler.stopListening();
 
@@ -56,6 +58,7 @@ export const useSocketBootstrap = (): void => {
     // Cleanup on unmount
     return () => {
       if (socketInitialized.current) {
+        unregisterSocketHandlers();
         rideRequestHandler.stopListening();
         tripSocketHandler.stopListening();
         socketService.disconnect();

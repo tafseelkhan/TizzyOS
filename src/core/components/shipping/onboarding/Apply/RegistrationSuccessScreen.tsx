@@ -86,7 +86,7 @@ interface StepItemProps {
 }
 
 // API Configuration
-const API_BASE_URL = 'http://10.133.59.121:5000';
+const API_BASE_URL = 'http://172.20.10.12:5000';
 
 const RegistrationSuccessScreen: React.FC = () => {
   const navigation = useNavigation<NavigationType>();

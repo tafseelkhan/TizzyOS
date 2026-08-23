@@ -1,7 +1,7 @@
 // src/services/notification/NotificationService.ts
 
 import notifee, { EventType } from '@notifee/react-native';
-import messaging from '@react-native-firebase/messaging';
+import { getMessaging } from '@react-native-firebase/messaging';
 import { Platform, AppState } from 'react-native';
 import { rideRequestNotification } from './RideRequestNotification';
 import { ringtoneService } from '../audio/RingtoneService';
@@ -38,7 +38,7 @@ class NotificationService {
       this.setupFCMListeners();
       this.setupNotifeeListeners();
 
-      messaging().setBackgroundMessageHandler(async remoteMessage => {
+      getMessaging().setBackgroundMessageHandler(async remoteMessage => {
         await this.handleBackgroundMessage(remoteMessage);
       });
 
@@ -65,7 +65,7 @@ class NotificationService {
   }
 
   private setupFCMListeners(): void {
-    messaging().onMessage(async remoteMessage => {
+    getMessaging().onMessage(async remoteMessage => {
       console.log('📱 [FCM] FOREGROUND MESSAGE RECEIVED');
       if (remoteMessage.data?.type === 'ride_request') {
         console.log('📱 [FCM] Ride request in foreground, popup will handle');
@@ -165,7 +165,7 @@ class NotificationService {
 
   async registerFCMToken(): Promise<string> {
     try {
-      const token = await messaging().getToken();
+      const token = await getMessaging().getToken();
       console.log('📱 [FCM] Token:', token);
       return token;
     } catch (error) {
