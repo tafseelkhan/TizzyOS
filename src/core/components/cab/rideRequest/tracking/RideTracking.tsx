@@ -1,6 +1,6 @@
 // src/core/screens/cab/driver/RideTracking.tsx
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -23,26 +23,10 @@ import {
 import { Booking, LiveTrackingData } from '../../../../types/RideTypes';
 import { RootStackParamList } from '../../../../../navigations/index';
 import { StackScreenProps } from '@react-navigation/stack';
+import { NavigationProvider } from '@googlemaps/react-native-navigation-sdk';
+import { NavigationControllerWrapper } from '../../../../../navigations/google/NavigationControllerWrapper';
 
-// ============================================================
-// Google Navigation SDK Imports
-// ============================================================
-import {
-  NavigationProvider,
-  NavigationView,
-  useNavigation,
-  TravelMode,
-  AudioGuidance,
-  type Waypoint,
-  type SetDestinationsOptions,
-  type LatLng,
-  type ArrivalEvent,
-  CameraPerspective,
-} from '@googlemaps/react-native-navigation-sdk';
-
-// ============================================================
-// TYPES
-// ============================================================
+const { height } = Dimensions.get('window');
 
 type RideTrackingScreenProps = StackScreenProps<
   RootStackParamList,
@@ -50,8 +34,7 @@ type RideTrackingScreenProps = StackScreenProps<
 >;
 
 interface NavigationState {
-  status:
-    'idle' | 'initializing' | 'navigating' | 'rerouting' | 'arrived' | 'error';
+  status: 'idle' | 'initializing' | 'navigating' | 'rerouting' | 'arrived' | 'error';
   currentInstruction: string;
   remainingDistance: number;
   eta: number;
@@ -59,281 +42,21 @@ interface NavigationState {
   target: 'pickup' | 'destination';
 }
 
-// ============================================================
-// CONSTANTS
-// ============================================================
-
-const { height } = Dimensions.get('window');
-
-// ============================================================
-// NAVIGATION CONTROLLER WRAPPER
-// ============================================================
-
-const NavigationControllerWrapper: React.FC<{
-  booking: Booking;
-  liveTracking: LiveTrackingData;
-  target: 'pickup' | 'destination';
-  onArrival: () => void;
-  onRerouting: () => void;
-  onNavigationStateUpdate: (data: {
-    distance: number;
-    eta: number;
-    instruction: string;
-  }) => void;
-}> = ({
-  booking,
-  liveTracking,
-  target,
-  onArrival,
-  onRerouting,
-  onNavigationStateUpdate,
-}) => {
-  const { navigationController, removeAllListeners } = useNavigation();
-  const [isInitialized, setIsInitialized] = useState(false);
-  const [isNavigating, setIsNavigating] = useState(false);
-  const initDoneRef = useRef(false);
-
-  // ============================================================
-  // GET TARGET COORDINATES
-  // ============================================================
-  const targetCoords =
-    target === 'pickup' ? booking.pickup : booking.destination;
-
-  const getLatLng = (): LatLng => ({
-    lat: targetCoords.latitude,
-    lng: targetCoords.longitude,
-  });
-
-  const getWaypoint = (): Waypoint => ({
-    title: target === 'pickup' ? 'Pickup Location' : 'Destination',
-    position: getLatLng(),
-  });
-
-  const getRoutingOptions = (): any => ({
-    travelMode: TravelMode.DRIVING,
-    avoidFerries: false,
-    avoidTolls: false,
-    avoidHighways: false,
-  });
-
-  // ============================================================
-  // INITIALIZE NAVIGATION
-  // ============================================================
-  const initializeNavigation = async () => {
-    if (initDoneRef.current || !navigationController) return;
-
-    try {
-      console.log('[Navigation] Initializing...');
-      await navigationController.init();
-      initDoneRef.current = true;
-      setIsInitialized(true);
-      console.log('[Navigation] ✅ Initialized');
-
-      // Start navigation
-      await startNavigation();
-    } catch (error) {
-      console.error('[Navigation] ❌ Init error:', error);
-    }
-  };
-
-  // ============================================================
-  // START NAVIGATION
-  // ============================================================
-  const startNavigation = async () => {
-    if (!navigationController || !isInitialized) return;
-
-    try {
-      console.log('[Navigation] Starting to:', target);
-
-      const waypoint = getWaypoint();
-      const routingOptions = getRoutingOptions();
-
-      // Set destination
-      await navigationController.setDestinations([waypoint], routingOptions);
-
-      // ✅ FIX: Use setAudioGuidanceType (correct method name)
-      await navigationController.setAudioGuidanceType(
-        AudioGuidance.VOICE_ALERTS_AND_GUIDANCE,
-      );
-
-      // Start guidance
-      await navigationController.startGuidance();
-
-      setIsNavigating(true);
-      console.log('[Navigation] ✅ Guidance started');
-    } catch (error) {
-      console.error('[Navigation] ❌ Start error:', error);
-    }
-  };
-
-  // ============================================================
-  // STOP NAVIGATION
-  // ============================================================
-  const stopNavigation = async () => {
-    if (!navigationController) return;
-
-    try {
-      await navigationController.stopGuidance();
-      setIsNavigating(false);
-      console.log('[Navigation] ⏹️ Stopped');
-    } catch (error) {
-      console.error('[Navigation] ❌ Stop error:', error);
-    }
-  };
-
-  // ============================================================
-  // UPDATE DESTINATION (When target changes)
-  // ============================================================
-  const updateDestination = async () => {
-    if (!navigationController || !isInitialized) return;
-
-    try {
-      console.log('[Navigation] 🔄 Updating destination to:', target);
-
-      await stopNavigation();
-
-      const waypoint = getWaypoint();
-      const routingOptions = getRoutingOptions();
-
-      await navigationController.setDestinations([waypoint], routingOptions);
-      await navigationController.startGuidance();
-
-      console.log('[Navigation] ✅ Destination updated');
-    } catch (error) {
-      console.error('[Navigation] ❌ Update destination error:', error);
-    }
-  };
-
-  // ============================================================
-  // NAVIGATION LISTENERS
-  // ============================================================
-  useEffect(() => {
-    if (!navigationController) return;
-
-    // ============================================================
-    // ON ARRIVAL
-    // ============================================================
-    const onArrivalHandler = (event: ArrivalEvent) => {
-      console.log('[Navigation] 🏁 Arrived:', event);
-      if (event.isFinalDestination) {
-        onArrival();
-      }
-    };
-
-    // ============================================================
-    // ON ROUTE CHANGED (Rerouting)
-    // ============================================================
-    const onRouteChangedHandler = () => {
-      console.log('[Navigation] 🔄 Route changed (rerouting)');
-      onRerouting();
-    };
-
-    // ============================================================
-    // ON LOCATION CHANGED (Road-snapped)
-    // ============================================================
-    const onLocationChangedHandler = async (event: { location: any }) => {
-      try {
-        // Get time and distance
-        const timeAndDistance =
-          await navigationController.getCurrentTimeAndDistance();
-        if (timeAndDistance) {
-          // ✅ FIX: Use correct property names (distanceMeters, durationSeconds)
-          const distanceInMeters =
-            (timeAndDistance as any).distanceMeters ||
-            (timeAndDistance as any).distance ||
-            0;
-          const durationInSeconds =
-            (timeAndDistance as any).durationSeconds ||
-            (timeAndDistance as any).duration ||
-            0;
-
-          onNavigationStateUpdate({
-            distance: distanceInMeters,
-            eta: durationInSeconds / 60, // Convert to minutes
-            instruction: 'Follow the route',
-          });
-        }
-      } catch (error) {
-        // Ignore
-      }
-    };
-
-    // Helper to get next instruction
-    const getNextInstruction = (): string => {
-      return 'Follow the route';
-    };
-
-    // Register listeners
-    // Note: The exact listener registration depends on the SDK version
-
-    // Cleanup
-    return () => {
-      removeAllListeners();
-      stopNavigation();
-    };
-  }, [navigationController]);
-
-  // ============================================================
-  // INITIALIZE ON MOUNT
-  // ============================================================
-  useEffect(() => {
-    initializeNavigation();
-
-    return () => {
-      initDoneRef.current = false;
-      stopNavigation();
-    };
-  }, []);
-
-  // ============================================================
-  // RE-INITIALIZE WHEN TARGET CHANGES
-  // ============================================================
-  useEffect(() => {
-    if (isInitialized) {
-      updateDestination();
-    }
-  }, [target]);
-
-  // ============================================================
-  // RENDER NAVIGATION VIEW
-  // ============================================================
-  return (
-    <NavigationView
-      style={styles.navigationView}
-      onNavigationViewControllerCreated={controller => {
-        // NavigationViewController provides map control
-        // Set camera perspective
-        controller.setFollowingPerspective(CameraPerspective.TILTED);
-        controller.setNavigationUIEnabled(true);
-        controller.showRouteOverview();
-      }}
-    />
-  );
-};
-
-// ============================================================
-// MAIN COMPONENT
-// ============================================================
-
 const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
   route,
   navigation,
 }) => {
-  // ============================================================
-  // PARAMS
-  // ============================================================
   const { trackingId, bookingId } = route.params || {};
 
   // ============================================================
   // STATE
   // ============================================================
   const [booking, setBooking] = useState<Booking | null>(null);
-  const [liveTracking, setLiveTracking] = useState<LiveTrackingData | null>(
-    null,
-  );
+  const [liveTracking, setLiveTracking] = useState<LiveTrackingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [isNavigating, setIsNavigating] = useState(false);
+  const [isNavReady, setIsNavReady] = useState(false);
 
   const [navState, setNavState] = useState<NavigationState>({
     status: 'idle',
@@ -350,7 +73,6 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
   const bookingRef = useRef<Booking | null>(null);
   const liveTrackingRef = useRef<LiveTrackingData | null>(null);
   const navStateRef = useRef<NavigationState>(navState);
-  const navigationReadyRef = useRef(false);
 
   // ============================================================
   // SYNC REFS
@@ -370,7 +92,7 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
   // ============================================================
   // NAVIGATION TARGET
   // ============================================================
-  const getNavigationTarget = (status: string): 'pickup' | 'destination' => {
+  const getNavigationTarget = useCallback((status: string): 'pickup' | 'destination' => {
     const pickupStatuses = ['accepted', 'arrived'];
     const destinationStatuses = [
       'pickupVerified',
@@ -382,7 +104,7 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
     if (pickupStatuses.includes(status)) return 'pickup';
     if (destinationStatuses.includes(status)) return 'destination';
     return 'pickup';
-  };
+  }, []);
 
   // ============================================================
   // EFFECTS
@@ -412,7 +134,7 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
   // ============================================================
   // LIVE TRACKING SUBSCRIPTION
   // ============================================================
-  const setupLiveTrackingSubscription = () => {
+  const setupLiveTrackingSubscription = useCallback(() => {
     cleanupSubscription();
 
     console.log('[RideTracking] 📡 Subscribing to live tracking...');
@@ -421,14 +143,12 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
       trackingId,
       bookingId || trackingId,
       {
-        onLocationUpdate: data => {
+        onLocationUpdate: (data) => {
           if (isMountedRef.current) {
-            // Update UI with driver location
-            // Navigation SDK handles its own location internally
-            console.log('[RideTracking] 📍 Driver location:', data);
+            console.log('[RideTracking] 📍 Driver location update');
           }
         },
-        onTrackingSuccess: data => {
+        onTrackingSuccess: (data) => {
           console.log('[RideTracking] ✅ Tracking success');
           if (isMountedRef.current) {
             setLiveTracking(data as any);
@@ -437,24 +157,25 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
         onDriverStarted: () => console.log('[RideTracking] 🚗 Driver started'),
         onDriverAck: () => console.log('[RideTracking] ✅ Driver ACK'),
         onDriverStopped: () => console.log('[RideTracking] ⏹️ Driver stopped'),
-        onError: error =>
-          console.error('[RideTracking] ❌ Tracking error:', error),
+        onError: (error) => {
+          console.error('[RideTracking] ❌ Tracking error:', error);
+        },
       },
     );
-  };
+  }, [trackingId, bookingId]);
 
-  const cleanupSubscription = () => {
+  const cleanupSubscription = useCallback(() => {
     if (unsubscribeRef.current) {
       console.log('[RideTracking] 🧹 Cleaning up subscription');
       unsubscribeRef.current();
       unsubscribeRef.current = null;
     }
-  };
+  }, []);
 
   // ============================================================
   // LOAD TRIP DETAILS
   // ============================================================
-  const loadTripDetails = async () => {
+  const loadTripDetails = useCallback(async () => {
     if (!trackingId) {
       console.error('[RideTracking] ❌ No trackingId provided');
       return;
@@ -488,7 +209,6 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
           status: 'navigating',
         }));
         setIsNavigating(true);
-        navigationReadyRef.current = true;
       }
     } catch (error: any) {
       console.error('[RideTracking] ❌ Failed to load trip:', error);
@@ -501,26 +221,24 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
         setLoading(false);
       }
     }
-  };
+  }, [trackingId, bookingId, navigation, getNavigationTarget]);
 
   // ============================================================
   // UPDATE RIDE STATUS
   // ============================================================
-  const updateRideStatus = async (status: string) => {
+  const updateRideStatus = useCallback(async (status: string) => {
     if (!trackingId) return;
 
     try {
       setUpdating(true);
       console.log('[RideTracking] 📡 Updating ride status to:', status);
       await driverRideApi.updateRideStatus(trackingId, status);
+
       await loadTripDetails();
 
       const target = getNavigationTarget(status);
       setNavState(prev => ({ ...prev, target }));
 
-      if (status === 'pickupVerified') {
-        // Navigation target will auto-update via target change
-      }
       if (status === 'completed') {
         setIsNavigating(false);
         setNavState(prev => ({ ...prev, status: 'idle' }));
@@ -531,12 +249,12 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
     } finally {
       setUpdating(false);
     }
-  };
+  }, [trackingId, loadTripDetails, getNavigationTarget]);
 
   // ============================================================
   // HANDLE CANCEL TRIP
   // ============================================================
-  const handleCancelTrip = () => {
+  const handleCancelTrip = useCallback(() => {
     if (!bookingId) {
       Alert.alert('Error', 'Booking ID not available');
       return;
@@ -563,26 +281,25 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
         },
       },
     ]);
-  };
+  }, [bookingId, navigation]);
 
   // ============================================================
   // NAVIGATION CALLBACKS
   // ============================================================
-  const handleArrival = () => {
+  const handleArrival = useCallback(() => {
     console.log('[RideTracking] 🏁 Arrived at target');
     const target = navStateRef.current.target;
     const targetName = target === 'pickup' ? 'pickup location' : 'destination';
     setNavState(prev => ({ ...prev, status: 'arrived' }));
     Alert.alert('Arrived', `You have arrived at the ${targetName}`);
-  };
+  }, []);
 
-  const handleRerouting = () => {
+  const handleRerouting = useCallback(() => {
     console.log('[RideTracking] 🔄 Rerouting');
     setNavState(prev => ({ ...prev, status: 'rerouting' }));
-    // Will auto-reset when route updated
-  };
+  }, []);
 
-  const handleNavigationStateUpdate = (data: {
+  const handleNavigationStateUpdate = useCallback((data: {
     distance: number;
     eta: number;
     instruction: string;
@@ -594,12 +311,17 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
       currentInstruction: data.instruction,
       status: 'navigating',
     }));
-  };
+  }, []);
+
+  const handleNavReady = useCallback(() => {
+    console.log('[RideTracking] ✅ Navigation ready');
+    setIsNavReady(true);
+  }, []);
 
   // ============================================================
   // RENDER STATUS BUTTONS
   // ============================================================
-  const renderStatusButtons = () => {
+  const renderStatusButtons = useCallback(() => {
     const currentStatus = booking?.status || '';
 
     switch (currentStatus) {
@@ -655,24 +377,20 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
       default:
         return null;
     }
-  };
+  }, [booking?.status, updating, updateRideStatus]);
 
   // ============================================================
   // RENDER NAVIGATION CARD
   // ============================================================
-  const renderNavigationCard = () => {
+  const renderNavigationCard = useCallback(() => {
     if (!isNavigating || navState.status === 'idle') return null;
 
     const getStatusColor = () => {
       switch (navState.status) {
-        case 'rerouting':
-          return '#f59e0b';
-        case 'arrived':
-          return '#10b981';
-        case 'error':
-          return '#ef4444';
-        default:
-          return '#3b82f6';
+        case 'rerouting': return '#f59e0b';
+        case 'arrived': return '#10b981';
+        case 'error': return '#ef4444';
+        default: return '#3b82f6';
       }
     };
 
@@ -681,15 +399,12 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
     return (
       <View style={styles.navigationCard}>
         <View style={styles.navigationCardHeader}>
-          <Text
-            style={[styles.navigationCardStatus, { color: getStatusColor() }]}
-          >
+          <Text style={[styles.navigationCardStatus, { color: getStatusColor() }]}>
             {navState.status.toUpperCase()}
           </Text>
           <TouchableOpacity
             onPress={() => {
-              const enabled = !navState.isVoiceEnabled;
-              setNavState(prev => ({ ...prev, isVoiceEnabled: enabled }));
+              setNavState(prev => ({ ...prev, isVoiceEnabled: !prev.isVoiceEnabled }));
             }}
           >
             <Icon
@@ -716,7 +431,7 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
         </View>
       </View>
     );
-  };
+  }, [isNavigating, navState]);
 
   // ============================================================
   // RENDER
@@ -753,7 +468,7 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
     <NavigationProvider
       termsAndConditionsDialogOptions={{
         title: 'Terms & Conditions',
-        companyName: 'TizzyGo',
+        companyName: 'TizzyOS',
         showOnlyDisclaimer: true,
       }}
     >
@@ -771,7 +486,6 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
           <View style={{ width: 40 }} />
         </View>
 
-        {/* Navigation View - Google Navigation SDK */}
         <View style={styles.navigationContainer}>
           <NavigationControllerWrapper
             booking={booking}
@@ -780,10 +494,10 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
             onArrival={handleArrival}
             onRerouting={handleRerouting}
             onNavigationStateUpdate={handleNavigationStateUpdate}
+            onReady={handleNavReady}
           />
         </View>
 
-        {/* Navigation Card Overlay */}
         {renderNavigationCard()}
 
         <ScrollView
@@ -803,8 +517,7 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
           <View style={styles.actionContainer}>
             {renderStatusButtons()}
 
-            {(booking.status === 'accepted' ||
-              booking.status === 'arrived') && (
+            {(booking.status === 'accepted' || booking.status === 'arrived') && (
               <TouchableOpacity
                 style={[styles.actionButton, styles.cancelButton]}
                 onPress={handleCancelTrip}
@@ -821,9 +534,6 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
   );
 };
 
-// ============================================================
-// STYLES
-// ============================================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -869,9 +579,6 @@ const styles = StyleSheet.create({
     height: height * 0.5,
     backgroundColor: '#1a1a2e',
     position: 'relative',
-  },
-  navigationView: {
-    flex: 1,
   },
   detailsContainer: {
     flex: 1,
