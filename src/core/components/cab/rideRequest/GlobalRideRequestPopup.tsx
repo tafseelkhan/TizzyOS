@@ -1,5 +1,12 @@
 // src/core/components/cab/rideRequest/GlobalRideRequestPopup.tsx
-import React, { useEffect, useRef, useState } from 'react';
+
+import React, {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  useMemo,
+} from 'react';
 import {
   View,
   Text,
@@ -14,7 +21,6 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useRideRequestContext } from '../../../contexts/rideRequest/RideRequestContext';
-import { ringtoneService } from '../../../services/audio/RingtoneService';
 import RideRequestCard from './RideRequestCard';
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -34,27 +40,25 @@ const GlobalRideRequestPopup: React.FC = () => {
     isForeground,
   } = useRideRequestContext();
 
-  const isRingtonePlaying = useRef<boolean>(false);
   const [isExpanded, setIsExpanded] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
   const [showTooltip, setShowTooltip] = useState(true);
 
-  // Animation
+  // ✅ Animations
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const tooltipFade = useRef(new Animated.Value(1)).current;
 
-  // ✅ FIX: Use ref for position to avoid stale state in PanResponder
+  // ✅ Position refs for drag
   const miniPositionRef = useRef({
     x: SCREEN_WIDTH / 2 - MINI_WIDTH / 2,
     y: SCREEN_HEIGHT - MINI_HEIGHT - BOTTOM_SAFE - 30,
   });
   const [miniPosition, setMiniPosition] = useState(miniPositionRef.current);
 
-  // ✅ FIX: Store initial touch position
   const startTouchRef = useRef({ x: 0, y: 0 });
   const startPosRef = useRef({ x: 0, y: 0 });
 
-  // Double click detection
+  // ✅ Double click detection
   const lastTapRef = useRef<number>(0);
   const dragActiveRef = useRef<boolean>(false);
 
@@ -74,6 +78,10 @@ const GlobalRideRequestPopup: React.FC = () => {
         }),
       ]),
     ).start();
+
+    return () => {
+      pulseAnim.stopAnimation();
+    };
   }, []);
 
   // ✅ Tooltip - 8 minutes (480 seconds)
@@ -84,11 +92,11 @@ const GlobalRideRequestPopup: React.FC = () => {
         duration: 800,
         useNativeDriver: true,
       }).start(() => setShowTooltip(false));
-    }, 480000); // 8 minutes
+    }, 480000);
     return () => clearTimeout(timer);
   }, []);
 
-  // ✅ PanResponder for mini bar drag - FIXED
+  // ✅ PanResponder for mini bar drag
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -96,7 +104,6 @@ const GlobalRideRequestPopup: React.FC = () => {
       onPanResponderGrant: evt => {
         setIsDragging(true);
         dragActiveRef.current = true;
-        // ✅ Store initial touch and position
         const touch = evt.nativeEvent;
         startTouchRef.current = { x: touch.pageX, y: touch.pageY };
         startPosRef.current = {
@@ -106,7 +113,6 @@ const GlobalRideRequestPopup: React.FC = () => {
       },
       onPanResponderMove: evt => {
         const touch = evt.nativeEvent;
-        // ✅ Calculate delta from initial touch
         const deltaX = touch.pageX - startTouchRef.current.x;
         const deltaY = touch.pageY - startTouchRef.current.y;
 
@@ -126,7 +132,6 @@ const GlobalRideRequestPopup: React.FC = () => {
       onPanResponderRelease: () => {
         setIsDragging(false);
         dragActiveRef.current = false;
-        // Snap to nearest edge
         const snapX =
           miniPositionRef.current.x < SCREEN_WIDTH / 2
             ? 10
@@ -138,46 +143,58 @@ const GlobalRideRequestPopup: React.FC = () => {
   ).current;
 
   // ✅ Handle tap with double-click detection
-  const handleMiniBarPress = () => {
+  const handleMiniBarPress = useCallback(() => {
     const now = Date.now();
     const timeSinceLastTap = now - lastTapRef.current;
 
     if (timeSinceLastTap < 300) {
-      // Double tap detected - toggle expand
       setIsExpanded(!isExpanded);
       lastTapRef.current = 0;
     } else {
-      // Single tap - just update last tap time
       lastTapRef.current = now;
     }
-  };
+  }, [isExpanded]);
 
-  useEffect(() => {
-    const hasRequests = rideRequests.length > 0 && isForeground;
+  // ✅ Stable callbacks for cards
+  const handleAccept = useCallback(
+    (requestId: string) => {
+      acceptRide(requestId);
+    },
+    [acceptRide],
+  );
 
-    if (hasRequests) {
-      if (!isRingtonePlaying.current) {
-        console.log('[GlobalPopup] 🔊 Playing ringtone for popup');
-        ringtoneService.playRideRequestRingtone();
-        isRingtonePlaying.current = true;
-      }
-    } else {
-      if (isRingtonePlaying.current) {
-        console.log('[GlobalPopup] 🔕 Stopping ringtone');
-        ringtoneService.stopRingtone();
-        isRingtonePlaying.current = false;
-      }
-    }
-  }, [rideRequests.length, isForeground]);
+  const handleReject = useCallback(
+    (requestId: string) => {
+      rejectRide(requestId);
+    },
+    [rejectRide],
+  );
 
-  useEffect(() => {
-    return () => {
-      if (isRingtonePlaying.current) {
-        ringtoneService.stopRingtone();
-        isRingtonePlaying.current = false;
-      }
-    };
-  }, []);
+  const handleTimeout = useCallback(
+    (requestId: string) => {
+      dismissRequest(requestId);
+    },
+    [dismissRequest],
+  );
+
+  // ✅ Memoize cards with proper unique keys
+  const renderCards = useMemo(() => {
+    // ✅ Use requestId as key, fallback to index only if no requestId
+    return rideRequests.map((request, index) => {
+      const key =
+        request.requestId || `ride-${index}-${Date.now()}-${Math.random()}`;
+      return (
+        <RideRequestCard
+          key={key}
+          request={request}
+          index={index}
+          onAccept={() => handleAccept(request.requestId)}
+          onReject={() => handleReject(request.requestId)}
+          onTimeout={() => handleTimeout(request.requestId)}
+        />
+      );
+    });
+  }, [rideRequests, handleAccept, handleReject, handleTimeout]);
 
   if (!isForeground || rideRequests.length === 0) {
     return null;
@@ -186,7 +203,6 @@ const GlobalRideRequestPopup: React.FC = () => {
   return (
     <SafeAreaView style={styles.safeArea} pointerEvents="box-none">
       {isExpanded ? (
-        // ✅ Full Expanded View
         <View
           style={[
             styles.container,
@@ -229,21 +245,11 @@ const GlobalRideRequestPopup: React.FC = () => {
               contentContainerStyle={styles.scrollContent}
               bounces={true}
             >
-              {rideRequests.map((request, index) => (
-                <RideRequestCard
-                  key={request.requestId || `ride-${index}`}
-                  request={request}
-                  index={index}
-                  onAccept={() => acceptRide(request.requestId)}
-                  onReject={() => rejectRide(request.requestId)}
-                  onTimeout={() => dismissRequest(request.requestId)}
-                />
-              ))}
+              {renderCards}
             </ScrollView>
           </View>
         </View>
       ) : (
-        // ✅ Mini Bar - with animation and tooltip
         <Animated.View
           style={[
             styles.miniContainer,
@@ -270,7 +276,6 @@ const GlobalRideRequestPopup: React.FC = () => {
               <Icon name="expand-more" size={20} color="#6b7280" />
             </View>
 
-            {/* ✅ Tooltip - 8 minutes */}
             {showTooltip && (
               <Animated.View style={[styles.tooltip, { opacity: tooltipFade }]}>
                 <Text style={styles.tooltipText}>

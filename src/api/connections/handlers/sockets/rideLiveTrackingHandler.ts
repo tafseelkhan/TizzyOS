@@ -8,7 +8,7 @@ import { socketService } from '../../../../core/utils/socket/socketUtils';
 
 export interface DriverLocationUpdate {
   driverId: string;
-  rideId: string;
+  quoteId: string;
   latitude: number;
   longitude: number;
   heading: number;
@@ -23,6 +23,7 @@ export interface DriverLocationUpdate {
 export interface TrackingSuccessData {
   bookingId: string;
   trackingId: string;
+  quoteId?: string;
   rideCode: string;
   status: string;
   pickup: {
@@ -81,7 +82,7 @@ export interface TrackingSuccessData {
 export interface DriverLiveStartData {
   success: boolean;
   message: string;
-  rideId: string;
+  quoteId: string;
 }
 
 export interface DriverLiveAckData {
@@ -91,7 +92,7 @@ export interface DriverLiveAckData {
 
 export interface DriverLiveStoppedData {
   driverId?: string;
-  rideId?: string;
+  quoteId?: string;
   message: string;
   timestamp: string;
   isDisconnect?: boolean;
@@ -119,11 +120,10 @@ export interface TrackingCallbacks {
 class RideLiveTrackingHandler {
   private static instance: RideLiveTrackingHandler;
   private isRegistered: boolean = false;
-  private activeSubscriptions: Map<string, Set<string>> = new Map(); // trackingId -> Set of callback IDs
+  private activeSubscriptions: Map<string, Set<string>> = new Map();
   private callbackRegistry: Map<string, TrackingCallbacks> = new Map();
   private callbackIdCounter: number = 0;
 
-  // Handler references for cleanup
   private locationHandler: ((data: any) => void) | null = null;
   private successHandler: ((data: any) => void) | null = null;
   private driverStartedHandler: ((data: any) => void) | null = null;
@@ -140,28 +140,37 @@ class RideLiveTrackingHandler {
     return RideLiveTrackingHandler.instance;
   }
 
-  /**
-   * Register socket listeners for live tracking events
-   */
   register(): void {
     if (this.isRegistered) {
       console.log('[RideLiveTrackingHandler] Already registered');
       return;
     }
 
-    console.log('[RideLiveTrackingHandler] Registering live tracking listeners...');
+    console.log(
+      '[RideLiveTrackingHandler] Registering live tracking listeners...',
+    );
 
-    // ============================================================
-    // DRIVER LIVE LOCATION UPDATES
-    // ============================================================
     this.locationHandler = (data: DriverLocationUpdate) => {
-      console.log('[RideLiveTrackingHandler] 📍 Driver location update:', data);
-      
-      const rideId = data.rideId || data.rideId;
-      if (rideId) {
-        const callbackIds = this.activeSubscriptions.get(rideId);
+      console.log(
+        '[RideLiveTrackingHandler] ========================================',
+      );
+      console.log(
+        '[RideLiveTrackingHandler] 📡 EVENT: driver:live:location RECEIVED!',
+      );
+      console.log('[RideLiveTrackingHandler] 📦 driverId:', data.driverId);
+      console.log('[RideLiveTrackingHandler] 🔑 quoteId:', data.quoteId);
+      console.log('[RideLiveTrackingHandler] 📍 latitude:', data.latitude);
+      console.log('[RideLiveTrackingHandler] 📍 longitude:', data.longitude);
+      console.log(
+        '[RideLiveTrackingHandler] ========================================',
+      );
+
+      const quoteId = data.quoteId;
+
+      if (quoteId) {
+        const callbackIds = this.activeSubscriptions.get(quoteId);
         if (callbackIds) {
-          callbackIds.forEach((callbackId) => {
+          callbackIds.forEach(callbackId => {
             const callbacks = this.callbackRegistry.get(callbackId);
             if (callbacks?.onLocationUpdate) {
               callbacks.onLocationUpdate(data);
@@ -171,59 +180,74 @@ class RideLiveTrackingHandler {
       }
     };
 
-    // ============================================================
-    // CUSTOMER TRACKING SUCCESS
-    // ============================================================
-    this.successHandler = (data: TrackingSuccessData) => {
-      console.log('[RideLiveTrackingHandler] ✅ Tracking success:', data);
-      
-      const trackingId = data.trackingId || data.bookingId;
+    // ✅ FIXED: Handle both nested and flat payload
+    this.successHandler = (data: any) => {
+      console.log(
+        '[RideLiveTrackingHandler] ========================================',
+      );
+      console.log(
+        '[RideLiveTrackingHandler] 📡 EVENT: customer:track:success RECEIVED!',
+      );
+
+      // ✅ Support both old (nested) and new (flat) payload
+      let parsedData = data;
+      if (data?.data) {
+        parsedData = data.data;
+      }
+
+      console.log(
+        '[RideLiveTrackingHandler] 📦 bookingId:',
+        parsedData.bookingId,
+      );
+      console.log(
+        '[RideLiveTrackingHandler] 📦 trackingId:',
+        parsedData.trackingId,
+      );
+      console.log('[RideLiveTrackingHandler] 🔑 quoteId:', parsedData.quoteId);
+      console.log(
+        '[RideLiveTrackingHandler] ========================================',
+      );
+
+      const trackingId = parsedData.trackingId || parsedData.bookingId;
       if (trackingId) {
         const callbackIds = this.activeSubscriptions.get(trackingId);
         if (callbackIds) {
-          callbackIds.forEach((callbackId) => {
+          callbackIds.forEach(callbackId => {
             const callbacks = this.callbackRegistry.get(callbackId);
             if (callbacks?.onTrackingSuccess) {
-              callbacks.onTrackingSuccess(data);
+              callbacks.onTrackingSuccess(parsedData);
             }
           });
         }
       }
     };
 
-    // ============================================================
-    // DRIVER LIVE STARTED
-    // ============================================================
     this.driverStartedHandler = (data: DriverLiveStartData) => {
-      console.log('[RideLiveTrackingHandler] 🚗 Driver started:', data);
+      console.log(
+        '[RideLiveTrackingHandler] 📡 EVENT: driver:live:started RECEIVED!',
+      );
       this.broadcastToAll('onDriverStarted', data);
     };
 
-    // ============================================================
-    // DRIVER LIVE ACK
-    // ============================================================
     this.driverAckHandler = (data: DriverLiveAckData) => {
-      console.log('[RideLiveTrackingHandler] ✅ Driver ack:', data);
+      console.log(
+        '[RideLiveTrackingHandler] 📡 EVENT: driver:live:ack RECEIVED!',
+      );
       this.broadcastToAll('onDriverAck', data);
     };
 
-    // ============================================================
-    // DRIVER LIVE STOPPED
-    // ============================================================
     this.driverStoppedHandler = (data: DriverLiveStoppedData) => {
-      console.log('[RideLiveTrackingHandler] ⏹️ Driver stopped:', data);
+      console.log(
+        '[RideLiveTrackingHandler] 📡 EVENT: driver:live:stopped RECEIVED!',
+      );
       this.broadcastToAll('onDriverStopped', data);
     };
 
-    // ============================================================
-    // ERROR HANDLING
-    // ============================================================
     this.errorHandler = (data: TrackingErrorData) => {
-      console.log('[RideLiveTrackingHandler] ❌ Error:', data);
+      console.log('[RideLiveTrackingHandler] 📡 EVENT: error RECEIVED!', data);
       this.broadcastToAll('onError', data);
     };
 
-    // Register with socketService
     socketService.on('driver:live:location', this.locationHandler);
     socketService.on('customer:track:success', this.successHandler);
     socketService.on('driver:live:started', this.driverStartedHandler);
@@ -236,9 +260,6 @@ class RideLiveTrackingHandler {
     console.log('[RideLiveTrackingHandler] ✅ Registered successfully');
   }
 
-  /**
-   * Unregister socket listeners
-   */
   unregister(): void {
     if (!this.isRegistered) {
       console.log('[RideLiveTrackingHandler] Not registered');
@@ -279,11 +300,11 @@ class RideLiveTrackingHandler {
     console.log('[RideLiveTrackingHandler] ✅ Unregistered');
   }
 
-  /**
-   * Broadcast to all subscribers
-   */
-  private broadcastToAll(callbackName: keyof TrackingCallbacks, data: any): void {
-    this.callbackRegistry.forEach((callbacks) => {
+  private broadcastToAll(
+    callbackName: keyof TrackingCallbacks,
+    data: any,
+  ): void {
+    this.callbackRegistry.forEach(callbacks => {
       const callback = callbacks[callbackName];
       if (callback) {
         callback(data);
@@ -291,20 +312,26 @@ class RideLiveTrackingHandler {
     });
   }
 
-  /**
-   * Subscribe to live tracking updates
-   */
   subscribe(
     trackingId: string,
     bookingId: string,
-    callbacks: TrackingCallbacks
+    quoteId: string,
+    callbacks: TrackingCallbacks,
   ): () => void {
-    console.log(`[RideLiveTrackingHandler] 📡 Subscribing to tracking: ${trackingId}`);
+    console.log(
+      `[RideLiveTrackingHandler] ========================================`,
+    );
+    console.log(`[RideLiveTrackingHandler] 📡 SUBSCRIBING TO TRACKING`);
+    console.log(`[RideLiveTrackingHandler] 📦 trackingId: ${trackingId}`);
+    console.log(`[RideLiveTrackingHandler] 📦 bookingId: ${bookingId}`);
+    console.log(`[RideLiveTrackingHandler] 🔑 quoteId: ${quoteId}`);
+    console.log(
+      `[RideLiveTrackingHandler] ========================================`,
+    );
 
     const callbackId = `cb_${++this.callbackIdCounter}_${trackingId}`;
     this.callbackRegistry.set(callbackId, callbacks);
 
-    // Add to active subscriptions
     if (!this.activeSubscriptions.has(trackingId)) {
       this.activeSubscriptions.set(trackingId, new Set());
     }
@@ -317,23 +344,32 @@ class RideLiveTrackingHandler {
       this.activeSubscriptions.get(bookingId)?.add(callbackId);
     }
 
-    // Emit customer:track:start
+    // ✅ EMIT customer:track:start with all 3 IDs
+    console.log(`[RideLiveTrackingHandler] 📤 EMITTING: customer:track:start`);
+    console.log(`[RideLiveTrackingHandler] 📦 bookingId: ${bookingId}`);
+    console.log(`[RideLiveTrackingHandler] 📦 trackingId: ${trackingId}`);
+    console.log(`[RideLiveTrackingHandler] 🔑 quoteId: ${quoteId}`);
+
     socketService.emit('customer:track:start', {
       bookingId: bookingId,
       trackingId: trackingId,
+      quoteId: quoteId,
     });
 
-    console.log(`[RideLiveTrackingHandler] ✅ Subscribed with ID: ${callbackId}`);
+    console.log(
+      `[RideLiveTrackingHandler] ✅ Subscribed with ID: ${callbackId}`,
+    );
 
     return () => {
       this.unsubscribe(callbackId, trackingId, bookingId);
     };
   }
 
-  /**
-   * Unsubscribe from live tracking
-   */
-  private unsubscribe(callbackId: string, trackingId: string, bookingId: string): void {
+  private unsubscribe(
+    callbackId: string,
+    trackingId: string,
+    bookingId: string,
+  ): void {
     console.log(`[RideLiveTrackingHandler] 📡 Unsubscribing: ${callbackId}`);
 
     const trackingSubs = this.activeSubscriptions.get(trackingId);
@@ -365,48 +401,51 @@ class RideLiveTrackingHandler {
     console.log(`[RideLiveTrackingHandler] ✅ Unsubscribed: ${callbackId}`);
   }
 
-  /**
-   * Emit driver location update
-   */
   emitDriverLocation(data: {
     driverId: string;
-    rideId: string;
+    quoteId: string;
     latitude: number;
     longitude: number;
     heading?: number;
     speed?: number;
     accuracy?: number;
   }): void {
-    console.log('[RideLiveTrackingHandler] 📤 Emitting driver location:', data);
+    console.log(
+      '[RideLiveTrackingHandler] ========================================',
+    );
+    console.log('[RideLiveTrackingHandler] 📤 EMITTING: driver:live:update');
+    console.log('[RideLiveTrackingHandler] 📦 driverId:', data.driverId);
+    console.log('[RideLiveTrackingHandler] 🔑 quoteId:', data.quoteId);
+    console.log('[RideLiveTrackingHandler] 📍 latitude:', data.latitude);
+    console.log('[RideLiveTrackingHandler] 📍 longitude:', data.longitude);
+    console.log(
+      '[RideLiveTrackingHandler] ========================================',
+    );
+
     socketService.emit('driver:live:update', data);
   }
 
-  /**
-   * Emit driver start tracking
-   */
   emitDriverStart(data: {
     driverId: string;
-    rideId: string;
+    quoteId: string;
     latitude: number;
     longitude: number;
     heading?: number;
     speed?: number;
   }): void {
-    console.log('[RideLiveTrackingHandler] 📤 Emitting driver start:', data);
+    console.log('[RideLiveTrackingHandler] 📤 EMITTING: driver:live:start');
+    console.log('[RideLiveTrackingHandler] 📦 driverId:', data.driverId);
+    console.log('[RideLiveTrackingHandler] 🔑 quoteId:', data.quoteId);
     socketService.emit('driver:live:start', data);
   }
 
-  /**
-   * Emit driver stop tracking
-   */
-  emitDriverStop(data: {
-    driverId: string;
-    rideId: string;
-  }): void {
-    console.log('[RideLiveTrackingHandler] 📤 Emitting driver stop:', data);
+  emitDriverStop(data: { driverId: string; quoteId: string }): void {
+    console.log('[RideLiveTrackingHandler] 📤 EMITTING: driver:live:stop');
+    console.log('[RideLiveTrackingHandler] 📦 driverId:', data.driverId);
+    console.log('[RideLiveTrackingHandler] 🔑 quoteId:', data.quoteId);
     socketService.emit('driver:live:stop', {
       driverId: data.driverId,
-      rideId: data.rideId,
+      quoteId: data.quoteId,
     });
   }
 
@@ -419,5 +458,4 @@ class RideLiveTrackingHandler {
   }
 }
 
-// Singleton export
 export const rideLiveTrackingHandler = RideLiveTrackingHandler.getInstance();

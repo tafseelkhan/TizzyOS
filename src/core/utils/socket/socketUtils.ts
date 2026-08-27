@@ -8,19 +8,39 @@ import {
   SOCKET_EVENTS,
 } from '../../../api/constants/rideRequestConfig';
 
+// Socket state enum
+export enum SocketState {
+  DISCONNECTED = 'disconnected',
+  CONNECTING = 'connecting',
+  CONNECTED = 'connected',
+  AUTHENTICATING = 'authenticating',
+  AUTHENTICATED = 'authenticated',
+  READY = 'ready',
+  ERROR = 'error',
+}
+
 class SocketService {
   private static instance: SocketService;
   private socket: Socket | null = null;
   private listeners: Map<string, Set<Function>> = new Map();
+  private state: SocketState = SocketState.DISCONNECTED;
   private isConnected = false;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = CONFIG.SOCKET_RECONNECTION_ATTEMPTS;
-  private isAuthenticated = false;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private connectionPromise: Promise<string | null> | null = null;
   private connectionResolve: ((value: string | null) => void) | null = null;
   private connectionReject: ((reason: Error) => void) | null = null;
   private connectionTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  // Shared authentication promise - single source of truth
+  private authPromise: Promise<boolean> | null = null;
+  private authResolve: ((value: boolean) => void) | null = null;
+  private authReject: ((reason: Error) => void) | null = null;
+  private authTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  private authEmitTime: number | null = null;
+  private authRetryCount = 0;
+  private maxAuthRetries = 5;
 
   private processedRequests: Set<string> = new Set();
   private isProcessing: boolean = false;
@@ -34,32 +54,38 @@ class SocketService {
     return SocketService.instance;
   }
 
+  getState(): SocketState {
+    return this.state;
+  }
+
   async connect(): Promise<void> {
-    console.log('🔌 [SocketService] ========================================');
-    console.log('🔌 [SocketService] connect() called');
+    console.log('🔌 [SocketService] connect() called, state:', this.state);
 
     if (this.socket?.connected) {
       console.log(
-        '🔌 [SocketService] ✅ Socket already connected with ID:',
+        '🔌 [SocketService] ✅ Already connected, ID:',
         this.socket.id,
       );
+      this.state = SocketState.CONNECTED;
+      this.isConnected = true;
       return;
     }
 
     if (this.socket && !this.socket.connected) {
-      console.log(
-        '🔌 [SocketService] 🔄 Socket exists but disconnected, reconnecting...',
-      );
+      console.log('🔌 [SocketService] 🔄 Reconnecting...');
+      this.state = SocketState.CONNECTING;
       this.socket.connect();
       return;
     }
 
-    console.log('🔌 [SocketService] 🆕 Creating new socket connection...');
+    console.log('🔌 [SocketService] 🆕 Creating new connection...');
+    this.state = SocketState.CONNECTING;
 
     try {
       const token = await getToken();
       if (!token) {
         console.warn('⚠️ [SocketService] No token found');
+        this.state = SocketState.ERROR;
         return;
       }
 
@@ -78,6 +104,7 @@ class SocketService {
       this.socket.connect();
     } catch (error) {
       console.error('❌ [SocketService] Connection failed:', error);
+      this.state = SocketState.ERROR;
       throw error;
     }
   }
@@ -86,12 +113,14 @@ class SocketService {
     timeout: number = CONFIG.SOCKET_TIMEOUT,
   ): Promise<string | null> {
     console.log(
-      '⏳ [SocketService] waitForConnection() called, timeout:',
-      timeout,
+      '⏳ [SocketService] waitForConnection() called, state:',
+      this.state,
     );
 
     if (this.socket?.connected && this.socket.id) {
       console.log('✅ [SocketService] Already connected, ID:', this.socket.id);
+      this.state = SocketState.CONNECTED;
+      this.isConnected = true;
       return Promise.resolve(this.socket.id);
     }
 
@@ -110,14 +139,11 @@ class SocketService {
 
       this.connectionTimeoutId = setTimeout(() => {
         console.error('⏰ [SocketService] Connection timeout!');
-        const error = new Error('Connection timeout');
-        if (this.connectionReject) {
-          this.connectionReject(error);
-        }
         this.connectionPromise = null;
         this.connectionResolve = null;
         this.connectionReject = null;
         this.connectionTimeoutId = null;
+        this.state = SocketState.ERROR;
         resolve(null);
       }, timeout);
     });
@@ -142,6 +168,98 @@ class SocketService {
     return this.connectionPromise;
   }
 
+  waitForAuthentication(
+    timeout: number = CONFIG.SOCKET_TIMEOUT,
+  ): Promise<boolean> {
+    console.log(
+      '⏳ [SocketService] waitForAuthentication() called, state:',
+      this.state,
+    );
+
+    if (
+      this.state === SocketState.AUTHENTICATED ||
+      this.state === SocketState.READY
+    ) {
+      console.log('✅ [SocketService] Already authenticated');
+      return Promise.resolve(true);
+    }
+
+    if (this.authPromise) {
+      console.log(
+        '⏳ [SocketService] Auth already in progress, sharing existing promise...',
+      );
+      return this.authPromise;
+    }
+
+    console.log('🔐 [SocketService] Starting authentication...');
+
+    this.authPromise = new Promise((resolve, reject) => {
+      this.authResolve = resolve;
+      this.authReject = reject;
+
+      if (this.authTimeoutId) {
+        clearTimeout(this.authTimeoutId);
+      }
+
+      this.authTimeoutId = setTimeout(() => {
+        console.error('⏰ [SocketService] Authentication timeout!');
+        this.authPromise = null;
+        this.authResolve = null;
+        this.authReject = null;
+        this.authTimeoutId = null;
+        this.state = SocketState.ERROR;
+        resolve(false);
+      }, timeout);
+    });
+
+    if (!this.isConnected) {
+      console.log('⏳ [SocketService] Waiting for connection before auth...');
+      this.waitForConnection(timeout)
+        .then(() => {
+          if (
+            this.state !== SocketState.AUTHENTICATED &&
+            this.state !== SocketState.READY
+          ) {
+            this.authenticate();
+          }
+        })
+        .catch(() => {
+          if (this.authReject) {
+            this.authReject(new Error('Connection failed'));
+          }
+        });
+    } else {
+      this.authenticate();
+    }
+
+    return this.authPromise;
+  }
+
+  async waitForReady(timeout: number = CONFIG.SOCKET_TIMEOUT): Promise<{
+    socketId: string | null;
+    authenticated: boolean;
+    state: SocketState;
+  }> {
+    console.log('⏳ [SocketService] waitForReady() called, timeout:', timeout);
+
+    try {
+      const socketId = await this.waitForConnection(timeout);
+      if (!socketId) {
+        return { socketId: null, authenticated: false, state: this.state };
+      }
+
+      const authenticated = await this.waitForAuthentication(timeout);
+      if (authenticated) {
+        this.state = SocketState.READY;
+      }
+
+      return { socketId, authenticated, state: this.state };
+    } catch (error) {
+      console.error('[SocketService] waitForReady error:', error);
+      return { socketId: null, authenticated: false, state: SocketState.ERROR };
+    }
+  }
+
   private startHeartbeat(): void {
     this.stopHeartbeat();
     this.heartbeatInterval = setInterval(() => {
@@ -164,14 +282,13 @@ class SocketService {
 
     console.log('📡 [SocketService] Setting up core event listeners...');
 
-    // ============================================================
-    // CORE CONNECTION EVENTS
-    // ============================================================
     this.socket.on('connect', () => {
       console.log('✅ [SocketService] SOCKET CONNECTED!');
       console.log('📡 [SocketService] Socket ID:', this.socket?.id);
+      this.state = SocketState.CONNECTED;
       this.isConnected = true;
       this.reconnectAttempts = 0;
+      this.authRetryCount = 0;
       this.startHeartbeat();
 
       if (this.connectionResolve) {
@@ -187,37 +304,61 @@ class SocketService {
       }
 
       this.registerDriver();
-      this.authenticate();
+
+      setTimeout(() => {
+        if (this.isConnected && this.state !== SocketState.AUTHENTICATED) {
+          this.authenticate();
+        }
+      }, 500);
     });
 
     this.socket.on('disconnect', (reason: string) => {
       console.log('❌ [SocketService] SOCKET DISCONNECTED:', reason);
+      this.state = SocketState.DISCONNECTED;
       this.isConnected = false;
-      this.isAuthenticated = false;
       this.stopHeartbeat();
+      this.isProcessing = false;
+      this.authRetryCount = 0;
+      if (this.authResolve) {
+        this.authResolve(false);
+        this.authPromise = null;
+        this.authResolve = null;
+        this.authReject = null;
+        if (this.authTimeoutId) {
+          clearTimeout(this.authTimeoutId);
+          this.authTimeoutId = null;
+        }
+      }
     });
 
     this.socket.on('reconnect', (attempt: number) => {
       console.log('🔄 [SocketService] RECONNECTED:', attempt);
+      this.state = SocketState.CONNECTED;
       this.isConnected = true;
+      this.authRetryCount = 0;
       this.startHeartbeat();
       this.registerDriver();
-      this.authenticate();
+      setTimeout(() => {
+        if (this.isConnected && this.state !== SocketState.AUTHENTICATED) {
+          this.authenticate();
+        }
+      }, 500);
     });
 
     this.socket.on('reconnect_attempt', (attempt: number) => {
       this.reconnectAttempts = attempt;
       console.log('🔄 [SocketService] Reconnect attempt:', attempt);
+      this.state = SocketState.CONNECTING;
     });
 
     this.socket.on('reconnect_failed', () => {
       console.error('❌ [SocketService] RECONNECT FAILED');
-      this.isConnected = false;
+      this.state = SocketState.ERROR;
     });
 
     this.socket.on('connect_error', (error: Error) => {
       console.error('❌ [SocketService] Connection error:', error.message);
-      this.isConnected = false;
+      this.state = SocketState.ERROR;
 
       if (this.connectionReject) {
         this.connectionReject(error);
@@ -232,16 +373,71 @@ class SocketService {
     });
 
     // ============================================================
-    // AUTH EVENTS
+    // 🔥 FIX: AUTH EVENTS - Listen for both 'authenticated' and 'auth-success'
     // ============================================================
     this.socket.on('authenticated', (data: any) => {
-      console.log('🔐 [SocketService] AUTHENTICATED');
-      this.isAuthenticated = true;
+      console.log('🔐 [SocketService] AUTHENTICATED (event: authenticated)');
+      this.state = SocketState.AUTHENTICATED;
+      this.authRetryCount = 0;
+
+      if (this.authResolve) {
+        console.log('✅ [SocketService] Resolving auth promise...');
+        this.authResolve(true);
+        this.authPromise = null;
+        this.authResolve = null;
+        this.authReject = null;
+        if (this.authTimeoutId) {
+          clearTimeout(this.authTimeoutId);
+          this.authTimeoutId = null;
+        }
+      }
+    });
+
+    // 🔥 FIX: Also listen for 'auth-success' event (backend emits this)
+    this.socket.on('auth-success', (data: any) => {
+      console.log('🔐 [SocketService] AUTHENTICATED (event: auth-success)');
+      this.state = SocketState.AUTHENTICATED;
+      this.authRetryCount = 0;
+
+      if (this.authResolve) {
+        console.log('✅ [SocketService] Resolving auth promise...');
+        this.authResolve(true);
+        this.authPromise = null;
+        this.authResolve = null;
+        this.authReject = null;
+        if (this.authTimeoutId) {
+          clearTimeout(this.authTimeoutId);
+          this.authTimeoutId = null;
+        }
+      }
     });
 
     this.socket.on('auth-error', (data: any) => {
       console.error('🚫 [SocketService] AUTH ERROR:', data);
-      this.isAuthenticated = false;
+      this.state = SocketState.ERROR;
+      this.authRetryCount++;
+
+      if (this.authReject) {
+        this.authReject(new Error(data?.message || 'Authentication failed'));
+        this.authPromise = null;
+        this.authResolve = null;
+        this.authReject = null;
+        if (this.authTimeoutId) {
+          clearTimeout(this.authTimeoutId);
+          this.authTimeoutId = null;
+        }
+      }
+
+      if (this.authRetryCount < this.maxAuthRetries && this.isConnected) {
+        console.log(
+          `🔄 [SocketService] Retrying authentication (${this.authRetryCount}/${this.maxAuthRetries})...`,
+        );
+        setTimeout(() => {
+          if (this.isConnected && this.state !== SocketState.AUTHENTICATED) {
+            this.authenticate();
+          }
+        }, 2000);
+      }
     });
 
     // ============================================================
@@ -251,7 +447,9 @@ class SocketService {
       console.warn('⚠️ [SocketService] SOCKET ERROR:', error);
 
       if (error?.message === 'Request is no longer pending') {
-        console.log('ℹ️ [SocketService] Request already processed, ignoring error');
+        console.log(
+          'ℹ️ [SocketService] Request already processed, ignoring error',
+        );
         return;
       }
 
@@ -267,9 +465,6 @@ class SocketService {
       this.emitEvent('socket-error', error);
     });
 
-    // ============================================================
-    // FORWARD ALL OTHER EVENTS
-    // ============================================================
     this.socket.onAny((event: string, ...args: any[]) => {
       const skipEvents = [
         'connect',
@@ -282,19 +477,16 @@ class SocketService {
         'ping',
         'error',
         'authenticated',
+        'auth-success',
         'auth-error',
       ];
       if (skipEvents.includes(event)) return;
-      // Forward to app listeners
       this.emitEvent(event, ...args);
     });
 
     console.log('📡 [SocketService] ✅ Core listeners registered');
   }
 
-  // ============================================================
-  // DRIVER REGISTRATION
-  // ============================================================
   private registerDriver(): void {
     const auth = this.socket?.auth;
     const token =
@@ -322,30 +514,80 @@ class SocketService {
   }
 
   private async authenticate(): Promise<void> {
-    if (this.isAuthenticated) return;
+    if (
+      this.state === SocketState.AUTHENTICATED ||
+      this.state === SocketState.READY
+    ) {
+      console.log('🔐 [SocketService] Already authenticated');
+      return;
+    }
+
+    if (this.state === SocketState.AUTHENTICATING) {
+      console.log('⏳ [SocketService] Authentication already in progress');
+      return;
+    }
 
     try {
       const token = await getToken();
-      if (token && this.socket?.connected) {
-        const userId = this.extractUserIdFromToken(token);
-        this.emit(SOCKET_EVENTS.AUTHENTICATE, {
-          userType: 'driver',
+      if (!token) {
+        console.error('❌ [SocketService] No token for authentication');
+        if (this.authReject) {
+          this.authReject(new Error('No token available'));
+        }
+        return;
+      }
+
+      const userId = this.extractUserIdFromToken(token);
+      const payload = this.decodeToken(token);
+      const userType = payload?.userType || payload?.role || 'driver';
+
+      console.log(
+        '🔐 [SocketService] Authenticating as:',
+        userType,
+        'userId:',
+        userId,
+      );
+      this.state = SocketState.AUTHENTICATING;
+
+      if (this.socket?.connected) {
+        const authEvent = SOCKET_EVENTS.AUTHENTICATE || 'authenticate';
+        // Send token in auth payload
+        this.emit(authEvent, {
+          userType: userType,
           userId: userId,
+          token: token,
         });
-        this.isAuthenticated = true;
         console.log(
-          '🔐 [SocketService] ✅ Authentication sent with userId:',
-          userId,
+          '🔐 [SocketService] ✅ Authentication sent on event:',
+          authEvent,
         );
+        this.authEmitTime = Date.now();
+      } else {
+        console.error('❌ [SocketService] Socket not connected for auth');
+        this.state = SocketState.ERROR;
+        if (this.authReject) {
+          this.authReject(new Error('Socket not connected'));
+        }
       }
     } catch (error) {
       console.error('❌ [SocketService] Auth failed:', error);
+      this.state = SocketState.ERROR;
+      if (this.authReject) {
+        this.authReject(error as Error);
+      }
     }
   }
 
-  // ============================================================
-  // DRIVER RESPONSE
-  // ============================================================
+  private decodeToken(token: string): any {
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) return null;
+      return JSON.parse(atob(parts[1]));
+    } catch {
+      return null;
+    }
+  }
+
   driverResponse(
     requestId: string,
     status: 'accepted' | 'rejected',
@@ -389,9 +631,6 @@ class SocketService {
     }, 5000);
   }
 
-  // ============================================================
-  // PUBLIC METHODS
-  // ============================================================
   emit<T = any>(event: string, data?: T): void {
     if (!this.socket?.connected) {
       console.warn(
@@ -433,6 +672,13 @@ class SocketService {
     return this.isConnected && this.socket?.connected === true;
   }
 
+  isAuthenticatedFlag(): boolean {
+    return (
+      this.state === SocketState.AUTHENTICATED ||
+      this.state === SocketState.READY
+    );
+  }
+
   getSocketId(): string | null {
     return this.socket?.id || null;
   }
@@ -440,15 +686,28 @@ class SocketService {
   disconnect(): void {
     console.log('🔌 [SocketService] 🔴 INTENTIONAL DISCONNECT');
     this.stopHeartbeat();
+
+    if (this.authResolve) {
+      this.authResolve(false);
+      this.authPromise = null;
+      this.authResolve = null;
+      this.authReject = null;
+      if (this.authTimeoutId) {
+        clearTimeout(this.authTimeoutId);
+        this.authTimeoutId = null;
+      }
+    }
+
     if (this.socket) {
       this.socket.removeAllListeners();
       this.socket.disconnect();
       this.socket = null;
     }
+    this.state = SocketState.DISCONNECTED;
     this.isConnected = false;
-    this.isAuthenticated = false;
     this.processedRequests.clear();
     this.isProcessing = false;
+    this.authRetryCount = 0;
     if (this.connectionResolve) {
       this.connectionResolve(null);
       this.connectionPromise = null;
@@ -466,15 +725,28 @@ class SocketService {
   cleanup(): void {
     console.log('🧹 [SocketService] 🧹 FULL CLEANUP');
     this.stopHeartbeat();
+
+    if (this.authResolve) {
+      this.authResolve(false);
+      this.authPromise = null;
+      this.authResolve = null;
+      this.authReject = null;
+      if (this.authTimeoutId) {
+        clearTimeout(this.authTimeoutId);
+        this.authTimeoutId = null;
+      }
+    }
+
     if (this.socket) {
       this.socket.removeAllListeners();
       this.socket.disconnect();
       this.socket = null;
     }
+    this.state = SocketState.DISCONNECTED;
     this.isConnected = false;
-    this.isAuthenticated = false;
     this.processedRequests.clear();
     this.isProcessing = false;
+    this.authRetryCount = 0;
     this.listeners.clear();
     if (this.connectionResolve) {
       this.connectionResolve(null);

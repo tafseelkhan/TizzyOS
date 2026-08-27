@@ -3,7 +3,7 @@ export const getImageUrl = (image?: string): string => {
   if (!image) return "";
   if (image.startsWith("http")) return image;
   if (image.startsWith("/")) {
-    return `http://10.207.117.121:5000${image}`;
+    return `http://10.194.138.121:5000${image}`;
   }
   return "";
 };

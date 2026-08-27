@@ -8,7 +8,6 @@ import { driverRideApi } from '../../../api/features/private/driverRidePrivateSl
 import { NavigationService } from '../../services/navigation/NavigationService';
 import { getToken } from '../../../api/connections/token/tokenSlice';
 
-// ✅ Helper to extract userId from token
 const extractUserIdFromToken = (token: string): string | null => {
   try {
     const parts = token.split('.');
@@ -28,6 +27,13 @@ interface UseRideActionsReturn {
   clearError: () => void;
 }
 
+// Global deduplication cache for status events
+const processedStatusEvents = new Map<string, number>();
+const DEDUPLICATION_MS = 5000;
+
+// Track if accept is already in progress globally
+let acceptInProgress = false;
+
 export const useRideActions = (): UseRideActionsReturn => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +47,10 @@ export const useRideActions = (): UseRideActionsReturn => {
     null,
   );
 
+  // ✅ HOOK-LEVEL SYNCHRONOUS LOCK - Extra protection layer
+  const acceptLockRef = useRef<Record<string, boolean>>({});
+  const rejectLockRef = useRef<Record<string, boolean>>({});
+
   const cleanupListeners = useCallback(() => {
     if (cleanupRef.current) {
       cleanupRef.current();
@@ -52,8 +62,9 @@ export const useRideActions = (): UseRideActionsReturn => {
     }
   }, []);
 
+  // ✅ FIX: navigateToRideTracking now requires quoteId and validates it
   const navigateToRideTracking = useCallback(
-    (trackingId: string, bookingId?: string) => {
+    (trackingId: string, bookingId?: string, quoteId?: string) => {
       if (hasNavigatedRef.current) {
         console.log('[useRideActions] ⚠️ Already navigated, skipping');
         return;
@@ -64,6 +75,16 @@ export const useRideActions = (): UseRideActionsReturn => {
         return;
       }
 
+      // ✅ CRITICAL FIX: Validate quoteId - if missing, log error and return
+      if (!quoteId) {
+        console.error(
+          '[useRideActions] ❌ Cannot navigate: No quoteId received from backend',
+        );
+        console.error('[useRideActions] 📦 trackingId:', trackingId);
+        console.error('[useRideActions] 📦 bookingId:', bookingId);
+        return;
+      }
+
       hasNavigatedRef.current = true;
       cleanupListeners();
 
@@ -71,21 +92,37 @@ export const useRideActions = (): UseRideActionsReturn => {
         '[useRideActions] 🧭 Navigating to RideTracking with trackingId:',
         trackingId,
       );
+      console.log('[useRideActions] 🔑 quoteId:', quoteId);
+      console.log('[useRideActions] 📦 bookingId:', bookingId);
 
       NavigationService.navigate('RideTracking', {
         trackingId,
         bookingId,
+        quoteId, // ✅ quoteId is now required and validated
       });
     },
     [cleanupListeners],
   );
 
-  // ============================================================
-  // ACCEPT RIDE - Using Handlers
-  // ============================================================
   const acceptRide = useCallback(
     async (requestId: string, bookingId: string): Promise<void> => {
       const key = `${requestId}-accept`;
+
+      // ✅ GLOBAL DEDUPLICATION - Prevent duplicate accepts across instances
+      if (acceptInProgress) {
+        console.log(
+          '[useRideActions] ⏳ Accept already in progress, ignoring duplicate',
+        );
+        return;
+      }
+
+      // ✅ HOOK-LEVEL SYNCHRONOUS LOCK - Extra protection
+      if (acceptLockRef.current[requestId]) {
+        console.log(
+          '[useRideActions] ⛔ This ride is already being accepted at hook level',
+        );
+        return;
+      }
 
       if (processedRequests.current.has(key)) {
         console.warn('[useRideActions] ⚠️ Already processed this request');
@@ -104,7 +141,10 @@ export const useRideActions = (): UseRideActionsReturn => {
 
       console.log('[useRideActions] ✅ Accepting ride:', requestId);
 
+      // ✅ SET ALL LOCKS IMMEDIATELY
+      acceptInProgress = true;
       isAccepting.current = true;
+      acceptLockRef.current[requestId] = true;
       setIsProcessing(true);
       setError(null);
       hasNavigatedRef.current = false;
@@ -126,9 +166,7 @@ export const useRideActions = (): UseRideActionsReturn => {
           let trackingReceived = false;
           let navigationDone = false;
 
-          // ============================================================
-          // ✅ HANDLER 1: RIDE ACCEPTED - Using rideRequestSocketHandler
-          // ============================================================
+          // ✅ FIX: rideAcceptedHandler - extract quoteId properly
           const rideAcceptedHandler = (data: any) => {
             console.log('[useRideActions] ✅ RIDE_ACCEPTED handler triggered!');
             console.log(
@@ -139,23 +177,29 @@ export const useRideActions = (): UseRideActionsReturn => {
             const tid =
               data?.trackingId || data?.tracking_id || data?.id || data?._id;
             const bid = data?.bookingId || data?.booking_id || bookingId;
+            const qid = data?.quoteId || data?.quote_id; // ✅ Extract quoteId
 
             console.log('[useRideActions] 🔍 Extracted trackingId:', tid);
+            console.log('[useRideActions] 🔍 Extracted quoteId:', qid);
 
-            if (tid && !trackingReceived && !navigationDone) {
+            // ✅ FIX: Validate quoteId before navigation
+            if (tid && qid && !trackingReceived && !navigationDone) {
               trackingReceived = true;
               navigationDone = true;
               console.log(
                 '[useRideActions] ✅ Navigating with trackingId from accept:',
                 tid,
               );
-              navigateToRideTracking(tid, bid);
+              console.log('[useRideActions] 🔑 quoteId from accept:', qid);
+              navigateToRideTracking(tid, bid, qid);
+            } else if (tid && !qid) {
+              console.error(
+                '[useRideActions] ❌ RIDE_ACCEPTED missing quoteId, cannot navigate',
+              );
             }
           };
 
-          // ============================================================
-          // ✅ HANDLER 2: RIDE STATUS CHANGE - Using rideStatusSocketHandler
-          // ============================================================
+          // ✅ FIX: statusChangeHandler - extract quoteId properly
           const statusChangeHandler = (data: any) => {
             console.log(
               '[useRideActions] ✅ RIDE_STATUS_CHANGE handler triggered!',
@@ -167,37 +211,60 @@ export const useRideActions = (): UseRideActionsReturn => {
 
             const tid =
               data?.trackingId || data?.tracking_id || data?.id || data?._id;
+            const qid = data?.quoteId || data?.quote_id; // ✅ Extract quoteId
             const bid = data?.bookingId || data?.booking_id || bookingId;
+            const status = data?.status || '';
 
             console.log('[useRideActions] 🔍 Status change - trackingId:', tid);
+            console.log('[useRideActions] 🔍 Status change - quoteId:', qid);
 
-            if (
-              data?.status === 'accepted' &&
-              tid &&
-              !trackingReceived &&
-              !navigationDone
-            ) {
-              trackingReceived = true;
-              navigationDone = true;
+            if (status === 'accepted' && tid) {
+              const eventKey = `${bid}:${tid}:${status}`;
+              const now = Date.now();
+              const lastProcessed = processedStatusEvents.get(eventKey);
+
+              if (lastProcessed && now - lastProcessed < DEDUPLICATION_MS) {
+                console.log(
+                  '[useRideActions] ⏭️ STATUS_EVENT_DEDUPLICATED:',
+                  eventKey,
+                  'ms ago:',
+                  now - lastProcessed,
+                );
+                return;
+              }
+
+              processedStatusEvents.set(eventKey, now);
               console.log(
-                '[useRideActions] ✅ Navigating with trackingId from ride-status-change:',
-                tid,
+                '[useRideActions] ✅ STATUS_EVENT_PROCESSED:',
+                eventKey,
               );
-              navigateToRideTracking(tid, bid);
+
+              // ✅ FIX: Validate quoteId before navigation
+              if (tid && qid && !trackingReceived && !navigationDone) {
+                trackingReceived = true;
+                navigationDone = true;
+                console.log(
+                  '[useRideActions] ✅ Navigating with trackingId from ride-status-change:',
+                  tid,
+                );
+                console.log(
+                  '[useRideActions] 🔑 quoteId from status change:',
+                  qid,
+                );
+                navigateToRideTracking(tid, bid, qid);
+              } else if (tid && !qid) {
+                console.error(
+                  '[useRideActions] ❌ RIDE_STATUS_CHANGE missing quoteId, cannot navigate',
+                );
+              }
             }
           };
 
-          // ============================================================
-          // ✅ REGISTER LISTENERS (USING HANDLERS - NOT DIRECT socketService)
-          // ============================================================
           console.log(
             '[useRideActions] 📡 Registering listeners via handlers...',
           );
 
-          // ✅ Use rideRequestSocketHandler for 'accept' event
           rideRequestSocketHandler.on('accept', rideAcceptedHandler);
-
-          // ✅ Use rideStatusSocketHandler for 'ride-status-change' event
           rideStatusSocketHandler.on('ride-status-change', statusChangeHandler);
 
           cleanupRef.current = () => {
@@ -209,50 +276,121 @@ export const useRideActions = (): UseRideActionsReturn => {
             );
           };
 
-          // ============================================================
-          // ✅ EMIT DRIVER RESPONSE - Using rideRequestSocketHandler
-          // ============================================================
           rideRequestSocketHandler.emitDriverResponse(
             requestId,
             'accepted',
             driverId,
           );
 
-          // ============================================================
-          // ✅ TIMEOUT FALLBACK
-          // ============================================================
+          // ✅ FIX: Navigation timeout handler with hasNavigatedRef check
           navigationTimeoutRef.current = setTimeout(async () => {
+            // ✅ CRITICAL FIX: Agar navigation already ho gayi toh skip karo
+            if (hasNavigatedRef.current) {
+              console.log(
+                '[useRideActions] ℹ️ Navigation already done, skipping REST fallback',
+              );
+              return;
+            }
+
             if (!trackingReceived && !navigationDone) {
+              const isAuth = socketService.isAuthenticatedFlag();
+
+              if (!isAuth) {
+                console.log(
+                  '[useRideActions] ⏳ Socket not authenticated yet, waiting 5s more...',
+                );
+                setTimeout(async () => {
+                  // ✅ CRITICAL FIX: Yahan bhi check karo
+                  if (hasNavigatedRef.current) {
+                    console.log(
+                      '[useRideActions] ℹ️ Navigation already done, skipping REST fallback',
+                    );
+                    return;
+                  }
+
+                  if (!trackingReceived && !navigationDone) {
+                    const isAuthNow = socketService.isAuthenticatedFlag();
+                    if (!isAuthNow) {
+                      console.warn(
+                        '[useRideActions] ⚠️ Socket still not authenticated, trying REST fallback...',
+                      );
+                      try {
+                        const result =
+                          await driverRideApi.acceptRideRequest(requestId);
+                        // ✅ FIX: REST fallback - preserve quoteId
+                        if (result?.trackingId) {
+                          console.log(
+                            '[useRideActions] ✅ Got trackingId from REST fallback:',
+                            result.trackingId,
+                          );
+                          console.log(
+                            '[useRideActions] 🔑 quoteId from REST fallback:',
+                            result.quoteId,
+                          );
+                          navigateToRideTracking(
+                            result.trackingId,
+                            result.bookingId || bookingId,
+                            result.quoteId, // ✅ Pass quoteId from response
+                          );
+                        }
+                      } catch (err) {
+                        console.error(
+                          '[useRideActions] ❌ REST fallback failed:',
+                          err,
+                        );
+                      }
+                    }
+                  }
+                }, 5000);
+                return;
+              }
+
               console.warn(
                 '[useRideActions] ⚠️ No trackingId from socket, trying REST fallback...',
               );
               try {
                 const result = await driverRideApi.acceptRideRequest(requestId);
+                // ✅ FIX: REST fallback - preserve quoteId
                 if (result?.trackingId) {
                   console.log(
                     '[useRideActions] ✅ Got trackingId from REST fallback:',
                     result.trackingId,
                   );
-                  navigateToRideTracking(result.trackingId, bookingId);
+                  console.log(
+                    '[useRideActions] 🔑 quoteId from REST fallback:',
+                    result.quoteId,
+                  );
+                  navigateToRideTracking(
+                    result.trackingId,
+                    result.bookingId || bookingId,
+                    result.quoteId, // ✅ Pass quoteId from response
+                  );
                 }
               } catch (err) {
                 console.error('[useRideActions] ❌ REST fallback failed:', err);
               }
             }
-          }, 8000);
+          }, 15000);
         } else {
           console.log('[useRideActions] ⚠️ Socket not connected, using REST');
           const result = await driverRideApi.acceptRideRequest(requestId);
           console.log('[useRideActions] 📦 REST Response:', result);
 
+          // ✅ FIX: REST fallback - preserve all 3 IDs
           if (result?.trackingId) {
-            navigateToRideTracking(result.trackingId, bookingId);
+            console.log(
+              '[useRideActions] 🔑 quoteId from REST:',
+              result.quoteId,
+            );
+            navigateToRideTracking(
+              result.trackingId,
+              result.bookingId || bookingId,
+              result.quoteId, // ✅ Pass quoteId from response
+            );
           } else {
             throw new Error('No trackingId in REST response');
           }
         }
-
-        // ✅ Remove rideRequestHandler.acceptRide() - it doesn't exist
       } catch (err: any) {
         console.error('[useRideActions] ❌ Error accepting ride:', err);
         setError(err.message || 'Failed to accept ride');
@@ -260,8 +398,13 @@ export const useRideActions = (): UseRideActionsReturn => {
         throw err;
       } finally {
         setIsProcessing(false);
+        // ✅ Only release global locks on failure or completion
+        // Success path keeps locks to prevent duplicate accepts
+        acceptInProgress = false;
         setTimeout(() => {
           isAccepting.current = false;
+          // ✅ Remove request-specific lock after processing
+          delete acceptLockRef.current[requestId];
           processedRequests.current.delete(key);
         }, 2000);
       }
@@ -269,12 +412,17 @@ export const useRideActions = (): UseRideActionsReturn => {
     [isProcessing, cleanupListeners, navigateToRideTracking],
   );
 
-  // ============================================================
-  // REJECT RIDE - Using Handlers
-  // ============================================================
   const rejectRide = useCallback(
     async (requestId: string, bookingId?: string): Promise<void> => {
       const key = `${requestId}-reject`;
+
+      // ✅ HOOK-LEVEL REJECT LOCK
+      if (rejectLockRef.current[requestId]) {
+        console.log(
+          '[useRideActions] ⛔ This ride is already being rejected at hook level',
+        );
+        return;
+      }
 
       if (processedRequests.current.has(key)) {
         console.warn('[useRideActions] ⚠️ Already processed this request');
@@ -293,7 +441,9 @@ export const useRideActions = (): UseRideActionsReturn => {
 
       console.log('[useRideActions] ❌ Rejecting ride:', requestId);
 
+      // ✅ SET REJECT LOCK
       isRejecting.current = true;
+      rejectLockRef.current[requestId] = true;
       setIsProcessing(true);
       setError(null);
       processedRequests.current.add(key);
@@ -309,7 +459,6 @@ export const useRideActions = (): UseRideActionsReturn => {
         console.log('[useRideActions] 📊 Socket connected:', isSocketConnected);
 
         if (isSocketConnected) {
-          // ✅ Use rideRequestSocketHandler for reject
           rideRequestSocketHandler.emitDriverResponse(
             requestId,
             'rejected',
@@ -319,8 +468,6 @@ export const useRideActions = (): UseRideActionsReturn => {
           console.log('[useRideActions] ⚠️ Socket not connected, using REST');
           await driverRideApi.rejectRideRequest(requestId);
         }
-
-        // ✅ Remove rideRequestHandler.rejectRide() - it doesn't exist
       } catch (err: any) {
         console.error('[useRideActions] ❌ Error rejecting ride:', err);
         setError(err.message || 'Failed to reject ride');
@@ -329,6 +476,7 @@ export const useRideActions = (): UseRideActionsReturn => {
         setIsProcessing(false);
         setTimeout(() => {
           isRejecting.current = false;
+          delete rejectLockRef.current[requestId];
           processedRequests.current.delete(key);
         }, 2000);
       }
@@ -349,7 +497,6 @@ export const useRideActions = (): UseRideActionsReturn => {
   };
 };
 
-// Decode base64url encoded strings
 function atob(encoded: string): string {
   const base64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
   const padded = base64.padEnd(

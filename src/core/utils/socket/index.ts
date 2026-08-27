@@ -11,35 +11,52 @@ import { rideLiveTrackingHandler } from '../../../api/connections/handlers/socke
 // ============================================================
 
 let isRegistered = false;
+let registrationPromise: Promise<void> | null = null;
 
 /**
  * Register all socket handlers
  * Safe to call multiple times - prevents duplicate registration
  */
-export const registerSocketHandlers = (): void => {
+export const registerSocketHandlers = (): Promise<void> | void => {
   if (isRegistered) {
     console.log('[Socket] Handlers already registered, skipping');
     return;
   }
 
-  console.log('[Socket] 📡 Registering all socket handlers...');
-
-  // Ensure socket is connected
-  if (!socketService.isSocketConnected()) {
-    console.log('[Socket] ⚠️ Socket not connected, attempting to connect...');
-    socketService.connect().catch((err) => {
-      console.error('[Socket] ❌ Failed to connect socket:', err);
-    });
+  // Prevent concurrent registration
+  if (registrationPromise) {
+    console.log('[Socket] Registration already in progress, waiting...');
+    return registrationPromise;
   }
 
-  // Register all domain handlers
-  driverSocketHandler.register();
-  rideRequestSocketHandler.register();
-  rideStatusSocketHandler.register();
-  rideLiveTrackingHandler.register();
+  console.log('[Socket] 📡 Registering all socket handlers...');
 
-  isRegistered = true;
-  console.log('[Socket] ✅ All socket handlers registered');
+  registrationPromise = (async () => {
+    try {
+      // Ensure socket is connected
+      if (!socketService.isSocketConnected()) {
+        console.log('[Socket] ⚠️ Socket not connected, attempting to connect...');
+        await socketService.connect();
+        console.log('[Socket] ✅ Socket connected successfully');
+      }
+
+      // Register all domain handlers
+      driverSocketHandler.register();
+      rideRequestSocketHandler.register();
+      rideStatusSocketHandler.register();
+      rideLiveTrackingHandler.register();
+
+      isRegistered = true;
+      console.log('[Socket] ✅ All socket handlers registered');
+    } catch (error) {
+      console.error('[Socket] ❌ Failed to register socket handlers:', error);
+      throw error;
+    } finally {
+      registrationPromise = null;
+    }
+  })();
+
+  return registrationPromise;
 };
 
 /**

@@ -27,7 +27,7 @@ const backgroundOptions = {
   color: '#4A90E2',
   linkingURI: 'tizzyos://driver/location',
   parameters: {
-    delay: 5000,
+    delay: 10000,
   },
 };
 
@@ -95,8 +95,8 @@ const getCurrentLocation = async (): Promise<any> => {
 
   try {
     const location = await Geolocation.getCurrentPosition({
-      enableHighAccuracy: false,
-      timeout: 15000,
+      enableHighAccuracy: true,
+      timeout: 8000,
     });
 
     lastLocationData = location;
@@ -209,7 +209,8 @@ const requestNotificationPermission = async (): Promise<boolean> => {
 class LocationService {
   private isTracking = false;
   private intervalId: number | null = null;
-  private appState: AppStateStatus = AppState.currentState || 'active';
+  private appState: AppStateStatus =
+    (AppState.currentState as AppStateStatus) || 'active';
   private isBackgroundRunning = false;
   private isForeground = false;
   private isTransitioning = false;
@@ -317,7 +318,7 @@ class LocationService {
           await sendLocationToBackend(newLocation);
         }
       })();
-    }, 5000);
+    }, 3000);
 
     return true;
   }

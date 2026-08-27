@@ -61,7 +61,7 @@ type VehicleCategory = 'Car' | 'Bike' | 'Scooter' | 'Auto' | 'Tempo';
 type IdentityType = 'Aadhaar' | 'VoterID' | 'Passport' | 'PAN';
 type ShippingType = 'TRUCK' | 'RIDER';
 
-const API_BASE_URL = 'http://10.207.117.121:5000';
+const API_BASE_URL = 'http://10.194.138.121:5000';
 
 const getLocationOnce = (): Promise<{ lat: number; lng: number }> =>
   new Promise((res, rej) => {

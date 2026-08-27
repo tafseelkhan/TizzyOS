@@ -1,4 +1,4 @@
-// TizzyGo.tsx
+// TizzyOS.tsx
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
@@ -16,13 +16,6 @@ import { StackNavigationProp } from '@react-navigation/stack';
 import LottieView from 'lottie-react-native';
 import { useTheme } from '../../contexts/theme/ThemeContext';
 import { SplashService } from '../../services/animations/SplashService';
-import {
-  loadSound,
-  Sound,
-  playSound,
-  releaseSound,
-  createAnimations,
-} from '../../utils/animations/splashUtils';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -34,14 +27,11 @@ type RootStackParamList = {
 
 type NavigationProp = StackNavigationProp<RootStackParamList>;
 
-export default function TizzyGo() {
+export default function TizzyOS() {
   const { isDark } = useTheme();
   const navigation = useNavigation<NavigationProp>();
-  const soundRef = useRef<Sound | null>(null);
   const [isPressed, setIsPressed] = useState(false);
   const [minTimeElapsed, setMinTimeElapsed] = useState(false);
-  const [soundLoaded, setSoundLoaded] = useState(false);
-  const [soundError, setSoundError] = useState<string | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
 
   // Animation values
@@ -52,62 +42,55 @@ export default function TizzyGo() {
 
   // Colors based on theme
   const backgroundColor = isDark ? '#0F172A' : '#FFFFFF';
-  const primaryColor = isDark ? '#34D399' : '#10B981';
+  // ✅ BLUE COLORS (instead of green)
+  const primaryColor = isDark ? '#60A5FA' : '#2563EB';
   const subtitleColor = isDark ? '#94A3B8' : '#6b7280';
+  // ✅ Added blue text color for TizzyOS
+  const textColor = isDark ? '#60A5FA' : '#1D4ED8';
 
   console.log('=========================================');
-  console.log('TizzyGo Component Mounted');
+  console.log('TizzyOS Component Mounted');
   console.log('Platform:', Platform.OS);
   console.log('=========================================');
 
-  // Load sound
-  useEffect(() => {
-    const initSound = async () => {
-      const sound = await loadSound({
-        soundFile: require('../../../assets/sounds/splash_sound.mp3'),
-        onLoadSuccess: () => {
-          setSoundLoaded(true);
-          setSoundError(null);
-        },
-        onLoadError: error => {
-          setSoundError(`Load failed: ${error.message}`);
-          setSoundLoaded(false);
-        },
-      });
-
-      soundRef.current = sound;
-    };
-
-    initSound();
-
-    return () => {
-      releaseSound(soundRef.current);
-    };
-  }, []);
-
-  const handlePlaySound = () => {
-    playSound(soundRef.current, soundLoaded);
-    setIsPressed(true);
-    setTimeout(() => {
-      setIsPressed(false);
-    }, 200);
-  };
-
   // Start animations on mount
   useEffect(() => {
-    const animations = createAnimations();
+    const fadeIn = {
+      toValue: 1,
+      duration: 1200,
+      useNativeDriver: true,
+    };
+
+    const logoSpring = {
+      toValue: 1,
+      friction: 7,
+      tension: 70,
+      useNativeDriver: true,
+    };
+
+    const lottieFade = {
+      toValue: 1,
+      duration: 1800,
+      useNativeDriver: true,
+      delay: 300,
+    };
 
     Animated.parallel([
-      Animated.timing(fadeAnim, animations.fadeIn),
-      Animated.spring(logoScaleAnim, animations.logoSpring),
-      Animated.timing(lottieAnim, animations.lottieFade),
+      Animated.timing(fadeAnim, fadeIn),
+      Animated.spring(logoScaleAnim, logoSpring),
+      Animated.timing(lottieAnim, lottieFade),
     ]).start();
   }, []);
 
   // Handle press animation
   useEffect(() => {
-    const animations = createAnimations();
-    Animated.spring(scaleAnim, animations.pressScale(isPressed)).start();
+    const pressScale = {
+      toValue: isPressed ? 0.97 : 1,
+      friction: 7,
+      tension: 70,
+      useNativeDriver: true,
+    };
+    Animated.spring(scaleAnim, pressScale).start();
   }, [isPressed]);
 
   // Auth check and navigation with role
@@ -121,16 +104,11 @@ export default function TizzyGo() {
 
         console.log('Step 2');
 
-        // Check auth and get user role
         const result = await SplashService.checkAuthAndGetDestination();
 
         if (result.success && result.userRole) {
           setUserRole(result.userRole);
           console.log('✅ User Role from Splash:', result.userRole);
-
-          // ✅ Store role for later use
-          // You can save it to AsyncStorage or Context
-          // await AsyncStorage.setItem('userRole', result.userRole);
         }
 
         console.log('Step 3', result);
@@ -146,8 +124,16 @@ export default function TizzyGo() {
     checkAuthAndNavigate();
   }, [navigation]);
 
+  // Handle press - just animation, no sound
+  const handlePress = () => {
+    setIsPressed(true);
+    setTimeout(() => {
+      setIsPressed(false);
+    }, 200);
+  };
+
   return (
-    <TouchableWithoutFeedback onPress={handlePlaySound}>
+    <TouchableWithoutFeedback onPress={handlePress}>
       <View style={[styles.container, { backgroundColor }]}>
         <Animated.View
           style={[
@@ -165,6 +151,18 @@ export default function TizzyGo() {
               resizeMode="contain"
             />
           </Animated.View>
+
+          <Animated.Text
+            style={[
+              styles.tizzyostagline,
+              {
+                color: isPressed ? primaryColor : subtitleColor,
+                transform: [{ scale: isPressed ? 1.02 : 1 }],
+              },
+            ]}
+          >
+            TizzyOS
+          </Animated.Text>
 
           <Animated.View
             style={[
@@ -192,7 +190,7 @@ export default function TizzyGo() {
               },
             ]}
           >
-            {'Tap anywhere to hearing'}
+            {'Tap anywhere'}
           </Animated.Text>
 
           <Animated.Text
@@ -204,7 +202,7 @@ export default function TizzyGo() {
               },
             ]}
           >
-            Built with Flixora ❤️
+            Built with Quton ❤️
           </Animated.Text>
         </Animated.View>
       </View>
@@ -232,6 +230,12 @@ const styles = StyleSheet.create({
   logoImage: {
     width: '100%',
     height: '100%',
+  },
+  tizzyostagline: {
+    fontSize: 30,
+    fontFamily: 'Poppins-Light',
+    textAlign: 'center',
+    marginBottom: 10,
   },
   lottieContainer: {
     width: 200,

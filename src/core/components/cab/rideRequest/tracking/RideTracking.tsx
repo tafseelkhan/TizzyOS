@@ -1,5 +1,3 @@
-// src/core/screens/cab/driver/RideTracking.tsx
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
@@ -8,17 +6,19 @@ import {
   StatusBar,
   StyleSheet,
   TouchableOpacity,
-  ScrollView,
   Alert,
   ActivityIndicator,
-  Platform,
-  Dimensions,
+  Animated,
+  PanResponder,
+  Image,
+  Linking,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { driverRideApi } from '../../../../../api/features/private/driverRidePrivateSlice';
 import {
   registerSocketHandlers,
   rideLiveTrackingHandler,
+  socketService,
 } from '../../../../utils/socket';
 import { Booking, LiveTrackingData } from '../../../../types/RideTypes';
 import { RootStackParamList } from '../../../../../navigations/index';
@@ -26,19 +26,16 @@ import { StackScreenProps } from '@react-navigation/stack';
 import { NavigationProvider } from '@googlemaps/react-native-navigation-sdk';
 import { NavigationControllerWrapper } from '../../../../../navigations/google/NavigationControllerWrapper';
 
-const { height } = Dimensions.get('window');
-
 type RideTrackingScreenProps = StackScreenProps<
   RootStackParamList,
   'RideTracking'
 >;
 
 interface NavigationState {
-  status: 'idle' | 'initializing' | 'navigating' | 'rerouting' | 'arrived' | 'error';
+  status: 'idle' | 'navigating' | 'rerouting' | 'arrived' | 'error';
   currentInstruction: string;
   remainingDistance: number;
   eta: number;
-  isVoiceEnabled: boolean;
   target: 'pickup' | 'destination';
 }
 
@@ -46,26 +43,60 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
   route,
   navigation,
 }) => {
-  const { trackingId, bookingId } = route.params || {};
+  const { trackingId, bookingId, quoteId } = route.params || {};
 
   // ============================================================
   // STATE
   // ============================================================
   const [booking, setBooking] = useState<Booking | null>(null);
-  const [liveTracking, setLiveTracking] = useState<LiveTrackingData | null>(null);
+  const [liveTracking, setLiveTracking] = useState<LiveTrackingData | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
-  const [updating, setUpdating] = useState(false);
   const [isNavigating, setIsNavigating] = useState(false);
-  const [isNavReady, setIsNavReady] = useState(false);
-
   const [navState, setNavState] = useState<NavigationState>({
     status: 'idle',
     currentInstruction: 'Loading navigation...',
     remainingDistance: 0,
     eta: 0,
-    isVoiceEnabled: true,
     target: 'pickup',
   });
+
+  // Floating Card Expand / Collapse State (Initially Collapsed)
+  const [isCardExpanded, setIsCardExpanded] = useState(false);
+
+  // Floating Minimized Bar Drag Animation Position
+  const pan = useRef(new Animated.ValueXY({ x: 20, y: 500 })).current;
+  const lastTapRef = useRef<number>(0);
+
+  // Setup PanResponder for Draggable Minimized Bar
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return Math.abs(gestureState.dx) > 5 || Math.abs(gestureState.dy) > 5;
+      },
+      onPanResponderGrant: () => {
+        pan.extractOffset();
+      },
+      onPanResponderMove: Animated.event([null, { dx: pan.x, dy: pan.y }], {
+        useNativeDriver: false,
+      }),
+      onPanResponderRelease: () => {
+        pan.flattenOffset();
+      },
+    }),
+  ).current;
+
+  // Double Click Handler to Expand Minimized Bar
+  const handlePillPress = () => {
+    const now = Date.now();
+    const DOUBLE_PRESS_DELAY = 300;
+    if (lastTapRef.current && now - lastTapRef.current < DOUBLE_PRESS_DELAY) {
+      setIsCardExpanded(true);
+    } else {
+      lastTapRef.current = now;
+    }
+  };
 
   // Refs
   const unsubscribeRef = useRef<(() => void) | null>(null);
@@ -73,63 +104,142 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
   const bookingRef = useRef<Booking | null>(null);
   const liveTrackingRef = useRef<LiveTrackingData | null>(null);
   const navStateRef = useRef<NavigationState>(navState);
-
-  // ============================================================
-  // SYNC REFS
-  // ============================================================
-  useEffect(() => {
-    bookingRef.current = booking;
-  }, [booking]);
-
-  useEffect(() => {
-    liveTrackingRef.current = liveTracking;
-  }, [liveTracking]);
-
-  useEffect(() => {
-    navStateRef.current = navState;
-  }, [navState]);
+  const quoteIdRef = useRef<string | null>(quoteId || null);
+  const driverIdRef = useRef<string | null>(null);
+  const locationEmitThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const lastEmitLocationRef = useRef<{ lat: number; lng: number } | null>(null);
+  const subscriptionSetupRef = useRef(false);
+  const socketReadyRef = useRef(false);
 
   // ============================================================
   // NAVIGATION TARGET
   // ============================================================
-  const getNavigationTarget = useCallback((status: string): 'pickup' | 'destination' => {
-    const pickupStatuses = ['accepted', 'arrived'];
-    const destinationStatuses = [
-      'pickupVerified',
-      'inTransit',
-      'dropVerified',
-      'paymentPending',
-    ];
+  const getNavigationTarget = useCallback(
+    (status: string): 'pickup' | 'destination' => {
+      const pickupStatuses = ['accepted', 'arrived'];
+      const destinationStatuses = [
+        'pickupVerified',
+        'inTransit',
+        'dropVerified',
+        'paymentPending',
+      ];
 
-    if (pickupStatuses.includes(status)) return 'pickup';
-    if (destinationStatuses.includes(status)) return 'destination';
-    return 'pickup';
+      if (pickupStatuses.includes(status)) return 'pickup';
+      if (destinationStatuses.includes(status)) return 'destination';
+      return 'pickup';
+    },
+    [],
+  );
+
+  // ============================================================
+  // HELPER FUNCTIONS FOR TYPE-SAFE DATA ACCESS - MOVED BEFORE RETURNS
+  // ============================================================
+
+  // Get customer name - use customerId since Booking doesn't have user field
+  const getCustomerName = useCallback((): string => {
+    if (booking?.customerId) {
+      return `Customer ${booking.customerId.slice(0, 8)}`;
+    }
+    return 'Johan Smith';
+  }, [booking]);
+
+  // Get customer phone - not available in Booking type
+  const getCustomerPhone = useCallback((): string | undefined => {
+    return undefined;
+  }, []);
+
+  // Get customer avatar - not available in Booking type
+  const getCustomerAvatar = useCallback((): string | undefined => {
+    return undefined;
+  }, []);
+
+  // Get address from booking based on target
+  // NOTE: target is computed in render, so we need to compute this differently
+  const getAddressForTarget = useCallback(
+    (target: 'pickup' | 'destination'): string => {
+      if (target === 'pickup') {
+        return booking?.pickup?.address || 'Housing Estate, Lan 9,25/3';
+      } else {
+        return booking?.destination?.address || 'Housing Estate, Lan 9,25/3';
+      }
+    },
+    [booking],
+  );
+
+  // ============================================================
+  // SOCKET INITIALIZATION
+  // ============================================================
+  const initializeSocket = useCallback(async () => {
+    try {
+      console.log('[RideTracking] 🔌 Initializing socket...');
+      await registerSocketHandlers();
+      const result = await socketService.waitForReady(15000);
+      socketReadyRef.current = result.authenticated;
+
+      if (result.socketId && result.authenticated) {
+        console.log('[RideTracking] ✅ Socket ready');
+        return true;
+      } else {
+        console.warn('[RideTracking] ⚠️ Socket not authenticated');
+        return false;
+      }
+    } catch (error) {
+      console.error('[RideTracking] ❌ Socket error:', error);
+      return false;
+    }
   }, []);
 
   // ============================================================
-  // EFFECTS
+  // DRIVER LOCATION EMISSION
   // ============================================================
-  useEffect(() => {
-    isMountedRef.current = true;
+  const emitDriverLocation = useCallback(
+    (latitude: number, longitude: number, heading?: number, speed?: number) => {
+      const driverId = driverIdRef.current;
+      const currentQuoteId = quoteIdRef.current;
 
-    if (!trackingId) {
-      console.error('[RideTracking] ❌ No trackingId provided');
-      Alert.alert('Error', 'No tracking ID provided for this trip');
-      navigation.goBack();
-      return;
-    }
+      if (!driverId || !currentQuoteId) {
+        console.warn(
+          '[RideTracking] ⚠️ Cannot emit - missing driverId or quoteId',
+        );
+        return;
+      }
 
-    console.log('[RideTracking] 📍 Starting with:', { trackingId, bookingId });
+      if (locationEmitThrottleRef.current) {
+        clearTimeout(locationEmitThrottleRef.current);
+      }
 
-    registerSocketHandlers();
-    setupLiveTrackingSubscription();
-    loadTripDetails();
+      locationEmitThrottleRef.current = setTimeout(() => {
+        if (lastEmitLocationRef.current) {
+          const last = lastEmitLocationRef.current;
+          const latDiff = Math.abs(latitude - last.lat) * 111000;
+          const lngDiff =
+            Math.abs(longitude - last.lng) *
+            111000 *
+            Math.cos((last.lat * Math.PI) / 180);
+          const distance = Math.sqrt(latDiff * latDiff + lngDiff * lngDiff);
 
-    return () => {
-      isMountedRef.current = false;
-      cleanupSubscription();
-    };
-  }, [trackingId, bookingId]);
+          if (distance < 10) {
+            return;
+          }
+        }
+
+        lastEmitLocationRef.current = { lat: latitude, lng: longitude };
+
+        rideLiveTrackingHandler.emitDriverLocation({
+          driverId,
+          quoteId: currentQuoteId,
+          latitude,
+          longitude,
+          heading: heading || 0,
+          speed: speed || 0,
+          accuracy: 10,
+        });
+      }, 1000);
+    },
+    [],
+  );
 
   // ============================================================
   // LIVE TRACKING SUBSCRIPTION
@@ -137,28 +247,71 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
   const setupLiveTrackingSubscription = useCallback(() => {
     cleanupSubscription();
 
-    console.log('[RideTracking] 📡 Subscribing to live tracking...');
+    if (!trackingId || subscriptionSetupRef.current) return;
+
+    const currentQuoteId = quoteIdRef.current;
+    if (!currentQuoteId) {
+      console.error('[RideTracking] ❌ No quoteId for subscription');
+      return;
+    }
+
+    console.log('[RideTracking] 📡 Subscribing to live tracking');
+    subscriptionSetupRef.current = true;
 
     unsubscribeRef.current = rideLiveTrackingHandler.subscribe(
       trackingId,
       bookingId || trackingId,
+      currentQuoteId,
       {
-        onLocationUpdate: (data) => {
-          if (isMountedRef.current) {
-            console.log('[RideTracking] 📍 Driver location update');
-          }
+        onLocationUpdate: data => {
+          if (!isMountedRef.current) return;
+          setLiveTracking(prev => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              driver: {
+                ...prev.driver,
+                location: {
+                  latitude: data.latitude,
+                  longitude: data.longitude,
+                },
+                heading: data.heading,
+                speed: data.speed,
+                accuracy: data.accuracy,
+                locationUpdatedAt: data.timestamp,
+              },
+            };
+          });
         },
-        onTrackingSuccess: (data) => {
+        onTrackingSuccess: data => {
+          if (!isMountedRef.current) return;
           console.log('[RideTracking] ✅ Tracking success');
-          if (isMountedRef.current) {
-            setLiveTracking(data as any);
+          setLiveTracking(data as any);
+          if (data.quoteId) {
+            quoteIdRef.current = data.quoteId;
+            setBooking(prev =>
+              prev ? { ...prev, quoteId: data.quoteId } : prev,
+            );
+          }
+          if (data.driver?.userId) {
+            driverIdRef.current = data.driver.userId;
           }
         },
-        onDriverStarted: () => console.log('[RideTracking] 🚗 Driver started'),
-        onDriverAck: () => console.log('[RideTracking] ✅ Driver ACK'),
-        onDriverStopped: () => console.log('[RideTracking] ⏹️ Driver stopped'),
-        onError: (error) => {
+        onDriverStarted: data => {
+          console.log('[RideTracking] 🚗 Driver started:', data);
+        },
+        onDriverAck: data => {
+          console.log('[RideTracking] ✅ Driver ACK:', data);
+        },
+        onDriverStopped: data => {
+          console.log('[RideTracking] ⏹️ Driver stopped:', data);
+        },
+        onError: error => {
           console.error('[RideTracking] ❌ Tracking error:', error);
+          if (error.message?.includes('Unauthorized')) {
+            subscriptionSetupRef.current = false;
+            Alert.alert('Session Expired', 'Please login again');
+          }
         },
       },
     );
@@ -170,44 +323,59 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
       unsubscribeRef.current();
       unsubscribeRef.current = null;
     }
+    subscriptionSetupRef.current = false;
   }, []);
 
   // ============================================================
   // LOAD TRIP DETAILS
   // ============================================================
   const loadTripDetails = useCallback(async () => {
-    if (!trackingId) {
-      console.error('[RideTracking] ❌ No trackingId provided');
+    if (!trackingId || !bookingId) {
+      console.error('[RideTracking] ❌ Missing trackingId or bookingId');
+      return;
+    }
+
+    const currentQuoteId = quoteIdRef.current;
+    if (!currentQuoteId) {
+      console.error('[RideTracking] ❌ No quoteId available');
       return;
     }
 
     try {
       setLoading(true);
 
-      if (!bookingId) {
-        throw new Error('Booking ID is required for live tracking');
-      }
+      console.log('[RideTracking] 📡 Loading trip details...');
 
-      const liveData = await driverRideApi.getLiveTracking(
-        bookingId,
-        trackingId,
-      );
+      const [liveData, bookingData] = await Promise.all([
+        driverRideApi.getLiveTracking(bookingId, trackingId, currentQuoteId),
+        driverRideApi.getTripDetails(bookingId),
+      ]);
+
       if (isMountedRef.current) {
         setLiveTracking(liveData);
         liveTrackingRef.current = liveData;
-      }
 
-      const bookingData = await driverRideApi.getTripDetails(bookingId);
-      if (isMountedRef.current) {
+        if (liveData.driver?.userId) {
+          driverIdRef.current = liveData.driver.userId;
+        }
+        if (liveData.quoteId) {
+          quoteIdRef.current = liveData.quoteId;
+        }
+
         setBooking(bookingData);
         bookingRef.current = bookingData;
+        if (bookingData.quoteId) {
+          quoteIdRef.current = bookingData.quoteId;
+        }
 
         const target = getNavigationTarget(bookingData.status);
-        setNavState(prev => ({
-          ...prev,
-          target,
+        setNavState({
           status: 'navigating',
-        }));
+          currentInstruction: 'Navigating...',
+          remainingDistance: 0,
+          eta: 0,
+          target,
+        });
         setIsNavigating(true);
       }
     } catch (error: any) {
@@ -224,74 +392,11 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
   }, [trackingId, bookingId, navigation, getNavigationTarget]);
 
   // ============================================================
-  // UPDATE RIDE STATUS
-  // ============================================================
-  const updateRideStatus = useCallback(async (status: string) => {
-    if (!trackingId) return;
-
-    try {
-      setUpdating(true);
-      console.log('[RideTracking] 📡 Updating ride status to:', status);
-      await driverRideApi.updateRideStatus(trackingId, status);
-
-      await loadTripDetails();
-
-      const target = getNavigationTarget(status);
-      setNavState(prev => ({ ...prev, target }));
-
-      if (status === 'completed') {
-        setIsNavigating(false);
-        setNavState(prev => ({ ...prev, status: 'idle' }));
-      }
-    } catch (error: any) {
-      console.error('[RideTracking] Failed to update status:', error);
-      Alert.alert('Error', error.message || 'Failed to update ride status');
-    } finally {
-      setUpdating(false);
-    }
-  }, [trackingId, loadTripDetails, getNavigationTarget]);
-
-  // ============================================================
-  // HANDLE CANCEL TRIP
-  // ============================================================
-  const handleCancelTrip = useCallback(() => {
-    if (!bookingId) {
-      Alert.alert('Error', 'Booking ID not available');
-      return;
-    }
-
-    Alert.alert('Cancel Trip', 'Are you sure you want to cancel this trip?', [
-      { text: 'No', style: 'cancel' },
-      {
-        text: 'Yes, Cancel',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            setUpdating(true);
-            await driverRideApi.cancelBooking(bookingId, 'Driver cancelled');
-            setNavState(prev => ({ ...prev, status: 'idle' }));
-            setIsNavigating(false);
-            Alert.alert('Success', 'Trip cancelled successfully');
-            navigation.goBack();
-          } catch (error: any) {
-            Alert.alert('Error', error.message || 'Failed to cancel trip');
-          } finally {
-            setUpdating(false);
-          }
-        },
-      },
-    ]);
-  }, [bookingId, navigation]);
-
-  // ============================================================
   // NAVIGATION CALLBACKS
   // ============================================================
   const handleArrival = useCallback(() => {
     console.log('[RideTracking] 🏁 Arrived at target');
-    const target = navStateRef.current.target;
-    const targetName = target === 'pickup' ? 'pickup location' : 'destination';
     setNavState(prev => ({ ...prev, status: 'arrived' }));
-    Alert.alert('Arrived', `You have arrived at the ${targetName}`);
   }, []);
 
   const handleRerouting = useCallback(() => {
@@ -299,139 +404,121 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
     setNavState(prev => ({ ...prev, status: 'rerouting' }));
   }, []);
 
-  const handleNavigationStateUpdate = useCallback((data: {
-    distance: number;
-    eta: number;
-    instruction: string;
-  }) => {
-    setNavState(prev => ({
-      ...prev,
-      remainingDistance: data.distance,
-      eta: data.eta,
-      currentInstruction: data.instruction,
-      status: 'navigating',
-    }));
-  }, []);
+  const handleNavigationStateUpdate = useCallback(
+    (data: { distance: number; eta: number; instruction: string }) => {
+      setNavState(prev => ({
+        ...prev,
+        remainingDistance: data.distance,
+        eta: data.eta,
+        currentInstruction: data.instruction,
+        status: 'navigating',
+      }));
+    },
+    [],
+  );
 
   const handleNavReady = useCallback(() => {
     console.log('[RideTracking] ✅ Navigation ready');
-    setIsNavReady(true);
+  }, []);
+
+  const handleDriverLocationUpdate = useCallback(
+    (location: { lat: number; lng: number }) => {
+      if (!driverIdRef.current || !quoteIdRef.current) {
+        return;
+      }
+      emitDriverLocation(location.lat, location.lng, 0, 0);
+    },
+    [emitDriverLocation],
+  );
+
+  const handleMakeCall = useCallback((phoneNumber?: string) => {
+    if (phoneNumber) {
+      Linking.openURL(`tel:${phoneNumber}`);
+    } else {
+      Alert.alert('Info', 'Phone number not available');
+    }
   }, []);
 
   // ============================================================
-  // RENDER STATUS BUTTONS
+  // EFFECTS
   // ============================================================
-  const renderStatusButtons = useCallback(() => {
-    const currentStatus = booking?.status || '';
+  useEffect(() => {
+    isMountedRef.current = true;
 
-    switch (currentStatus) {
-      case 'accepted':
-        return (
-          <TouchableOpacity
-            style={[styles.actionButton, styles.arrivedButton]}
-            onPress={() => updateRideStatus('arrived')}
-            disabled={updating}
-          >
-            <Icon name="location-on" size={20} color="#ffffff" />
-            <Text style={styles.actionButtonText}>I've Arrived</Text>
-          </TouchableOpacity>
-        );
-
-      case 'arrived':
-        return (
-          <TouchableOpacity
-            style={[styles.actionButton, styles.startButton]}
-            onPress={() => updateRideStatus('inTransit')}
-            disabled={updating}
-          >
-            <Icon name="play-arrow" size={20} color="#ffffff" />
-            <Text style={styles.actionButtonText}>Start Ride</Text>
-          </TouchableOpacity>
-        );
-
-      case 'inTransit':
-      case 'pickupVerified':
-        return (
-          <TouchableOpacity
-            style={[styles.actionButton, styles.completeButton]}
-            onPress={() => updateRideStatus('dropVerified')}
-            disabled={updating}
-          >
-            <Icon name="flag" size={20} color="#ffffff" />
-            <Text style={styles.actionButtonText}>Complete Ride</Text>
-          </TouchableOpacity>
-        );
-
-      case 'dropVerified':
-        return (
-          <TouchableOpacity
-            style={[styles.actionButton, styles.completedButton]}
-            onPress={() => updateRideStatus('completed')}
-            disabled={updating}
-          >
-            <Icon name="check-circle" size={20} color="#ffffff" />
-            <Text style={styles.actionButtonText}>Confirm Payment</Text>
-          </TouchableOpacity>
-        );
-
-      default:
-        return null;
+    if (!trackingId || !quoteId) {
+      return;
     }
-  }, [booking?.status, updating, updateRideStatus]);
 
-  // ============================================================
-  // RENDER NAVIGATION CARD
-  // ============================================================
-  const renderNavigationCard = useCallback(() => {
-    if (!isNavigating || navState.status === 'idle') return null;
-
-    const getStatusColor = () => {
-      switch (navState.status) {
-        case 'rerouting': return '#f59e0b';
-        case 'arrived': return '#10b981';
-        case 'error': return '#ef4444';
-        default: return '#3b82f6';
+    const setup = async () => {
+      await initializeSocket();
+      if (socketReadyRef.current) {
+        setupLiveTrackingSubscription();
       }
+      await loadTripDetails();
     };
 
-    const targetName = navState.target === 'pickup' ? 'Pickup' : 'Destination';
+    setup();
 
-    return (
-      <View style={styles.navigationCard}>
-        <View style={styles.navigationCardHeader}>
-          <Text style={[styles.navigationCardStatus, { color: getStatusColor() }]}>
-            {navState.status.toUpperCase()}
-          </Text>
-          <TouchableOpacity
-            onPress={() => {
-              setNavState(prev => ({ ...prev, isVoiceEnabled: !prev.isVoiceEnabled }));
-            }}
-          >
-            <Icon
-              name={navState.isVoiceEnabled ? 'volume-up' : 'volume-off'}
-              size={20}
-              color="#6b7280"
-            />
-          </TouchableOpacity>
-        </View>
+    return () => {
+      isMountedRef.current = false;
+      cleanupSubscription();
+      if (locationEmitThrottleRef.current) {
+        clearTimeout(locationEmitThrottleRef.current);
+        locationEmitThrottleRef.current = null;
+      }
+      subscriptionSetupRef.current = false;
+    };
+  }, [trackingId, bookingId, quoteId]);
 
-        <View style={styles.navigationCardContent}>
-          <Text style={styles.navigationInstruction}>
-            {navState.currentInstruction || 'Follow the route'}
-          </Text>
-          <View style={styles.navigationMeta}>
-            <Text style={styles.navigationMetaText}>
-              📏 {(navState.remainingDistance / 1000).toFixed(1)} km
-            </Text>
-            <Text style={styles.navigationMetaText}>
-              ⏱️ {Math.round(navState.eta)} min
-            </Text>
-            <Text style={styles.navigationMetaText}>📍 {targetName}</Text>
-          </View>
-        </View>
-      </View>
-    );
-  }, [isNavigating, navState]);
+  // ============================================================
+  // VALIDATE REQUIRED PARAMS
+  // ============================================================
+  useEffect(() => {
+    if (!trackingId) {
+      console.error('[RideTracking] ❌ No trackingId provided');
+      Alert.alert('Error', 'No tracking ID provided for this trip');
+      navigation.goBack();
+      return;
+    }
+
+    if (!quoteId) {
+      console.error('[RideTracking] ❌ No quoteId provided');
+      Alert.alert('Error', 'Missing quoteId for this trip');
+      navigation.goBack();
+      return;
+    }
+
+    console.log('[RideTracking] 📍 Starting with:', {
+      trackingId,
+      bookingId,
+      quoteId,
+    });
+    quoteIdRef.current = quoteId;
+  }, [trackingId, bookingId, quoteId, navigation]);
+
+  // ============================================================
+  // SYNC REFS
+  // ============================================================
+  useEffect(() => {
+    bookingRef.current = booking;
+    if (booking?.quoteId) {
+      quoteIdRef.current = booking.quoteId;
+    }
+  }, [booking]);
+
+  useEffect(() => {
+    liveTrackingRef.current = liveTracking;
+    if (liveTracking?.driver?.userId) {
+      driverIdRef.current = liveTracking.driver.userId;
+    }
+    if (liveTracking?.quoteId) {
+      quoteIdRef.current = liveTracking.quoteId;
+    }
+  }, [liveTracking]);
+
+  useEffect(() => {
+    navStateRef.current = navState;
+  }, [navState]);
 
   // ============================================================
   // RENDER
@@ -462,7 +549,15 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
     );
   }
 
+  // Compute target and address text in render (not in hooks)
   const target = getNavigationTarget(booking.status);
+  const customerName = getCustomerName();
+  const customerPhone = getCustomerPhone();
+  const customerAvatar = getCustomerAvatar();
+  const addressText = getAddressForTarget(target);
+  const etaMinutes = navState.eta
+    ? `${Math.ceil(navState.eta / 60)} minutes`
+    : '30 minutes';
 
   return (
     <NavigationProvider
@@ -473,19 +568,9 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
       }}
     >
       <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="light-content" />
+        <StatusBar barStyle="dark-content" />
 
-        <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={styles.backButtonHeader}
-          >
-            <Icon name="arrow-back" size={24} color="#ffffff" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Active Trip</Text>
-          <View style={{ width: 40 }} />
-        </View>
-
+        {/* Full Screen Navigation SDK */}
         <View style={styles.navigationContainer}>
           <NavigationControllerWrapper
             booking={booking}
@@ -495,40 +580,124 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
             onRerouting={handleRerouting}
             onNavigationStateUpdate={handleNavigationStateUpdate}
             onReady={handleNavReady}
+            onDriverLocationUpdate={handleDriverLocationUpdate}
           />
         </View>
 
-        {renderNavigationCard()}
+        {/* FLOATING OVERLAY CARD DESIGN */}
+        {isCardExpanded ? (
+          /* EXPANDED CARD VIEW */
+          <View style={styles.expandedCardContainer}>
+            <View style={styles.cardHeaderHandle}>
+              <TouchableOpacity
+                style={styles.collapseHandleBar}
+                onPress={() => setIsCardExpanded(false)}
+              />
+            </View>
 
-        <ScrollView
-          style={styles.detailsContainer}
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.tripCodeCard}>
-            <Text style={styles.tripCodeLabel}>Trip Code</Text>
-            <Text style={styles.tripCode}>{booking.rideCode}</Text>
-            <View style={styles.tripStatusBadge}>
-              <Text style={styles.tripStatusText}>
-                {booking.status?.toUpperCase() || 'ACTIVE'}
-              </Text>
+            <View style={styles.cardInnerContent}>
+              {/* Left Box: Courier Details & Call */}
+              <View style={styles.leftProfileContainer}>
+                <View style={styles.whiteProfileBox}>
+                  <View style={styles.profileHeader}>
+                    {customerAvatar ? (
+                      <Image
+                        source={{ uri: customerAvatar }}
+                        style={styles.avatarImage}
+                      />
+                    ) : (
+                      <View style={styles.avatarPlaceholder}>
+                        <Icon name="person" size={24} color="#e5e7eb" />
+                      </View>
+                    )}
+                    <Text style={styles.roleTitle}>Courier</Text>
+                  </View>
+                  <Text style={styles.idText} numberOfLines={1}>
+                    ID: {booking.customerId || '98745-56432'}
+                  </Text>
+                  <Text style={styles.nameText} numberOfLines={1}>
+                    {customerName}
+                  </Text>
+                </View>
+
+                {/* Call Button */}
+                <TouchableOpacity
+                  style={styles.callButton}
+                  activeOpacity={0.8}
+                  onPress={() => handleMakeCall(customerPhone)}
+                >
+                  <View style={styles.phoneIconCircle}>
+                    <Icon name="call" size={18} color="#111827" />
+                  </View>
+                  <View style={styles.callArrows}>
+                    <Icon name="chevron-right" size={16} color="#9ca3af" />
+                    <Icon
+                      name="chevron-right"
+                      size={16}
+                      color="#d1d5db"
+                      style={{ marginLeft: -8 }}
+                    />
+                  </View>
+                  <Text style={styles.callText}>Call</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Right Box: Address & Estimated Time */}
+              <View style={styles.rightInfoContainer}>
+                {/* Address Section */}
+                <View style={styles.infoSection}>
+                  <Text style={styles.sectionLabel}>Address</Text>
+                  <View style={styles.infoRow}>
+                    <Icon
+                      name="place"
+                      size={18}
+                      color="#9ca3af"
+                      style={styles.infoIcon}
+                    />
+                    <Text style={styles.infoValueText} numberOfLines={3}>
+                      {addressText}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Estimate Time Section */}
+                <View style={styles.infoSection}>
+                  <Text style={styles.sectionLabel}>Estimate Time</Text>
+                  <View style={styles.infoRow}>
+                    <Icon
+                      name="access-time"
+                      size={16}
+                      color="#9ca3af"
+                      style={styles.infoIcon}
+                    />
+                    <Text style={styles.infoValueText}>{etaMinutes}</Text>
+                  </View>
+                </View>
+              </View>
             </View>
           </View>
-
-          <View style={styles.actionContainer}>
-            {renderStatusButtons()}
-
-            {(booking.status === 'accepted' || booking.status === 'arrived') && (
-              <TouchableOpacity
-                style={[styles.actionButton, styles.cancelButton]}
-                onPress={handleCancelTrip}
-                disabled={updating}
-              >
-                <Icon name="cancel" size={20} color="#ffffff" />
-                <Text style={styles.actionButtonText}>Cancel Trip</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </ScrollView>
+        ) : (
+          /* MINIMIZED FLOATING DRAGGABLE BAR (Initial State) */
+          <Animated.View
+            {...panResponder.panHandlers}
+            style={[
+              styles.minimizedPillBar,
+              {
+                transform: pan.getTranslateTransform(),
+              },
+            ]}
+          >
+            <TouchableOpacity
+              activeOpacity={0.9}
+              onPress={handlePillPress}
+              style={styles.pillContent}
+            >
+              <Icon name="drag-indicator" size={20} color="#9ca3af" />
+              <Text style={styles.pillText}>Double Tap to Expand</Text>
+              <Icon name="unfold-more" size={20} color="#ffffff" />
+            </TouchableOpacity>
+          </Animated.View>
+        )}
       </SafeAreaView>
     </NavigationProvider>
   );
@@ -537,165 +706,33 @@ const RideTrackingScreen: React.FC<RideTrackingScreenProps> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#000000',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#000000',
   },
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: '#6b7280',
+    color: '#ffffff',
   },
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#000000',
   },
   errorText: {
     fontSize: 18,
-    color: '#1f2937',
+    color: '#ffffff',
     marginTop: 12,
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#1f2937',
-  },
-  backButtonHeader: {
-    padding: 4,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
   navigationContainer: {
-    height: height * 0.5,
+    flex: 1,
     backgroundColor: '#1a1a2e',
-    position: 'relative',
-  },
-  detailsContainer: {
-    flex: 1,
-  },
-  tripCodeCard: {
-    backgroundColor: '#ffffff',
-    margin: 12,
-    padding: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  tripCodeLabel: {
-    fontSize: 11,
-    color: '#6b7280',
-  },
-  tripCode: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1f2937',
-    marginTop: 3,
-    letterSpacing: 2,
-  },
-  tripStatusBadge: {
-    backgroundColor: '#fef3c7',
-    paddingHorizontal: 12,
-    paddingVertical: 3,
-    borderRadius: 12,
-    marginTop: 5,
-  },
-  tripStatusText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#d97706',
-  },
-  navigationCard: {
-    position: 'absolute',
-    bottom: 12,
-    left: 12,
-    right: 12,
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  navigationCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  navigationCardStatus: {
-    fontSize: 11,
-    fontWeight: '600',
-    flex: 1,
-  },
-  navigationCardContent: {
-    gap: 3,
-  },
-  navigationInstruction: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#1f2937',
-  },
-  navigationMeta: {
-    flexDirection: 'row',
-    gap: 14,
-  },
-  navigationMetaText: {
-    fontSize: 11,
-    color: '#6b7280',
-  },
-  actionContainer: {
-    padding: 12,
-    paddingBottom: 20,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  actionButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 12,
-    borderRadius: 10,
-    gap: 6,
-    minWidth: '45%',
-  },
-  arrivedButton: {
-    backgroundColor: '#6366f1',
-  },
-  startButton: {
-    backgroundColor: '#10b981',
-  },
-  completeButton: {
-    backgroundColor: '#8b5cf6',
-  },
-  completedButton: {
-    backgroundColor: '#059669',
-  },
-  cancelButton: {
-    backgroundColor: '#ef4444',
-    flex: 1,
-  },
-  actionButtonText: {
-    color: '#ffffff',
-    fontSize: 13,
-    fontWeight: '600',
   },
   backButton: {
     backgroundColor: '#10b981',
@@ -708,6 +745,170 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
+  },
+
+  /* FLOATING EXPANDED CARD STYLES */
+  expandedCardContainer: {
+    position: 'absolute',
+    bottom: 24,
+    left: 16,
+    right: 16,
+    backgroundColor: '#000000',
+    borderRadius: 28,
+    padding: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 12,
+    zIndex: 999,
+  },
+  cardHeaderHandle: {
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  collapseHandleBar: {
+    width: 36,
+    height: 4,
+    backgroundColor: '#4b5563',
+    borderRadius: 2,
+  },
+  cardInnerContent: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+
+  /* Left Side: Profile & Call */
+  leftProfileContainer: {
+    flex: 1.1,
+    gap: 8,
+  },
+  whiteProfileBox: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 12,
+  },
+  profileHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  avatarImage: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+  },
+  avatarPlaceholder: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#9ca3af',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  roleTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#111827',
+  },
+  idText: {
+    fontSize: 11,
+    color: '#9ca3af',
+    marginBottom: 2,
+  },
+  nameText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#111827',
+  },
+  callButton: {
+    backgroundColor: '#262626',
+    borderRadius: 24,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  phoneIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#ffffff',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  callArrows: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  callText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 14,
+    marginRight: 6,
+  },
+
+  /* Right Side: Details */
+  rightInfoContainer: {
+    flex: 1,
+    backgroundColor: '#1b1b1b',
+    borderRadius: 20,
+    padding: 14,
+    justifyContent: 'space-between',
+  },
+  infoSection: {
+    marginBottom: 8,
+  },
+  sectionLabel: {
+    color: '#e5e7eb',
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  infoIcon: {
+    marginRight: 6,
+    marginTop: 2,
+  },
+  infoValueText: {
+    color: '#d1d5db',
+    fontSize: 12,
+    flexShrink: 1,
+    lineHeight: 16,
+  },
+
+  /* MINIMIZED DRAGGABLE PILL STYLES */
+  minimizedPillBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    zIndex: 1000,
+    backgroundColor: '#111827',
+    borderRadius: 30,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    borderWidth: 1,
+    borderColor: '#374151',
+  },
+  pillContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  pillText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 13,
   },
 });
 

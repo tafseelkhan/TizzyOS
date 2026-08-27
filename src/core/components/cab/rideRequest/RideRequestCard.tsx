@@ -15,7 +15,6 @@ import {
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import IconMC from 'react-native-vector-icons/MaterialCommunityIcons';
 import { RideRequest } from '../../../types/RideTypes';
-import { useRideActions } from '../../../hooks/cab/useRideActions';
 
 const { width } = Dimensions.get('window');
 
@@ -59,17 +58,18 @@ const RideRequestCard: React.FC<RideRequestCardProps> = ({
   onTimeout,
   index,
 }) => {
-  const {
-    acceptRide,
-    rejectRide,
-    isProcessing: isActionProcessing,
-  } = useRideActions();
-
+  // ✅ State
   const [timeLeft, setTimeLeft] = useState<number>(MAX_TIME);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // ✅ Refs
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isMountedRef = useRef<boolean>(true);
+  const actionLockedRef = useRef<boolean>(false);
+  const timeoutCalledRef = useRef<boolean>(false);
+  const requestIdRef = useRef<string>(request.requestId);
 
+  // ✅ Animations
   const slideAnim = useRef(new Animated.Value(60 * (index + 1))).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const gaugeAnim = useRef(new Animated.Value(0)).current;
@@ -105,21 +105,20 @@ const RideRequestCard: React.FC<RideRequestCardProps> = ({
     };
   }, []);
 
+  // ✅ Reset timer state on mount
   useEffect(() => {
     isMountedRef.current = true;
+    timeoutCalledRef.current = false;
+    setTimeLeft(MAX_TIME);
 
-    if (request.expiresAt) {
-      const expiryDate = new Date(request.expiresAt);
-      const now = new Date();
-      const remaining = Math.max(
-        0,
-        Math.floor((expiryDate.getTime() - now.getTime()) / 1000),
-      );
-      setTimeLeft(Math.min(remaining, MAX_TIME));
-    }
-  }, [request.expiresAt]);
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
+  // ✅ Timer and animations setup
   useEffect(() => {
+    // Entrance animations
     Animated.parallel([
       Animated.spring(slideAnim, {
         toValue: 0,
@@ -134,7 +133,10 @@ const RideRequestCard: React.FC<RideRequestCardProps> = ({
       }),
     ]).start();
 
-    // ✅ Gauge animation 0 → 100%
+    // Reset gauge
+    gaugeAnim.setValue(0);
+
+    // Gauge animation
     Animated.timing(gaugeAnim, {
       toValue: 1,
       duration: MAX_TIME * 1000,
@@ -142,14 +144,26 @@ const RideRequestCard: React.FC<RideRequestCardProps> = ({
       useNativeDriver: false,
     }).start();
 
-    // ✅ Timer with proper cleanup
+    // Start timer
     timerRef.current = setInterval(() => {
       setTimeLeft(prev => {
         if (prev <= 1) {
-          clearInterval(timerRef.current!);
-          timerRef.current = null;
+          // Stop timer
+          if (timerRef.current) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+          }
+
           Vibration.cancel();
-          if (isMountedRef.current) {
+
+          // ✅ Call timeout ONLY if not already handled
+          if (
+            isMountedRef.current &&
+            !timeoutCalledRef.current &&
+            !actionLockedRef.current
+          ) {
+            timeoutCalledRef.current = true;
+            actionLockedRef.current = true;
             onTimeout();
           }
           return 0;
@@ -158,8 +172,10 @@ const RideRequestCard: React.FC<RideRequestCardProps> = ({
       });
     }, 1000);
 
+    // Vibrate on mount
     Vibration.vibrate([300, 200, 300], false);
 
+    // Cleanup
     return () => {
       isMountedRef.current = false;
       if (timerRef.current) {
@@ -172,6 +188,7 @@ const RideRequestCard: React.FC<RideRequestCardProps> = ({
     };
   }, []);
 
+  // ✅ Pulse animation when urgent
   useEffect(() => {
     if (timeLeft <= URGENT_THRESHOLD && timeLeft > 0) {
       Animated.sequence([
@@ -189,79 +206,77 @@ const RideRequestCard: React.FC<RideRequestCardProps> = ({
     }
   }, [timeLeft]);
 
-  const pressIn = (anim: Animated.Value) =>
+  // ✅ Press animations
+  const pressIn = useCallback((anim: Animated.Value) => {
     Animated.spring(anim, {
       toValue: 0.94,
       useNativeDriver: true,
       speed: 40,
     }).start();
+  }, []);
 
-  const pressOut = (anim: Animated.Value) =>
+  const pressOut = useCallback((anim: Animated.Value) => {
     Animated.spring(anim, {
       toValue: 1,
       useNativeDriver: true,
       speed: 40,
     }).start();
+  }, []);
 
-  // ✅ Accept handler
-  const handleAccept = useCallback(async () => {
-    if (isProcessing || isActionProcessing) return;
-
+  // ✅ Safe cleanup function
+  const cleanupAction = useCallback(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
     Vibration.cancel();
+  }, []);
 
+  // ✅ ACCEPT HANDLER
+  const handleAccept = useCallback(() => {
+    if (actionLockedRef.current) {
+      console.log('[RideRequestCard] ⛔ Action locked, ignoring accept');
+      return;
+    }
+
+    if (isProcessing) {
+      console.log('[RideRequestCard] ⛔ Already processing, ignoring accept');
+      return;
+    }
+
+    actionLockedRef.current = true;
     setIsProcessing(true);
+    cleanupAction();
 
-    try {
-      await acceptRide(request.requestId, request.booking?.bookingId || '');
-      if (onAccept) {
-        onAccept();
-      }
-    } catch (error) {
-      console.error('[RideRequestCard] Accept error:', error);
-    } finally {
-      setIsProcessing(false);
+    console.log('[RideRequestCard] ✅ Accepting ride:', requestIdRef.current);
+
+    if (onAccept) {
+      onAccept();
     }
-  }, [isProcessing, isActionProcessing, acceptRide, request, onAccept]);
+  }, [isProcessing, onAccept, cleanupAction]);
 
-  // ✅ Reject handler
-  const handleReject = useCallback(async () => {
-    if (isProcessing || isActionProcessing) return;
-
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
+  // ✅ REJECT HANDLER
+  const handleReject = useCallback(() => {
+    if (actionLockedRef.current) {
+      console.log('[RideRequestCard] ⛔ Action locked, ignoring reject');
+      return;
     }
-    Vibration.cancel();
 
+    if (isProcessing) {
+      console.log('[RideRequestCard] ⛔ Already processing, ignoring reject');
+      return;
+    }
+
+    actionLockedRef.current = true;
     setIsProcessing(true);
+    cleanupAction();
 
-    try {
-      await rejectRide(request.requestId);
-      if (onReject) {
-        onReject();
-      }
-    } catch (error) {
-      console.error('[RideRequestCard] Reject error:', error);
-    } finally {
-      setIsProcessing(false);
+    console.log('[RideRequestCard] ❌ Rejecting ride:', requestIdRef.current);
+
+    if (onReject) {
+      onReject();
     }
-  }, [isProcessing, isActionProcessing, rejectRide, request, onReject]);
-
-  const {
-    customer,
-    booking,
-    fare,
-    pickup,
-    destination,
-    distance,
-    isRetry,
-    batchNumber,
-    expiresAt,
-  } = request;
+  }, [isProcessing, onReject, cleanupAction]);
 
   // ✅ Gauge height interpolation
   const gaugeHeight = gaugeAnim.interpolate({
@@ -270,8 +285,8 @@ const RideRequestCard: React.FC<RideRequestCardProps> = ({
   });
 
   const getExpiryTime = () => {
-    if (!expiresAt) return '';
-    const date = new Date(expiresAt);
+    if (!request.expiresAt) return '';
+    const date = new Date(request.expiresAt);
     return date.toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',
@@ -289,6 +304,18 @@ const RideRequestCard: React.FC<RideRequestCardProps> = ({
     backgroundColor: 'rgba(255,255,255,0.3)',
     borderRadius: 12,
   });
+
+  const {
+    customer,
+    booking,
+    fare,
+    pickup,
+    destination,
+    distance,
+    isRetry,
+    batchNumber,
+    expiresAt,
+  } = request;
 
   return (
     <Animated.View
@@ -448,7 +475,7 @@ const RideRequestCard: React.FC<RideRequestCardProps> = ({
             onPressIn={() => pressIn(rejectScale)}
             onPressOut={() => pressOut(rejectScale)}
             activeOpacity={0.9}
-            disabled={isProcessing || isActionProcessing}
+            disabled={isProcessing}
           >
             <View style={styles.buttonContent}>
               <Icon name="close" size={20} color={COLORS.danger} />
@@ -471,7 +498,7 @@ const RideRequestCard: React.FC<RideRequestCardProps> = ({
             onPressIn={() => pressIn(acceptScale)}
             onPressOut={() => pressOut(acceptScale)}
             activeOpacity={0.92}
-            disabled={isProcessing || isActionProcessing}
+            disabled={isProcessing}
           >
             <View style={styles.buttonContent}>
               <IconMC name="check-bold" size={20} color={COLORS.paper} />

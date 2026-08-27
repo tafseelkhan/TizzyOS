@@ -186,7 +186,7 @@ const AppContent: React.FC = () => {
         console.log('🎵 [3/4] Setting up ringtone...');
         const {
           trackPlayerBackgroundHandler,
-        } = require('./services/audio/RingtoneService');
+        } = require('../../../core/services/audio/RingtoneService');
         await trackPlayerBackgroundHandler();
         console.log('✅ [3/4] TrackPlayer background handler ready');
 

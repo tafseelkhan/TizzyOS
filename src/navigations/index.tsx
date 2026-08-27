@@ -126,7 +126,7 @@ export type RootStackParamList = {
   DriverStatus: undefined;
   DriverAvailability: undefined;
   // ✅ FIX: ActiveTrip now expects trackingId as primary param
-  RideTracking: { trackingId: string; bookingId?: string };
+  RideTracking: { trackingId: string; bookingId?: string; quoteId: string; };
 };
 
 const Stack = createStackNavigator<RootStackParamList>();

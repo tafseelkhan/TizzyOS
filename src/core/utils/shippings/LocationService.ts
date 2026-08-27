@@ -66,7 +66,7 @@ const TRACKING_CONFIG = {
   errorBackoffMs: 5000,
 };
 
-const API_BASE_URL = 'http://10.207.117.121:5000';
+const API_BASE_URL = 'http://10.194.138.121:5000';
 
 const backgroundOptions = {
   taskName: 'DriverLocationTracking',

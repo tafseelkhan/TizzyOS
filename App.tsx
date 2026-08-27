@@ -8,7 +8,6 @@
 import React from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemeProvider } from './src/core/contexts/theme/ThemeContext';
-import { ZeptPayProvider } from '@flixora/zeptpay-react-native';
 // import { AdsSDK, initializeAds } from './src/api/ads';
 import { AuthProvider } from './src/core/contexts/auth/UserContext';
 import { RideRequestProvider } from './src/core/contexts/rideRequest/RideRequestContext';
@@ -34,7 +33,6 @@ function App(): React.ReactElement {
 
   return (
     <ThemeProvider>
-      <ZeptPayProvider publicKey="pk-flixora_test_@zeptpay:tizzy-flixora-ecosystem_053bf0f4f1e59760a3f63fe3ebc28a1920f4b57c93c8e648">
         <SafeAreaView style={{ flex: 1 }}>
           <AuthProvider>
             <RideRequestProvider>
@@ -42,7 +40,6 @@ function App(): React.ReactElement {
             </RideRequestProvider>
           </AuthProvider>
         </SafeAreaView>
-      </ZeptPayProvider>
     </ThemeProvider>
   );
 }

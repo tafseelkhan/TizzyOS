@@ -621,7 +621,7 @@ const DriverStatusScreen: React.FC = () => {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
+        <StatusBar barStyle="dark-content" />
         <View style={styles.loadingSpinnerWrap}>
           <ActivityIndicator size="large" color={COLORS.accent} />
         </View>
@@ -633,7 +633,7 @@ const DriverStatusScreen: React.FC = () => {
   if (error) {
     return (
       <View style={styles.errorContainer}>
-        <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
+        <StatusBar barStyle="dark-content" />
         <View style={styles.errorIconWrap}>
           <Icon name="alert-circle" size={38} color={COLORS.danger} />
         </View>
@@ -652,7 +652,7 @@ const DriverStatusScreen: React.FC = () => {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
+      <StatusBar barStyle="dark-content" />
       <ScrollView
         style={styles.container}
         refreshControl={

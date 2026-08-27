@@ -38,7 +38,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width, height } = Dimensions.get('window');
 
-const API_BASE_URL = 'http://10.207.117.121:5000';
+const API_BASE_URL = 'http://10.194.138.121:5000';
 
 type TabType = 'current' | 'previous';
 
