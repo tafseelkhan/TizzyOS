@@ -1,6 +1,6 @@
 import axios, { AxiosError, AxiosResponse } from 'axios';
 import { Platform } from 'react-native';
-import { API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
+import { TIZZYOS_API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
 import { API_ENDPOINTS } from '../../connections/snippet/apiEndpoints';
 import { getToken } from '../../connections/token/tokenSlice';
 
@@ -106,7 +106,7 @@ export const warehouseApi = {
     }
 
     return await fetchHandler(
-      `${API_BASE_URL}${API_ENDPOINTS.CREATE_WAREHOUSE}`,
+      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.CREATE_WAREHOUSE}`,
       {
         method: 'POST',
         headers: {
@@ -138,7 +138,7 @@ export const warehouseApi = {
     }
 
     return await fetchHandler(
-      `${API_BASE_URL}${API_ENDPOINTS.GET_CHECK_WAREHOUSE}/${userId}`,
+      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_CHECK_WAREHOUSE}/${userId}`,
       {
         method: 'GET',
         headers: {
@@ -165,7 +165,7 @@ export const warehouseApi = {
     }
 
     return await fetchHandler(
-      `${API_BASE_URL}${API_ENDPOINTS.GET_WAREHOUSE_BY_ID}/${userId}`,
+      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_WAREHOUSE_BY_ID}/${userId}`,
       {
         method: 'GET',
         headers: {

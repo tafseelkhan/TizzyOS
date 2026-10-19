@@ -31,7 +31,7 @@ if (
 }
 
 const { width } = Dimensions.get('window');
-const BASE_URL = 'http://10.194.138.121:5000';
+const BASE_URL = 'http://10.210.13.121:1000';
 
 type RootStackParamList = {
   DriverRegistration: undefined;

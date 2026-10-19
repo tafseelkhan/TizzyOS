@@ -3,7 +3,7 @@
 import axios, { AxiosError, AxiosResponse } from 'axios';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
+import { TIZZYOS_API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
 import { API_ENDPOINTS } from '../../connections/snippet/apiEndpoints';
 import { getToken } from '../../connections/token/tokenSlice';
 import { decode as base64Decode } from 'base-64';
@@ -204,7 +204,7 @@ export const driverStatusApi = {
       throw { success: false, message: 'No authentication token found' };
     }
 
-    const url = `${API_BASE_URL}${API_ENDPOINTS.UPDATE_DRIVER_ONLINE_STATUS}`;
+    const url = `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.UPDATE_DRIVER_ONLINE_STATUS}`;
 
     try {
       const response = await fetchHandler(url, {
@@ -237,7 +237,7 @@ export const driverStatusApi = {
       throw { success: false, message: 'No authentication token found' };
     }
 
-    const url = `${API_BASE_URL}${API_ENDPOINTS.GET_DRIVER_AVAILABLE_STATUS}`;
+    const url = `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_DRIVER_AVAILABLE_STATUS}`;
 
     try {
       const response = await fetchHandler(url, {
@@ -270,7 +270,7 @@ export const driverStatusApi = {
       throw { success: false, message: 'No authentication token found' };
     }
 
-    const url = `${API_BASE_URL}${API_ENDPOINTS.TOGGLE_DRIVER_STATUS}`;
+    const url = `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.TOGGLE_DRIVER_STATUS}`;
 
     try {
       const response = await fetchHandler(url, {
@@ -306,7 +306,7 @@ export const driverStatusApi = {
       throw { success: false, message: 'No authentication token found' };
     }
 
-    const url = `${API_BASE_URL}${API_ENDPOINTS.UPDATE_DRIVER_LOCATION}`;
+    const url = `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.UPDATE_DRIVER_LOCATION}`;
 
     try {
       const response = await fetchHandler(url, {

@@ -5,7 +5,7 @@ import { API_ENDPOINTS } from '../../connections/snippet/apiEndpoints';
 import { getToken } from '../../connections/token/tokenSlice';
 
 import { fetchHandler } from '../../../core/utils/handler/fetchHandler';
-import { API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
+import { TIZZYGO_API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
 
 export const profileApi = {
   /**
@@ -19,7 +19,7 @@ export const profileApi = {
   async getProfile() {
     const token = await getToken();
 
-    return await fetchHandler(`${API_BASE_URL}${API_ENDPOINTS.GET_PROFILE}`, {
+    return await fetchHandler(`${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.GET_PROFILE}`, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -39,7 +39,7 @@ export const profileApi = {
     const token = await getToken();
 
     return await fetchHandler(
-      `${API_BASE_URL}${API_ENDPOINTS.UPDATE_PROFILE}`,
+      `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.UPDATE_PROFILE}`,
       {
         method: 'PUT',
         headers: {
@@ -63,7 +63,7 @@ export const profileApi = {
     }
 
     return await fetchHandler(
-      `${API_BASE_URL}${API_ENDPOINTS.DELETE_PROFILE_IMAGE}`,
+      `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.DELETE_PROFILE_IMAGE}`,
       {
         method: 'DELETE',
         headers: {

@@ -1,7 +1,7 @@
 // src/utils/socket/socketUtils.ts
 
 import io, { Socket, ManagerOptions, SocketOptions } from 'socket.io-client';
-import { API_BASE_URL } from '../../../api/connections/snippet/apiBaseUrl';
+import { TIZZYOS_API_BASE_URL } from '../../../api/connections/snippet/apiBaseUrl';
 import { getToken } from '../../../api/connections/token/tokenSlice';
 import {
   CONFIG,
@@ -99,7 +99,7 @@ class SocketService {
         autoConnect: false,
       };
 
-      this.socket = io(API_BASE_URL, options);
+      this.socket = io(TIZZYOS_API_BASE_URL, options);
       this.setupCoreListeners();
       this.socket.connect();
     } catch (error) {

@@ -250,7 +250,7 @@ const BottomNavigation = ({
       }
 
       const response = await fetch(
-        'http://10.194.138.121:5000/api/v0/auth/linked-accounts',
+        'http://10.210.13.121:1000/api/v0/auth/linked-accounts',
         {
           method: 'GET',
           headers: {
@@ -332,7 +332,7 @@ const BottomNavigation = ({
       }
 
       const response = await fetch(
-        'http://10.194.138.121:5000/api/v0/auth/switch-account',
+        'http://10.210.13.121:1000/api/v0/auth/switch-account',
         {
           method: 'POST',
           headers: {
@@ -412,7 +412,7 @@ const BottomNavigation = ({
       }
 
       const response = await fetch(
-        'http://10.194.138.121:5000/api/v0/auth/double-tap-switch',
+        'http://10.210.13.121:1000/api/v0/auth/double-tap-switch',
         {
           method: 'POST',
           headers: {
@@ -515,7 +515,7 @@ const BottomNavigation = ({
       }
 
       const response = await fetch(
-        'http://10.194.138.121:5000/api/v0/auth/add-linked-account',
+        'http://10.210.13.121:1000/api/v0/auth/add-linked-account',
         {
           method: 'POST',
           headers: {
@@ -804,7 +804,7 @@ const BottomNavigation = ({
           </TouchableOpacity>
 
           {/* Chat Button */}
-          <TouchableOpacity
+          {/* <TouchableOpacity
             style={[
               styles.navButton,
               activeTab === 'chat' && [
@@ -824,7 +824,7 @@ const BottomNavigation = ({
                 style={styles.navIconImage}
               />
             </View>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
 
           {/* Center FAB */}
           <View style={styles.fabContainer}>
@@ -841,7 +841,7 @@ const BottomNavigation = ({
           </View>
 
           {/* My Ads Button */}
-          <TouchableOpacity
+          {/* <TouchableOpacity
             style={[
               styles.navButton,
               activeTab === 'ads' && [
@@ -866,7 +866,7 @@ const BottomNavigation = ({
                   : themeColors.text
               }
             />
-          </TouchableOpacity>
+          </TouchableOpacity> */}
 
           {/* Profile Button */}
           <TouchableOpacity

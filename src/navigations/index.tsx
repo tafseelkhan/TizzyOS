@@ -25,7 +25,7 @@ import SellerProductsScreen from '../screens/shop/sellerProductsScreen';
 // import ProtectionPlansScreen from "../screens/shop/ProtectionPlansScreen";
 import SellerOrdersScreen from '../screens/shop/sellerOrderScreen';
 import SellerPayoutPortalScreen from '../screens/shop/sellerPayoutPortalScreen';
-import SetupWallet from '../screens/shop/setupWalletScreen';
+import SetupWallet from '../screens/shop/PayoutPortalSetupScreen';
 // import SellerReviewsScreen from "../screens/shop/SellerReviewsScreen";
 
 // Shippings Imports*
@@ -87,7 +87,7 @@ export type RootStackParamList = {
   SellerStatus: undefined;
   ProductListing: undefined;
   MyProducts: undefined;
-  PayoutPortal: undefined;
+  SellerEarnings: undefined;
   SetupWallet: undefined;
   SellerOrders: undefined;
 
@@ -196,7 +196,7 @@ const AppNavigator = forwardRef<
         <Stack.Screen name="ProductListing" component={ProductListingScreen} />
         <Stack.Screen name="MyProducts" component={SellerProductsScreen} />
         <Stack.Screen
-          name="PayoutPortal"
+          name="SellerEarnings"
           component={SellerPayoutPortalScreen}
         />
         <Stack.Screen name="SetupWallet" component={SetupWallet} />

@@ -28,7 +28,7 @@ import type { CameraApi } from 'react-native-camera-kit';
 type QRScannerNavigationProp = StackNavigationProp<any>;
 
 // ✅ API Base URL
-const API_BASE_URL = 'http://10.194.138.121:5000';
+const TIZZYOS_API_BASE_URL = 'http://10.210.13.121:2000';
 
 // ✅ Auth Helper
 const getAuthToken = async (): Promise<string | null> => {
@@ -133,7 +133,7 @@ const QRScannerScreen = () => {
       console.log('🔄 Sending QR handover request...');
 
       const response = await axios.post(
-        `${API_BASE_URL}/api/v0/delivery/tracking/shipping/handover/via/qr`,
+        `${TIZZYOS_API_BASE_URL}/api/v0/delivery/tracking/shipping/handover/via/qr`,
         { token: actualToken },
         {
           headers: {

@@ -3,7 +3,7 @@ import Config from 'react-native-config';
 import { jwtDecode } from 'jwt-decode';
 import { API_ENDPOINTS } from '../../connections/snippet/apiEndpoints';
 import { fetchHandler } from '../../../core/utils/handler/fetchHandler';
-import { API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
+import { TIZZYGO_API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
 import {
   setToken,
   removeToken,
@@ -145,7 +145,7 @@ const authFetchHandler = async (url: string, options: RequestInit = {}) => {
 
 export const signup = async ({ identifier, role }: AuthPayload) => {
   const formattedIdentifier = formatIdentifier(identifier);
-  const url = `${API_BASE_URL}${API_ENDPOINTS.SIGNUP}`;
+  const url = `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.SIGNUP}`;
   console.log('📤 Signup request to:', url);
 
   return await authFetchHandler(url, {
@@ -168,7 +168,7 @@ export const verifySignup = async ({
   role,
 }: VerifySignupPayload) => {
   const formattedIdentifier = formatIdentifier(identifier);
-  const url = `${API_BASE_URL}${API_ENDPOINTS.VERIFY_SIGNUP}`;
+  const url = `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.VERIFY_SIGNUP}`;
 
   const data = await authFetchHandler(url, {
     method: 'POST',
@@ -194,7 +194,7 @@ export const verifySignup = async ({
 
 export const login = async ({ identifier }: AuthPayload) => {
   const formattedIdentifier = formatIdentifier(identifier);
-  const url = `${API_BASE_URL}${API_ENDPOINTS.LOGIN}`;
+  const url = `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.LOGIN}`;
   console.log('📤 Login request to:', url);
 
   return await authFetchHandler(url, {
@@ -211,7 +211,7 @@ export const login = async ({ identifier }: AuthPayload) => {
 
 export const verifyLogin = async ({ identifier, otp }: VerifyLoginPayload) => {
   const formattedIdentifier = formatIdentifier(identifier);
-  const url = `${API_BASE_URL}${API_ENDPOINTS.VERIFY_LOGIN}`;
+  const url = `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.VERIFY_LOGIN}`;
 
   const data = await authFetchHandler(url, {
     method: 'POST',
@@ -235,7 +235,7 @@ export const verifyLogin = async ({ identifier, otp }: VerifyLoginPayload) => {
 
 export const resendOtp = async ({ identifier }: ResendOtpPayload) => {
   const formattedIdentifier = formatIdentifier(identifier);
-  const url = `${API_BASE_URL}${API_ENDPOINTS.RESEND_OTP}`;
+  const url = `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.RESEND_OTP}`;
 
   return await authFetchHandler(url, {
     method: 'POST',
@@ -250,7 +250,7 @@ export const resendOtp = async ({ identifier }: ResendOtpPayload) => {
 // =============================================
 
 export const switchAccount = async ({ targetUserId }: SwitchAccountPayload) => {
-  const url = `${API_BASE_URL}${API_ENDPOINTS.SWITCH_ACCOUNT}`;
+  const url = `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.SWITCH_ACCOUNT}`;
 
   const data = await authFetchHandler(url, {
     method: 'POST',
@@ -270,7 +270,7 @@ export const switchAccount = async ({ targetUserId }: SwitchAccountPayload) => {
 // =============================================
 
 export const addLinkedAccount = async (payload: AddLinkedAccountPayload) => {
-  const url = `${API_BASE_URL}${API_ENDPOINTS.ADD_LINKED_ACCOUNT}`;
+  const url = `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.ADD_LINKED_ACCOUNT}`;
 
   const data = await authFetchHandler(url, {
     method: 'POST',
@@ -285,7 +285,7 @@ export const addLinkedAccount = async (payload: AddLinkedAccountPayload) => {
 // =============================================
 
 export const fetchLinkedAccounts = async () => {
-  const url = `${API_BASE_URL}${API_ENDPOINTS.GET_LINKED_ACCOUNTS}`;
+  const url = `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.GET_LINKED_ACCOUNTS}`;
 
   const data = await authFetchHandler(url, {
     method: 'GET',
@@ -299,7 +299,7 @@ export const fetchLinkedAccounts = async () => {
 // =============================================
 
 export const removeLinkedAccount = async (targetUserId: string) => {
-  const url = `${API_BASE_URL}${API_ENDPOINTS.REMOVE_LINKED_ACCOUNT}`;
+  const url = `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.REMOVE_LINKED_ACCOUNT}`;
 
   const data = await authFetchHandler(url, {
     method: 'DELETE',
@@ -347,6 +347,6 @@ export const logout = async (): Promise<void> => {
 // =============================================
 
 console.log('🔧 Auth Service Configuration:');
-console.log('📡 API Base URL:', API_BASE_URL);
+console.log('📡 API Base URL:', TIZZYGO_API_BASE_URL);
 console.log('📡 Signup Endpoint:', API_ENDPOINTS.SIGNUP);
 console.log('📡 Login Endpoint:', API_ENDPOINTS.LOGIN);

@@ -10,7 +10,7 @@ import {
 } from '../../../core/types/orderTypes';
 import { API_ENDPOINTS } from '../../connections/snippet/apiEndpoints';
 import { getToken } from '../../connections/token/tokenSlice';
-import { API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
+import { TIZZYOS_API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
 
 export interface OrderDetailsData {
   _id: string;
@@ -85,7 +85,7 @@ export const verifyQRAndMarkReadyForDispatch = async (
     const token = await getToken();
 
     const response = await axios.post(
-      `${API_BASE_URL}${API_ENDPOINTS.VERIFY_QR_AND_MARK_READY_FOR_DISPATCH}`,
+      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.VERIFY_QR_AND_MARK_READY_FOR_DISPATCH}`,
       { qrData },
       {
         headers: {
@@ -108,7 +108,7 @@ export const getFWSOrders = async (): Promise<any> => {
     const token = await getToken();
 
     const response = await axios.get(
-      `${API_BASE_URL}${API_ENDPOINTS.GET_FWS_ORDER}`,
+      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_FWS_ORDER}`,
       {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -132,7 +132,7 @@ export const getOrderDetails = async (
   try {
     const token = await getToken();
 
-    const response = await axios.get(`${API_BASE_URL}/orders/${orderId}`, {
+    const response = await axios.get(`${TIZZYOS_API_BASE_URL}/orders/${orderId}`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -154,7 +154,7 @@ export const getTrackingStatus = async (
     const token = await getToken();
 
     const response = await axios.get(
-      `${API_BASE_URL}${API_ENDPOINTS.GET_TRACKING_HISTORY}?orderId=${orderId}`,
+      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_TRACKING_HISTORY}?orderId=${orderId}`,
       {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -184,10 +184,10 @@ export const getOrderById = async (
     const token = await getToken();
     console.log(
       'API URL:',
-      `${API_BASE_URL}${API_ENDPOINTS.GET_ORDER_BY_ID}/${orderId}`,
+      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_ORDER_BY_ID}/${orderId}`,
     );
     const response = await axios.get<OrderDetailsResponse>(
-      `${API_BASE_URL}${API_ENDPOINTS.GET_ORDER_BY_ID}/${orderId}`,
+      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_ORDER_BY_ID}/${orderId}`,
       {
         headers: {
           Authorization: `Bearer ${token}`,

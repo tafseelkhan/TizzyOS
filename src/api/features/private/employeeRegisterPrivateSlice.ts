@@ -2,7 +2,7 @@
 import axios, { AxiosError, AxiosResponse } from 'axios';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
+import { TIZZYOS_API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
 import { API_ENDPOINTS } from '../../connections/snippet/apiEndpoints';
 import { getToken } from '../../connections/token/tokenSlice';
 // ✅ Import base-64 for React Native
@@ -201,7 +201,7 @@ export const employeeApi = {
       throw { success: false, message: 'No authentication token found' };
     }
 
-    const url = `${API_BASE_URL}${API_ENDPOINTS.CREATE_EMPLOYEE}`;
+    const url = `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.CREATE_EMPLOYEE}`;
     console.log('🌐 [API] URL:', url);
     console.log('🌐 [API] Platform:', Platform.OS);
 
@@ -246,7 +246,7 @@ export const employeeApi = {
       throw { success: false, message: 'No authentication token found' };
     }
 
-    const url = `${API_BASE_URL}${API_ENDPOINTS.CHECK_EMPLOYEE_STATUS}`;
+    const url = `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.CHECK_EMPLOYEE_STATUS}`;
     console.log('🌐 [API] URL:', url);
     console.log('🌐 [API] Platform:', Platform.OS);
 
@@ -289,7 +289,7 @@ export const employeeApi = {
       throw { success: false, message: 'No authentication token found' };
     }
 
-    const url = `${API_BASE_URL}${API_ENDPOINTS.GET_ALL_EMPLOYEES}`;
+    const url = `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_ALL_EMPLOYEES}`;
     console.log('🌐 [API] URL:', url);
     console.log('🌐 [API] Platform:', Platform.OS);
 
@@ -337,7 +337,7 @@ export const employeeApi = {
       throw { success: false, message: 'No authentication token found' };
     }
 
-    const url = `${API_BASE_URL}${API_ENDPOINTS.GET_EMPLOYEE_BY_NAME_ROLE}`;
+    const url = `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_EMPLOYEE_BY_NAME_ROLE}`;
     console.log('🌐 [API] URL:', url);
     console.log('🌐 [API] Platform:', Platform.OS);
 

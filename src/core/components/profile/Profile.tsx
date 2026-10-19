@@ -353,7 +353,7 @@ export default function ProfileScreen() {
               <Text style={styles.buttonText}>Edit Profile</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
+            {/* <TouchableOpacity
               style={styles.secondaryButton}
               onPress={() => navigation.navigate('Security' as never)}
             >
@@ -365,76 +365,8 @@ export default function ProfileScreen() {
               />
               <Icon name="security" size={18} color="white" />
               <Text style={styles.buttonText}>Security</Text>
-            </TouchableOpacity>
+            </TouchableOpacity> */}
           </View>
-
-          {/* Stats Cards */}
-          <View style={styles.statsContainer}>
-            <View
-              style={[
-                styles.statCard,
-                {
-                  backgroundColor: statCardBackground,
-                  borderColor: statCardBorder,
-                },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.statNumber,
-                  { color: isDark ? '#A78BFA' : '#8b5cf6' },
-                ]}
-              >
-                0
-              </Text>
-              <Text style={[styles.statLabel, { color: subtitleColor }]}>
-                Orders
-              </Text>
-            </View>
-            <View
-              style={[
-                styles.statCard,
-                {
-                  backgroundColor: statCardBackground,
-                  borderColor: statCardBorder,
-                },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.statNumber,
-                  { color: isDark ? '#60A5FA' : '#3b82f6' },
-                ]}
-              >
-                0
-              </Text>
-              <Text style={[styles.statLabel, { color: subtitleColor }]}>
-                Reviews
-              </Text>
-            </View>
-            <View
-              style={[
-                styles.statCard,
-                {
-                  backgroundColor: statCardBackground,
-                  borderColor: statCardBorder,
-                },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.statNumber,
-                  { color: isDark ? '#34D399' : '#10b981' },
-                ]}
-              >
-                0
-              </Text>
-              <Text style={[styles.statLabel, { color: subtitleColor }]}>
-                Likes
-              </Text>
-            </View>
-          </View>
-
           <View style={styles.bottomSpacer} />
         </ScrollView>
       </View>
@@ -715,35 +647,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: 'white',
     marginLeft: 6,
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 20,
-  },
-  statCard: {
-    flex: 1,
-    borderRadius: 14,
-    padding: 14,
-    alignItems: 'center',
-    borderWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  statNumber: {
-    fontSize: screenWidth * 0.055,
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  statLabel: {
-    fontSize: screenWidth * 0.03,
-    fontWeight: '600',
   },
   loadingText: {
     marginTop: 12,

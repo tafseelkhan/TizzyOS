@@ -38,7 +38,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width, height } = Dimensions.get('window');
 
-const API_BASE_URL = 'http://10.194.138.121:5000';
+const TIZZYOS_API_BASE_URL = 'http://10.210.13.121:2000';
 
 type TabType = 'current' | 'previous';
 
@@ -146,7 +146,7 @@ const ScannedOrdersScreen: React.FC = () => {
       }
 
       const response = await axios.get(
-        `${API_BASE_URL}/api/v0/shipping/available-shipping`,
+        `${TIZZYOS_API_BASE_URL}/api/v0/shipping/available-shipping`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -291,7 +291,7 @@ const ScannedOrdersScreen: React.FC = () => {
       const token = await getAuthToken();
       if (token && order.order) {
         const trackingResponse = await axios.get(
-          `${API_BASE_URL}/api/v0/tracking/history/status`,
+          `${TIZZYOS_API_BASE_URL}/api/v0/tracking/history/status`,
           {
             params: { orderId: order.order.orderId },
             headers: { Authorization: `Bearer ${token}` },

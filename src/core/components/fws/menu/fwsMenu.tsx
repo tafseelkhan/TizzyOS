@@ -29,7 +29,7 @@ if (
 }
 
 const { width } = Dimensions.get('window');
-const BASE_URL = 'http://10.194.138.121:5000';
+const BASE_URL = 'http://10.210.13.121:1000';
 
 // Define navigation param list for FWS
 type RootStackParamList = {
@@ -152,12 +152,6 @@ const fwsApi = {
             title: 'Scanned Orders',
             iconName: 'cart-outline',
             iconColor: '#EF4444',
-          },
-          {
-            segment: 'fws-reviews',
-            title: 'FWS Reviews',
-            iconName: 'star-outline',
-            iconColor: '#F59E0B',
           },
           // ✅ Handover Scanner
           {
@@ -385,49 +379,49 @@ const FWSMenu: React.FC<FWSMenuProps> = ({
   };
 
   // FWS Stats Cards
-  const renderFWSStats = () => {
-    if (!fwsProfile) return null;
+  // const renderFWSStats = () => {
+  //   if (!fwsProfile) return null;
 
-    return (
-      <View style={styles.statsContainer}>
-        <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-          <View style={[styles.statIconBg, { backgroundColor: '#EDE9FE' }]}>
-            <Icon name="cube-outline" size={18} color="#8B5CF6" />
-          </View>
-          <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
-            {fwsProfile.stats.totalOrders}
-          </Text>
-          <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-            Total Orders
-          </Text>
-        </View>
+  //   return (
+  //     <View style={styles.statsContainer}>
+  //       <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+  //         <View style={[styles.statIconBg, { backgroundColor: '#EDE9FE' }]}>
+  //           <Icon name="cube-outline" size={18} color="#8B5CF6" />
+  //         </View>
+  //         <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
+  //           {fwsProfile.stats.totalOrders}
+  //         </Text>
+  //         <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+  //           Total Orders
+  //         </Text>
+  //       </View>
 
-        <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-          <View style={[styles.statIconBg, { backgroundColor: '#D1FAE5' }]}>
-            <Icon name="checkmark-circle" size={18} color="#10B981" />
-          </View>
-          <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
-            {fwsProfile.stats.completed}
-          </Text>
-          <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-            Completed
-          </Text>
-        </View>
+  //       <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+  //         <View style={[styles.statIconBg, { backgroundColor: '#D1FAE5' }]}>
+  //           <Icon name="checkmark-circle" size={18} color="#10B981" />
+  //         </View>
+  //         <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
+  //           {fwsProfile.stats.completed}
+  //         </Text>
+  //         <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+  //           Completed
+  //         </Text>
+  //       </View>
 
-        <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-          <View style={[styles.statIconBg, { backgroundColor: '#FEF3C7' }]}>
-            <Icon name="time-outline" size={18} color="#F59E0B" />
-          </View>
-          <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
-            {fwsProfile.stats.inProgress}
-          </Text>
-          <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-            In Progress
-          </Text>
-        </View>
-      </View>
-    );
-  };
+  //       <View style={[styles.statCard, { backgroundColor: colors.card }]}>
+  //         <View style={[styles.statIconBg, { backgroundColor: '#FEF3C7' }]}>
+  //           <Icon name="time-outline" size={18} color="#F59E0B" />
+  //         </View>
+  //         <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
+  //           {fwsProfile.stats.inProgress}
+  //         </Text>
+  //         <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+  //           In Progress
+  //         </Text>
+  //       </View>
+  //     </View>
+  //   );
+  // };
 
   if (loading) {
     return (
@@ -540,7 +534,7 @@ const FWSMenu: React.FC<FWSMenuProps> = ({
           </View>
 
           {/* FWS Stats Cards */}
-          {renderFWSStats()}
+          {/* {renderFWSStats()} */}
 
           {/* FWS Menu Sections */}
           {menuData.map(section => (

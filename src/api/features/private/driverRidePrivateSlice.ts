@@ -1,6 +1,6 @@
 // src/api/v0/features/private/driverRidePrivateSlice.ts
 
-import { API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
+import { TIZZYOS_API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
 import { getToken } from '../../connections/token/tokenSlice';
 import { fetchHandler } from '../../../core/utils/handler/fetchHandler';
 import {
@@ -25,7 +25,7 @@ export const driverRideApi = {
     try {
       const token = await getToken();
       const response = await fetchHandler(
-        `${API_BASE_URL}/api/v0/ride/tracking/active?type=driver`,
+        `${TIZZYOS_API_BASE_URL}/api/v0/ride/tracking/active?type=driver`,
         {
           method: 'GET',
           headers: { Authorization: `Bearer ${token}` },
@@ -49,12 +49,12 @@ export const driverRideApi = {
     console.log('[driverRideApi] 📦 bookingId:', bookingId);
     console.log(
       '[driverRideApi] 🔗 URL:',
-      `${API_BASE_URL}/api/v0/ride/booking/${bookingId}`,
+      `${TIZZYOS_API_BASE_URL}/api/v0/ride/booking/${bookingId}`,
     );
 
     try {
       const response = await fetchHandler(
-        `${API_BASE_URL}/api/v0/ride/booking/${bookingId}`,
+        `${TIZZYOS_API_BASE_URL}/api/v0/ride/booking/${bookingId}`,
         {
           method: 'GET',
           headers: { Authorization: `Bearer ${token}` },
@@ -112,12 +112,12 @@ export const driverRideApi = {
     console.log('[driverRideApi] 📦 trackingId:', trackingId);
     console.log(
       '[driverRideApi] 🔗 URL:',
-      `${API_BASE_URL}/api/v0/ride/live/tracking/connect/${bookingId}/session/${trackingId}`,
+      `${TIZZYOS_API_BASE_URL}/api/v0/ride/live/tracking/connect/${bookingId}/session/${trackingId}`,
     );
 
     try {
       const response = await fetchHandler(
-        `${API_BASE_URL}/api/v0/ride/live/tracking/connect/${bookingId}/session/${trackingId}?quoteId=${quoteId}`,
+        `${TIZZYOS_API_BASE_URL}/api/v0/ride/live/tracking/connect/${bookingId}/session/${trackingId}?quoteId=${quoteId}`,
         {
           method: 'GET',
           headers: { Authorization: `Bearer ${token}` },
@@ -159,12 +159,12 @@ export const driverRideApi = {
     );
     console.log(
       '[driverRideApi] 🔗 URL:',
-      `${API_BASE_URL}/api/v0/ride/tracking/${trackingId}`,
+      `${TIZZYOS_API_BASE_URL}/api/v0/ride/tracking/${trackingId}`,
     );
 
     try {
       const response = await fetchHandler(
-        `${API_BASE_URL}/api/v0/ride/tracking/${trackingId}`,
+        `${TIZZYOS_API_BASE_URL}/api/v0/ride/tracking/${trackingId}`,
         {
           method: 'GET',
           headers: { Authorization: `Bearer ${token}` },
@@ -205,7 +205,7 @@ export const driverRideApi = {
   ): Promise<Tracking> => {
     const token = await getToken();
     const response = await fetchHandler(
-      `${API_BASE_URL}/api/v0/ride/tracking/${trackingId}/status`,
+      `${TIZZYOS_API_BASE_URL}/api/v0/ride/tracking/${trackingId}/status`,
       {
         method: 'PUT',
         headers: {
@@ -228,7 +228,7 @@ export const driverRideApi = {
   cancelBooking: async (bookingId: string, reason: string): Promise<void> => {
     const token = await getToken();
     const response = await fetchHandler(
-      `${API_BASE_URL}/api/v0/ride/cancel/${bookingId}`,
+      `${TIZZYOS_API_BASE_URL}/api/v0/ride/cancel/${bookingId}`,
       {
         method: 'POST',
         headers: {
@@ -253,7 +253,7 @@ export const driverRideApi = {
   ): Promise<{ bookings: Booking[]; total: number }> => {
     const token = await getToken();
     const response = await fetchHandler(
-      `${API_BASE_URL}/api/v0/ride/bookings/driver?page=${page}&limit=${limit}`,
+      `${TIZZYOS_API_BASE_URL}/api/v0/ride/bookings/driver?page=${page}&limit=${limit}`,
       {
         method: 'GET',
         headers: { Authorization: `Bearer ${token}` },
@@ -272,7 +272,7 @@ export const driverRideApi = {
   verifyPickup: async (qrToken: string): Promise<void> => {
     const token = await getToken();
     const response = await fetchHandler(
-      `${API_BASE_URL}/api/v0/ride/qr/verify-pickup`,
+      `${TIZZYOS_API_BASE_URL}/api/v0/ride/qr/verify-pickup`,
       {
         method: 'POST',
         headers: {
@@ -294,7 +294,7 @@ export const driverRideApi = {
   verifyDrop: async (qrToken: string): Promise<void> => {
     const token = await getToken();
     const response = await fetchHandler(
-      `${API_BASE_URL}/api/v0/ride/qr/verify-drop`,
+      `${TIZZYOS_API_BASE_URL}/api/v0/ride/qr/verify-drop`,
       {
         method: 'POST',
         headers: {
@@ -317,7 +317,7 @@ export const driverRideApi = {
   acceptRideRequest: async (requestId: string): Promise<AcceptRideResponse> => {
     const token = await getToken();
     const response = await fetchHandler(
-      `${API_BASE_URL}/api/v0/ride/requests/${requestId}/accept`,
+      `${TIZZYOS_API_BASE_URL}/api/v0/ride/requests/${requestId}/accept`,
       {
         method: 'POST',
         headers: {
@@ -344,7 +344,7 @@ export const driverRideApi = {
   rejectRideRequest: async (requestId: string): Promise<void> => {
     const token = await getToken();
     const response = await fetchHandler(
-      `${API_BASE_URL}/api/v0/ride/requests/${requestId}/reject`,
+      `${TIZZYOS_API_BASE_URL}/api/v0/ride/requests/${requestId}/reject`,
       {
         method: 'POST',
         headers: {

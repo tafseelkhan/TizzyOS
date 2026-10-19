@@ -29,7 +29,7 @@ if (
 }
 
 const { width } = Dimensions.get('window');
-const BASE_URL = 'http://10.194.138.121:5000';
+const BASE_URL = 'http://10.210.13.121:1000';
 
 // Define navigation param list
 type RootStackParamList = {
@@ -87,7 +87,7 @@ const getImageUrl = (image?: string): string => {
 const sellerApi = {
   getSellerProfile: async (token: string): Promise<SellerProfile> => {
     try {
-      const response = await fetch(`${BASE_URL}/api/v0/seller`, {
+      const response = await fetch(`${BASE_URL}/api/v0/profile/me`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -313,7 +313,7 @@ const SidebarWithSeller: React.FC = () => {
         navigation.navigate('MyProducts');
         break;
       case 'payout-portal':
-        navigation.navigate('SetupWallet');
+        navigation.navigate('SellerEarnings');
         break;
       case 'seller-orders':
         navigation.navigate('SellerOrders');

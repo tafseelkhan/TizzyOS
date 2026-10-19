@@ -10,7 +10,7 @@ import {
 } from '../../../core/types/orderTypes';
 import { API_ENDPOINTS } from '../../connections/snippet/apiEndpoints';
 import { getToken } from '../../connections/token/tokenSlice';
-import { API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
+import { TIZZYOS_API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
 
 interface AssignDispatchParams {
   orderId: string;
@@ -27,7 +27,7 @@ export const fwsAssignShipping = async (
 
     // ✅ Fix: fetch() takes exactly 2 arguments (url, options)
     const response = await fetch(
-      `${API_BASE_URL}${API_ENDPOINTS.FWS_ASSIGN_ORDER}`, // ✅ Complete URL
+      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.FWS_ASSIGN_ORDER}`, // ✅ Complete URL
       {
         method: 'POST', // ✅ Method specify karo
         headers: {

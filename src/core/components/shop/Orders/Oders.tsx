@@ -209,7 +209,7 @@ type ShippingPartner = {
   kyc?: any;
 };
 
-const API_BASE_URL = 'http://10.194.138.121:5000';
+const TIZZYOS_API_BASE_URL = 'http://10.210.13.121:2000';
 
 // Theme colors
 const getThemeColors = (isDark: boolean) => {
@@ -502,7 +502,7 @@ const ManualShippingModal: React.FC<{
   const fetchShippingPartners = async () => {
     try {
       setLoadingPartners(true);
-      const apiUrl = `${API_BASE_URL}/api/v0/shipping/available-shipping`;
+      const apiUrl = `${TIZZYOS_API_BASE_URL}/api/v0/shipping/available-shipping`;
       const headers = {
         Authorization: `Bearer ${authToken}`,
         'Content-Type': 'application/json',
@@ -878,7 +878,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
       if (!tokenToUse) return null;
 
       const response = await axios.get(
-        `${API_BASE_URL}/api/v0/delivery/tracking/${orderId}/qr`,
+        `${TIZZYOS_API_BASE_URL}/api/v0/delivery/tracking/${orderId}/qr`,
         {
           headers: { Authorization: `Bearer ${tokenToUse}` },
           timeout: 10000,
@@ -1112,7 +1112,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
       }
 
       // 🚀 SINGLE API CALL - NO N+1 PROBLEM
-      const apiUrl = `${API_BASE_URL}/api/v0/seller/orders?sellerId=${currentSellerId}`;
+      const apiUrl = `${TIZZYOS_API_BASE_URL}/api/v0/seller/orders?sellerId=${currentSellerId}`;
       const headers = {
         Authorization: `Bearer ${tokenToUse}`,
         'Content-Type': 'application/json',
@@ -1175,7 +1175,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
 
       setProcessingOrder(order._id || order.orderId || '');
       const response = await axios.post(
-        `${API_BASE_URL}/api/v0/delivery/tracking/shipping/seller/accept-order`,
+        `${TIZZYOS_API_BASE_URL}/api/v0/delivery/tracking/shipping/seller/accept-order`,
         { orderId: order.orderId },
         {
           headers: {
@@ -1241,7 +1241,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
           : 'TRUCK');
 
       const response = await axios.post(
-        `${API_BASE_URL}/api/v0/delivery/tracking/shipping/seller/assign/auto-manual`,
+        `${TIZZYOS_API_BASE_URL}/api/v0/delivery/tracking/shipping/seller/assign/auto-manual`,
         {
           orderId: order.orderId,
           assignmentType: 'MANUAL',
@@ -1337,7 +1337,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
 
       setProcessingOrder(order._id || order.orderId || '');
       const response = await axios.post(
-        `${API_BASE_URL}/api/v0/delivery/tracking/shipping/seller/assign/auto-manual`,
+        `${TIZZYOS_API_BASE_URL}/api/v0/delivery/tracking/shipping/seller/assign/auto-manual`,
         { orderId: order.orderId, assignmentType: 'AUTO', shippingType },
         {
           headers: {
@@ -1393,7 +1393,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
 
       setProcessingFWSOrder(order._id || order.orderId || '');
       const response = await axios.post(
-        `${API_BASE_URL}/api/v0/delivery/tracking/shipping/seller/deliver-to-fws`,
+        `${TIZZYOS_API_BASE_URL}/api/v0/delivery/tracking/shipping/seller/deliver-to-fws`,
         { orderId: order.orderId },
         {
           headers: {

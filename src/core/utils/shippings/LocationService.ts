@@ -66,7 +66,7 @@ const TRACKING_CONFIG = {
   errorBackoffMs: 5000,
 };
 
-const API_BASE_URL = 'http://10.194.138.121:5000';
+const TIZZYOS_API_BASE_URL = 'http://10.210.13.121:2000';
 
 const backgroundOptions = {
   taskName: 'DriverLocationTracking',
@@ -463,7 +463,7 @@ const uploadLocationToBackend = async (
 
   try {
     const response = await fetch(
-      `${API_BASE_URL}/api/v0/track/rider/location`,
+      `${TIZZYOS_API_BASE_URL}/api/v0/track/rider/location`,
       {
         method: 'POST',
         headers: {

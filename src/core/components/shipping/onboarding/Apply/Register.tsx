@@ -61,7 +61,7 @@ type VehicleCategory = 'Car' | 'Bike' | 'Scooter' | 'Auto' | 'Tempo';
 type IdentityType = 'Aadhaar' | 'VoterID' | 'Passport' | 'PAN';
 type ShippingType = 'TRUCK' | 'RIDER';
 
-const API_BASE_URL = 'http://10.194.138.121:5000';
+const TIZZYOS_API_BASE_URL = 'http://10.210.13.121:2000';
 
 const getLocationOnce = (): Promise<{ lat: number; lng: number }> =>
   new Promise((res, rej) => {
@@ -651,7 +651,7 @@ const RiderRegistrationScreen: React.FC = () => {
         console.log(
           '🌐 [GO_ONLINE_WITH_LOCATION] Sending start action to backend...',
         );
-        await fetch(`${API_BASE_URL}/api/v0/track/rider/location`, {
+        await fetch(`${TIZZYOS_API_BASE_URL}/api/v0/track/rider/location`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -740,7 +740,7 @@ const RiderRegistrationScreen: React.FC = () => {
       }
 
       console.log('🌐 [FETCH_SHIPPING] Fetching shipping data from backend...');
-      const res = await fetch(`${API_BASE_URL}/api/v0/shipping/form/check`, {
+      const res = await fetch(`${TIZZYOS_API_BASE_URL}/api/v0/shipping/form/check`, {
         method: 'GET',
         headers: {
           Accept: 'application/json',
@@ -854,7 +854,7 @@ const RiderRegistrationScreen: React.FC = () => {
       console.log(
         '🌐 [TOGGLE_ONLINE_CORE] Sending online status to backend...',
       );
-      const res = await fetch(`${API_BASE_URL}/api/v0/shipper/online-status`, {
+      const res = await fetch(`${TIZZYOS_API_BASE_URL}/api/v0/shipper/online-status`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1100,7 +1100,7 @@ const RiderRegistrationScreen: React.FC = () => {
   const submitRegistration = async (formData: any) => {
     const token = await getAuthToken();
     if (!token) throw new Error('Auth token missing');
-    const res = await fetch(`${API_BASE_URL}/api/v0/shipping/register`, {
+    const res = await fetch(`${TIZZYOS_API_BASE_URL}/api/v0/shipping/register`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

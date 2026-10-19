@@ -1,4 +1,5 @@
-// SettingsScreen.tsx - FIXED VERSION
+// SettingsScreen.tsx - FINAL FIXED VERSION (Only Orders + Dark Mode)
+// Push Notification & Biometric code COMMENTED (not removed)
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
@@ -34,7 +35,7 @@ const getImageUrl = (image?: string): string => {
   if (!image) return '';
   if (image.startsWith('http')) return image;
   if (image.startsWith('/uploads')) {
-    return `http://your-server-url:5000${image}`; // Apne server URL se replace karo
+    return `http://your-server-url:1000${image}`;
   }
   return image;
 };
@@ -49,9 +50,15 @@ export const SettingsScreen: React.FC = () => {
     loading: themeLoading,
   } = useTheme();
   const [previewImage, setPreviewImage] = useState('');
-  const [notifications, setNotifications] = useState(true);
+
+  // ✅ Push Notification state - COMMENTED but kept
+  // const [notifications, setNotifications] = useState(true);
+
   const [themeModal, setThemeModal] = useState(false);
-  const [biometric, setBiometric] = useState(false);
+
+  // ✅ Biometric state - COMMENTED but kept
+  // const [biometric, setBiometric] = useState(false);
+
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
@@ -68,7 +75,6 @@ export const SettingsScreen: React.FC = () => {
 
       console.log('✅ Profile data received:', JSON.stringify(data, null, 2));
 
-      // ✅ Profile data set karo
       if (data) {
         const profile: ProfileData = {
           _id: data.userId || data._id || '',
@@ -82,7 +88,6 @@ export const SettingsScreen: React.FC = () => {
 
         setProfileData(profile);
 
-        // ✅ Image set karo
         const imageUrl = getImageUrl(profile.image);
         console.log('🖼️ Setting image URL:', imageUrl);
         setPreviewImage(imageUrl);
@@ -102,52 +107,25 @@ export const SettingsScreen: React.FC = () => {
   );
 
   const handleItemPress = (segment: string) => {
-    if (segment === 'security') {
-      navigation.navigate('Security' as never);
-    } else if (segment === 'privacy') {
-      navigation.navigate('Privacy' as never);
-    } else if (segment === 'help') {
-      navigation.navigate('Help' as never);
-    } else if (segment === 'about') {
-      navigation.navigate('About' as never);
-    } else if (segment === 'YourOrders') {
+    // ✅ SIRF YourOrders ka navigation kaam karega
+    if (segment === 'YourOrders') {
       navigation.navigate('YourOrders' as never);
     } else {
-      console.log('Navigating to:', segment);
-      Alert.alert('Info', `Feature coming soon: ${segment}`);
+      console.log('🔒 Feature disabled:', segment);
+      // ❌ Baaki sab buttons disabled - kuch nahi hoga
     }
   };
 
-  const handleBiometricToggle = (value: boolean) => {
-    setBiometric(value);
-    if (value) {
-      navigation.navigate('Security' as never);
-    }
-  };
+  // ✅ Biometric toggle function - COMMENTED but kept
+  // const handleBiometricToggle = (value: boolean) => {
+  //   setBiometric(value);
+  //   // ❌ Disabled - kuch nahi hoga
+  // };
 
   const handleLogout = async () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Logout',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await AsyncStorage.multiRemove([
-              'authToken',
-              'userData',
-              'app-theme',
-            ]);
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'Login' as never }],
-            });
-          } catch (error) {
-            console.error('Logout error:', error);
-          }
-        },
-      },
-    ]);
+    // ❌ Logout disabled
+    console.log('🔒 Logout disabled');
+    Alert.alert('Info', 'Logout feature is currently disabled');
   };
 
   const getThemeDisplayValue = () => {
@@ -201,8 +179,8 @@ export const SettingsScreen: React.FC = () => {
                     ? '#6366F1'
                     : '#F1F5F9'
                   : theme === mode
-                  ? '#6366F1'
-                  : '#1E293B',
+                    ? '#6366F1'
+                    : '#1E293B',
               },
             ]}
           >
@@ -233,24 +211,9 @@ export const SettingsScreen: React.FC = () => {
     </TouchableOpacity>
   );
 
+  // ✅ ONLY TWO ITEMS: Appearance (Dark Mode) + Your Orders
   const settingsData: SettingsItemType[] = [
-    {
-      kind: 'header',
-      title: 'AI & Preferences',
-    } as SettingsItemType,
-    {
-      segment: `xai-nexmind/tizzygo`,
-      title: 'XAI-NexMind',
-      icon: <Sparkles />,
-      value: 'AI Assistant',
-      rightElement: (
-        <Icon
-          name="keyboard-arrow-right"
-          size={24}
-          color={isDark ? '#94A3B8' : '#64748B'}
-        />
-      ),
-    },
+    // ✅ 1. Appearance / Dark Mode Button - ACTIVE
     {
       segment: ``,
       title: 'Appearance',
@@ -268,41 +231,12 @@ export const SettingsScreen: React.FC = () => {
       ),
     },
     { kind: 'divider' } as SettingsItemType,
-    {
-      kind: 'header',
-      title: 'Security & Account',
-    } as SettingsItemType,
-    {
-      segment: `security`,
-      title: 'Security Settings',
-      icon: <Icon name="security" size={24} color="#EF4444" />,
-      value: 'Do have any changes. Please enter your issue here!',
-      rightElement: (
-        <Icon
-          name="keyboard-arrow-right"
-          size={24}
-          color={isDark ? '#94A3B8' : '#64748B'}
-        />
-      ),
-    },
-    {
-      segment: `privacy`,
-      title: 'Privacy Policy',
-      icon: <Icon name="privacy-tip" size={24} color="#6B7280" />,
-      value: 'Did You have any questions? Click this.',
-      rightElement: (
-        <Icon
-          name="keyboard-arrow-right"
-          size={24}
-          color={isDark ? '#94A3B8' : '#64748B'}
-        />
-      ),
-    },
+    // ✅ 2. Your Orders Button - ACTIVE
     {
       segment: `YourOrders`,
       title: 'Your Orders',
       icon: <FeatherIcon name="shopping-bag" size={24} color="#10B981" />,
-      value: "'Orders History' will be there!",
+      value: 'Check your order history',
       rightElement: (
         <Icon
           name="keyboard-arrow-right"
@@ -311,46 +245,58 @@ export const SettingsScreen: React.FC = () => {
         />
       ),
     },
-    {
-      segment: `help`,
-      title: 'Help & Support',
-      icon: <Icon name="help-center" size={24} color="#8B5CF6" />,
-      value: 'Contact us',
-      rightElement: (
-        <Icon
-          name="keyboard-arrow-right"
-          size={24}
-          color={isDark ? '#94A3B8' : '#64748B'}
-        />
-      ),
-    },
-    {
-      segment: `about`,
-      title: 'About App',
-      icon: <Icon name="info" size={24} color="#06B6D4" />,
-      value: 'Version 2.4.1',
-      rightElement: (
-        <Icon
-          name="keyboard-arrow-right"
-          size={24}
-          color={isDark ? '#94A3B8' : '#64748B'}
-        />
-      ),
-    },
-    {
-      segment: ``,
-      title: 'Logout',
-      icon: <Icon name="logout" size={24} color="#F44336" />,
-      value: 'Sign out',
-      onPress: handleLogout,
-      rightElement: (
-        <Icon
-          name="keyboard-arrow-right"
-          size={24}
-          color={isDark ? '#94A3B8' : '#64748B'}
-        />
-      ),
-    },
+    // ❌ All other buttons are COMMENTED / REMOVED
+    // {
+    //   kind: 'header',
+    //   title: 'AI & Preferences',
+    // } as SettingsItemType,
+    // {
+    //   segment: `xai-nexmind/tizzygo`,
+    //   title: 'XAI-NexMind',
+    //   icon: <Sparkles />,
+    //   value: 'AI Assistant',
+    //   rightElement: <Icon name="keyboard-arrow-right" size={24} color={isDark ? '#94A3B8' : '#64748B'} />,
+    // },
+    // {
+    //   kind: 'header',
+    //   title: 'Security & Account',
+    // } as SettingsItemType,
+    // {
+    //   segment: `security`,
+    //   title: 'Security Settings',
+    //   icon: <Icon name="security" size={24} color="#EF4444" />,
+    //   value: 'Do have any changes. Please enter your issue here!',
+    //   rightElement: <Icon name="keyboard-arrow-right" size={24} color={isDark ? '#94A3B8' : '#64748B'} />,
+    // },
+    // {
+    //   segment: `privacy`,
+    //   title: 'Privacy Policy',
+    //   icon: <Icon name="privacy-tip" size={24} color="#6B7280" />,
+    //   value: 'Did You have any questions? Click this.',
+    //   rightElement: <Icon name="keyboard-arrow-right" size={24} color={isDark ? '#94A3B8' : '#64748B'} />,
+    // },
+    // {
+    //   segment: `help`,
+    //   title: 'Help & Support',
+    //   icon: <Icon name="help-center" size={24} color="#8B5CF6" />,
+    //   value: 'Contact us',
+    //   rightElement: <Icon name="keyboard-arrow-right" size={24} color={isDark ? '#94A3B8' : '#64748B'} />,
+    // },
+    // {
+    //   segment: `about`,
+    //   title: 'About App',
+    //   icon: <Icon name="info" size={24} color="#06B6D4" />,
+    //   value: 'Version 2.4.1',
+    //   rightElement: <Icon name="keyboard-arrow-right" size={24} color={isDark ? '#94A3B8' : '#64748B'} />,
+    // },
+    // {
+    //   segment: ``,
+    //   title: 'Logout',
+    //   icon: <Icon name="logout" size={24} color="#F44336" />,
+    //   value: 'Sign out',
+    //   onPress: handleLogout,
+    //   rightElement: <Icon name="keyboard-arrow-right" size={24} color={isDark ? '#94A3B8' : '#64748B'} />,
+    // },
   ];
 
   // ✅ Render profile image component
@@ -371,7 +317,6 @@ export const SettingsScreen: React.FC = () => {
       );
     }
 
-    // ✅ Agar image hai to dikhao
     if (previewImage && previewImage !== '' && !imageError) {
       return (
         <Image
@@ -385,7 +330,6 @@ export const SettingsScreen: React.FC = () => {
       );
     }
 
-    // ✅ Fallback - Lottie animation
     return (
       <View
         style={[
@@ -475,6 +419,7 @@ export const SettingsScreen: React.FC = () => {
           />
         ))}
 
+        {/* ✅ Push Notifications & Biometric - COMMENTED but kept */}
         <View
           style={[
             styles.toggleContainer,
@@ -484,6 +429,8 @@ export const SettingsScreen: React.FC = () => {
             },
           ]}
         >
+          {/* 
+          // ✅ PUSH NOTIFICATIONS - COMMENTED 
           <View style={styles.toggleItem}>
             <View style={styles.toggleLeft}>
               <View
@@ -515,17 +462,18 @@ export const SettingsScreen: React.FC = () => {
             </View>
             <Switch
               value={notifications}
-              onValueChange={setNotifications}
+              onValueChange={() => {}} // ❌ Do nothing
               trackColor={{
                 false: isDark ? '#374151' : '#E5E7EB',
                 true: '#10B981',
               }}
-              thumbColor={
-                notifications ? '#FFFFFF' : isDark ? '#94A3B8' : '#F1F5F9'
-              }
+              thumbColor={isDark ? '#94A3B8' : '#F1F5F9'}
             />
           </View>
+          */}
 
+          {/* 
+          // ✅ BIOMETRIC LOGIN - COMMENTED 
           <View style={styles.toggleItem}>
             <View style={styles.toggleLeft}>
               <View
@@ -557,18 +505,19 @@ export const SettingsScreen: React.FC = () => {
             </View>
             <Switch
               value={biometric}
-              onValueChange={handleBiometricToggle}
+              onValueChange={() => {}} // ❌ Do nothing
               trackColor={{
                 false: isDark ? '#374151' : '#E5E7EB',
                 true: '#10B981',
               }}
-              thumbColor={
-                biometric ? '#FFFFFF' : isDark ? '#94A3B8' : '#F1F5F9'
-              }
+              thumbColor={isDark ? '#94A3B8' : '#F1F5F9'}
             />
           </View>
+          */}
         </View>
 
+        {/* 
+        // ✅ APP INFO - COMMENTED 
         <View style={styles.appInfo}>
           <Text
             style={[
@@ -587,8 +536,10 @@ export const SettingsScreen: React.FC = () => {
             © 2024 XAI-NexMind. All rights reserved.
           </Text>
         </View>
+        */}
       </ScrollView>
 
+      {/* ✅ Theme Modal - ACTIVE (Dark Mode) */}
       <Modal
         visible={themeModal}
         transparent={true}

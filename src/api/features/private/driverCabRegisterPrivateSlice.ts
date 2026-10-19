@@ -10,7 +10,7 @@ import {
   RideTypesResponse,
   FilteredVehicleCategoriesResponse,
 } from '../../../core/types/CabTypes';
-import { API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
+import { TIZZYOS_API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
 import { API_ENDPOINTS } from '../../connections/snippet/apiEndpoints';
 import { getToken } from '../../connections/token/tokenSlice';
 
@@ -25,7 +25,7 @@ export const getRideTypes = async (): Promise<RideTypesResponse> => {
     console.log(`🔑 Token: ${token ? '✅ Present' : '❌ Missing'}`);
 
     const response = await fetch(
-      `${API_BASE_URL}${API_ENDPOINTS.GET_RIDE_TYPES}`,
+      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_RIDE_TYPES}`,
       {
         method: 'GET',
         headers: {
@@ -74,7 +74,7 @@ export const getRideVehicleCategories = async (
     const token = await getToken();
 
     // ✅ Build URL with query param if rideTypeCode provided
-    let url = `${API_BASE_URL}${API_ENDPOINTS.GET_VEHICLE_CATEGORIES}`;
+    let url = `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_VEHICLE_CATEGORIES}`;
     if (rideTypeCode) {
       url += `?rideTypeCode=${rideTypeCode}`;
     }
@@ -168,7 +168,7 @@ export const registerRideDriver = async (
   try {
     const token = await getToken();
     const response = await fetch(
-      `${API_BASE_URL}${API_ENDPOINTS.REGISTER_DRIVER}`,
+      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.REGISTER_DRIVER}`,
       {
         method: 'POST',
         headers: {
@@ -210,7 +210,7 @@ export const getRideDriver = async (): Promise<RideDriver | null> => {
   try {
     const token = await getToken();
     const response = await fetch(
-      `${API_BASE_URL}${API_ENDPOINTS.GET_DRIVER_STATUS}`,
+      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_DRIVER_STATUS}`,
       {
         method: 'GET',
         headers: {

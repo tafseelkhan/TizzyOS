@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { 
-  View, 
-  StyleSheet, 
-  Dimensions, 
+import {
+  View,
+  StyleSheet,
+  Dimensions,
   ActivityIndicator,
   TouchableOpacity,
   Image,
@@ -17,6 +17,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { getToken } from '../../../../api/connections/token/tokenSlice';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -67,7 +68,7 @@ export default function SellerProductsGrid() {
   const [confirmationText, setConfirmationText] = useState<string>('');
   const [showActionSheet, setShowActionSheet] = useState<boolean>(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  
+
   const navigation = useNavigation<NavigationProp>();
 
   // Calculate columns based on screen width
@@ -89,38 +90,60 @@ export default function SellerProductsGrid() {
     try {
       setLoading(true);
       setError(null);
-      
-      const token = await AsyncStorage.getItem('authToken');
-      
+
+      const token = await getToken();
+
       if (!token) {
         setError('Please login first');
         setLoading(false);
         return;
       }
 
-      const response = await fetch(
-        `http://10.194.138.121:5000/api/v0/seller/forms/categories/user`,
-        {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
+      const url =
+        'http://10.210.13.121:2000/api/v0/seller/forms/categories/user';
+      console.log('🔵 Fetching:', url);
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      console.log('🔵 Response status:', response.status);
 
       if (!response.ok) {
-        if (response.status === 401) {
-          await AsyncStorage.removeItem('authToken');
-          setError('Session expired. Please login again.');
-        } else {
-          throw new Error(`HTTP error! status: ${response.status}`);
+        // 🔥 Read the error body from backend
+        let errBody: any = null;
+        try {
+          errBody = await response.json();
+        } catch (_) {
+          // body not JSON
         }
-        return;
+
+        console.error('🔴 Backend error body:', errBody);
+
+        if (response.status === 401) {
+          setError('Session expired. Please login again.');
+          return;
+        }
+
+        if (response.status === 500) {
+          setError(
+            `Server error: ${errBody?.message || errBody?.error || 'Unknown'}`,
+          );
+          return;
+        }
+
+        throw new Error(
+          errBody?.message || errBody?.error || `HTTP ${response.status}`,
+        );
       }
 
       const data: ApiResponse = await response.json();
-      
+      console.log('🟢 Response data:', data);
+
       let productsData: Product[] = [];
       if (data.products && Array.isArray(data.products)) {
         productsData = data.products;
@@ -129,18 +152,17 @@ export default function SellerProductsGrid() {
       } else if (Array.isArray(data)) {
         productsData = data;
       }
-      
+
       setProducts(productsData);
-      
     } catch (err: any) {
-      console.error('Error fetching products:', err);
-      setError('Failed to load products. Please try again.');
+      console.error('🔴 Error fetching products:', err);
+      setError(err?.message || 'Failed to load products. Please try again.');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
-
+  
   // Handle pull to refresh
   const handleRefresh = (): void => {
     setRefreshing(true);
@@ -185,9 +207,9 @@ export default function SellerProductsGrid() {
 
   // Edit product - navigate to edit screen
   const handleEditProduct = (product: Product): void => {
-    navigation.navigate('EditProduct', { 
+    navigation.navigate('EditProduct', {
       productId: product.id || product._id || '',
-      product
+      product,
     });
   };
 
@@ -215,7 +237,7 @@ export default function SellerProductsGrid() {
 
     try {
       setDeleteLoading(productId);
-      
+
       const token = await AsyncStorage.getItem('authToken');
       if (!token) {
         Alert.alert('Error', 'Please login first');
@@ -223,15 +245,15 @@ export default function SellerProductsGrid() {
       }
 
       const response = await fetch(
-        `http://10.194.138.121:5000/api/v0/delete/product`,
+        `http://10.210.13.121:2000/api/v0/delete/product`,
         {
           method: 'DELETE',
           headers: {
-            'Authorization': `Bearer ${token}`,
+            Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ id: productId }),
-        }
+        },
       );
 
       if (!response.ok) {
@@ -240,17 +262,16 @@ export default function SellerProductsGrid() {
       }
 
       // Remove from local state
-      setProducts(prev => prev.filter(p => 
-        (p.id !== productId) && (p._id !== productId)
-      ));
+      setProducts(prev =>
+        prev.filter(p => p.id !== productId && p._id !== productId),
+      );
 
       // Close modal and reset
       setShowDeleteModal(false);
       setProductToDelete(null);
       setConfirmationText('');
-      
-      Alert.alert('Success', 'Product deleted successfully');
 
+      Alert.alert('Success', 'Product deleted successfully');
     } catch (err: any) {
       console.error('Delete product error:', err);
       Alert.alert('Error', err.message || 'Failed to delete product');
@@ -261,33 +282,33 @@ export default function SellerProductsGrid() {
 
   // Navigate to product details
   const handleProductPress = (product: Product): void => {
-    navigation.navigate('ProductDetails', { 
+    navigation.navigate('ProductDetails', {
       productId: product.id || product._id || '',
-      product
+      product,
     });
   };
 
   // Get product image
-  const FALLBACK = "https://placehold.co/500x500/000/fff?text=No+Image";
+  const FALLBACK = 'https://placehold.co/500x500/000/fff?text=No+Image';
 
   const getProductImage = (product: any) => {
     try {
       if (product.image) {
         return product.image;
       }
-      
+
       const v = product?.variants?.[0];
       if (v?.fields?.images?.[0]) {
         return v.fields.images[0];
       }
-      
+
       if (v?.images?.[0]) {
         return v.images[0];
       }
     } catch (err) {
-      console.log("Image Error:", err);
+      console.log('Image Error:', err);
     }
-    
+
     return FALLBACK;
   };
 
@@ -303,40 +324,38 @@ export default function SellerProductsGrid() {
       animationType="fade"
       onRequestClose={handleCancel}
     >
-      <TouchableOpacity 
-        style={styles.actionSheetOverlay} 
-        activeOpacity={1} 
+      <TouchableOpacity
+        style={styles.actionSheetOverlay}
+        activeOpacity={1}
         onPress={handleCancel}
       >
         <View style={styles.actionSheetContainer}>
-          <TouchableOpacity 
-            style={styles.actionSheetItem}
-            onPress={handleView}
-          >
+          <TouchableOpacity style={styles.actionSheetItem} onPress={handleView}>
             <Text style={styles.actionSheetText}>View</Text>
           </TouchableOpacity>
-          
+
           <View style={styles.actionSheetDivider} />
-          
-          <TouchableOpacity 
-            style={styles.actionSheetItem}
-            onPress={handleEdit}
-          >
+
+          <TouchableOpacity style={styles.actionSheetItem} onPress={handleEdit}>
             <Text style={styles.actionSheetText}>Edit</Text>
           </TouchableOpacity>
-          
+
           <View style={styles.actionSheetDivider} />
-          
-          <TouchableOpacity 
+
+          <TouchableOpacity
             style={[styles.actionSheetItem, styles.actionSheetDelete]}
             onPress={handleDelete}
           >
-            <Text style={[styles.actionSheetText, styles.actionSheetDeleteText]}>Delete</Text>
+            <Text
+              style={[styles.actionSheetText, styles.actionSheetDeleteText]}
+            >
+              Delete
+            </Text>
           </TouchableOpacity>
-          
+
           <View style={styles.actionSheetDivider} />
-          
-          <TouchableOpacity 
+
+          <TouchableOpacity
             style={styles.actionSheetItem}
             onPress={handleCancel}
           >
@@ -348,7 +367,13 @@ export default function SellerProductsGrid() {
   );
 
   // Render each product item with long press
-  const renderProductItem = ({ item, index }: { item: Product; index: number }) => {
+  const renderProductItem = ({
+    item,
+    index,
+  }: {
+    item: Product;
+    index: number;
+  }) => {
     const columns = numColumns();
     const gridItemWidth = getGridItemWidth();
     const isLastInRow = (index + 1) % columns === 0;
@@ -371,20 +396,22 @@ export default function SellerProductsGrid() {
         ]}
       >
         <View style={styles.imageContainer}>
-          <Image 
-            source={{ uri: getProductImage(item) }} 
+          <Image
+            source={{ uri: getProductImage(item) }}
             style={styles.productImage}
             resizeMode="cover"
-            onError={(e) => console.log('Image load error:', e.nativeEvent.error)}
+            onError={e => console.log('Image load error:', e.nativeEvent.error)}
           />
-          
+
           {/* Variant Count Badge */}
           {item.variants && item.variants.length > 1 && (
             <View style={styles.variantBadge}>
-              <Text style={styles.variantText}>+{item.variants.length - 1}</Text>
+              <Text style={styles.variantText}>
+                +{item.variants.length - 1}
+              </Text>
             </View>
           )}
-          
+
           {/* Loading indicator for delete */}
           {deleteLoading === productId && (
             <View style={styles.loadingOverlay}>
@@ -411,19 +438,20 @@ export default function SellerProductsGrid() {
       <View style={styles.modalOverlay}>
         <View style={styles.modalContent}>
           <Text style={styles.modalTitle}>Delete Product</Text>
-          
+
           <Text style={styles.modalText}>
             Are you sure you want to delete "{productToDelete?.title}"?
           </Text>
-          
+
           <Text style={styles.modalWarning}>
-            This action cannot be undone. All images and videos will be permanently deleted.
+            This action cannot be undone. All images and videos will be
+            permanently deleted.
           </Text>
-          
+
           <Text style={styles.confirmationLabel}>
             Type "delete" to confirm:
           </Text>
-          
+
           <TextInput
             style={styles.confirmationInput}
             value={confirmationText}
@@ -432,7 +460,7 @@ export default function SellerProductsGrid() {
             autoCapitalize="none"
             placeholderTextColor="#999"
           />
-          
+
           <View style={styles.modalButtons}>
             <TouchableOpacity
               style={[styles.modalButton, styles.cancelButton]}
@@ -441,20 +469,31 @@ export default function SellerProductsGrid() {
                 setProductToDelete(null);
                 setConfirmationText('');
               }}
-              disabled={deleteLoading === (productToDelete?.id || productToDelete?._id)}
+              disabled={
+                deleteLoading === (productToDelete?.id || productToDelete?._id)
+              }
             >
               <Text style={styles.cancelButtonText}>Cancel</Text>
             </TouchableOpacity>
-            
+
             <TouchableOpacity
-              style={[styles.modalButton, styles.deleteButton, 
-                (confirmationText.toLowerCase() !== 'delete' || deleteLoading === (productToDelete?.id || productToDelete?._id)) 
-                ? styles.disabledButton : null
+              style={[
+                styles.modalButton,
+                styles.deleteButton,
+                confirmationText.toLowerCase() !== 'delete' ||
+                deleteLoading === (productToDelete?.id || productToDelete?._id)
+                  ? styles.disabledButton
+                  : null,
               ]}
               onPress={deleteProduct}
-              disabled={deleteLoading === (productToDelete?.id || productToDelete?._id) || confirmationText.toLowerCase() !== 'delete'}
+              disabled={
+                deleteLoading ===
+                  (productToDelete?.id || productToDelete?._id) ||
+                confirmationText.toLowerCase() !== 'delete'
+              }
             >
-              {deleteLoading === (productToDelete?.id || productToDelete?._id) ? (
+              {deleteLoading ===
+              (productToDelete?.id || productToDelete?._id) ? (
                 <ActivityIndicator size="small" color="#ffffff" />
               ) : (
                 <Text style={styles.deleteButtonText}>Delete</Text>
@@ -488,8 +527,8 @@ export default function SellerProductsGrid() {
           <View style={styles.errorContainer}>
             <Text style={styles.errorEmoji}>😔</Text>
             <Text style={styles.errorText}>{error}</Text>
-            <TouchableOpacity 
-              style={styles.retryButton} 
+            <TouchableOpacity
+              style={styles.retryButton}
               onPress={handleRefresh}
             >
               <Text style={styles.retryButtonText}>Try Again</Text>
@@ -504,11 +543,13 @@ export default function SellerProductsGrid() {
     <SafeAreaView style={styles.safeArea}>
       {renderDeleteModal()}
       {renderActionSheet()}
-      
+
       <FlatList
         data={products}
         renderItem={renderProductItem}
-        keyExtractor={(item, index) => item.id || item._id || `product-${index}`}
+        keyExtractor={(item, index) =>
+          item.id || item._id || `product-${index}`
+        }
         numColumns={numColumns()}
         refreshing={refreshing}
         onRefresh={handleRefresh}
@@ -521,8 +562,8 @@ export default function SellerProductsGrid() {
             <Text style={styles.emptySubtitle}>
               Add your first product to get started
             </Text>
-            <TouchableOpacity 
-              style={styles.addButton} 
+            <TouchableOpacity
+              style={styles.addButton}
               onPress={() => navigation.navigate('ProductListing')}
             >
               <Text style={styles.addButtonText}>Add Product</Text>
@@ -539,18 +580,18 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  
+
   centeredContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
   },
-  
+
   loaderContainer: {
     alignItems: 'center',
   },
-  
+
   loadingText: {
     marginTop: 16,
     fontSize: 16,
@@ -564,17 +605,17 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  
+
   errorContainer: {
     alignItems: 'center',
     padding: 24,
   },
-  
+
   errorEmoji: {
     fontSize: 48,
     marginBottom: 16,
   },
-  
+
   errorText: {
     fontSize: 16,
     color: '#dc3545',
@@ -589,7 +630,7 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  
+
   retryButton: {
     paddingHorizontal: 32,
     paddingVertical: 12,
@@ -601,7 +642,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
   },
-  
+
   retryButtonText: {
     color: 'white',
     fontSize: 16,
@@ -615,12 +656,12 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  
+
   listContainer: {
     padding: 4,
     paddingBottom: 4,
   },
-  
+
   productItem: {
     borderRadius: 8,
     overflow: 'hidden',
@@ -631,19 +672,19 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 2,
   },
-  
+
   imageContainer: {
     width: '100%',
     aspectRatio: 1,
     position: 'relative',
   },
-  
+
   productImage: {
     width: '100%',
     height: '100%',
     backgroundColor: '#f1f3f5',
   },
-  
+
   variantBadge: {
     position: 'absolute',
     top: 8,
@@ -656,7 +697,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  
+
   variantText: {
     color: 'white',
     fontSize: 11,
@@ -670,7 +711,7 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  
+
   loadingOverlay: {
     position: 'absolute',
     top: 0,
@@ -681,7 +722,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  
+
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -689,12 +730,12 @@ const styles = StyleSheet.create({
     paddingTop: 80,
     paddingHorizontal: 24,
   },
-  
+
   emptyEmoji: {
     fontSize: 64,
     marginBottom: 24,
   },
-  
+
   emptyTitle: {
     fontSize: 24,
     fontWeight: '700',
@@ -710,7 +751,7 @@ const styles = StyleSheet.create({
     }),
     textAlign: 'center',
   },
-  
+
   emptySubtitle: {
     fontSize: 16,
     color: '#6c757d',
@@ -725,7 +766,7 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  
+
   addButton: {
     paddingHorizontal: 40,
     paddingVertical: 16,
@@ -737,7 +778,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 5,
   },
-  
+
   addButtonText: {
     color: 'white',
     fontSize: 18,
@@ -751,7 +792,7 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  
+
   // Action Sheet Styles
   actionSheetOverlay: {
     flex: 1,
@@ -794,7 +835,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#E5E5EA',
     marginHorizontal: 8,
   },
-  
+
   // Modal Styles
   modalOverlay: {
     flex: 1,
@@ -803,7 +844,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
   },
-  
+
   modalContent: {
     backgroundColor: 'white',
     borderRadius: 16,
@@ -816,7 +857,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 10,
   },
-  
+
   modalTitle: {
     fontSize: 22,
     fontWeight: '700',
@@ -832,7 +873,7 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  
+
   modalText: {
     fontSize: 16,
     color: '#333',
@@ -846,7 +887,7 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  
+
   modalWarning: {
     fontSize: 14,
     color: '#dc3545',
@@ -861,7 +902,7 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  
+
   confirmationLabel: {
     fontSize: 14,
     color: '#666',
@@ -875,7 +916,7 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  
+
   confirmationInput: {
     borderWidth: 1,
     borderColor: '#ddd',
@@ -893,13 +934,13 @@ const styles = StyleSheet.create({
     }),
     backgroundColor: '#f9f9f9',
   },
-  
+
   modalButtons: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 12,
   },
-  
+
   modalButton: {
     flex: 1,
     paddingVertical: 14,
@@ -907,13 +948,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  
+
   cancelButton: {
     backgroundColor: '#f8f9fa',
     borderWidth: 1,
     borderColor: '#dee2e6',
   },
-  
+
   cancelButtonText: {
     color: '#6c757d',
     fontSize: 16,
@@ -927,11 +968,11 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  
+
   deleteButton: {
     backgroundColor: '#dc3545',
   },
-  
+
   deleteButtonText: {
     color: 'white',
     fontSize: 16,
@@ -945,7 +986,7 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  
+
   disabledButton: {
     backgroundColor: '#e9ecef',
     opacity: 0.7,

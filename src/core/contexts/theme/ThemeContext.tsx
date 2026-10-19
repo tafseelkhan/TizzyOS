@@ -35,7 +35,7 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 // API URL
-const API_URL = 'http://10.194.138.121:5000';
+const API_URL = 'http://10.210.13.121:2000';
 
 // ✅ FIX: Remove setAndroidNavigationBar - use StatusBar component instead
 // We'll handle status bar via component props in render

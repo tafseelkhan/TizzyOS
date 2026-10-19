@@ -1,7 +1,7 @@
 // api/features/private/splashPrivateSlice.ts
 import { getToken, removeToken } from '../../connections/token/tokenSlice';
 import { API_ENDPOINTS } from '../../connections/snippet/apiEndpoints';
-import { API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
+import { TIZZYGO_API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
 
 // Interface for token verification response
 export interface VerifyTokenResponse {
@@ -35,7 +35,7 @@ export const splashApi = {
       }
 
       const response = await fetch(
-        `${API_BASE_URL}${API_ENDPOINTS.VERIFY_USER_ROUTE}`,
+        `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.VERIFY_USER_ROUTE}`,
         {
           method: 'GET',
           headers: {
