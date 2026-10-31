@@ -109,21 +109,6 @@ async function fetchHandler(
   url: string,
   options: FetchHandlerOptions,
 ): Promise<any> {
-  console.log('📡 [fetchHandler] ====================');
-  console.log('📡 [fetchHandler] URL:', url);
-  console.log('📡 [fetchHandler] Method:', options.method);
-  console.log(
-    '📡 [fetchHandler] Headers:',
-    JSON.stringify(options.headers, null, 2),
-  );
-
-  if (options.body) {
-    console.log(
-      '📡 [fetchHandler] Body:',
-      JSON.stringify(options.body, null, 2),
-    );
-  }
-
   try {
     const config: any = {
       method: options.method,
@@ -135,31 +120,13 @@ async function fetchHandler(
       config.data = options.body;
     }
 
-    console.log('📡 [fetchHandler] Sending request...');
     const response: AxiosResponse = await axios(config);
-
-    console.log('✅ [fetchHandler] Response Status:', response.status);
-    console.log(
-      '✅ [fetchHandler] Response Data:',
-      JSON.stringify(response.data, null, 2),
-    );
-    console.log('📡 [fetchHandler] ====================');
 
     return response.data;
   } catch (error: any) {
-    console.error('❌ [fetchHandler] Error:', error);
-
     if (axios.isAxiosError(error)) {
       const axiosError = error as AxiosError;
       if (axiosError.response) {
-        console.error(
-          '❌ [fetchHandler] Response Error Status:',
-          axiosError.response.status,
-        );
-        console.error(
-          '❌ [fetchHandler] Response Error Data:',
-          axiosError.response.data,
-        );
         throw (
           axiosError.response.data || {
             success: false,
@@ -167,20 +134,14 @@ async function fetchHandler(
           }
         );
       } else if (axiosError.request) {
-        console.error('❌ [fetchHandler] No response from server');
         throw {
           success: false,
           message: 'Network error - No response from server',
         };
       } else {
-        console.error(
-          '❌ [fetchHandler] Request setup error:',
-          axiosError.message,
-        );
         throw { success: false, message: axiosError.message };
       }
     }
-    console.error('❌ [fetchHandler] Unknown error:', error);
     throw error;
   }
 }
@@ -197,8 +158,6 @@ export const driverStatusApi = {
   updateOnlineStatus: async (
     isOnline: boolean,
   ): Promise<UpdateOnlineStatusResponse> => {
-    console.log('🟢 [API] updateOnlineStatus ====================');
-
     const token: string | null = await getToken();
     if (!token) {
       throw { success: false, message: 'No authentication token found' };
@@ -220,7 +179,6 @@ export const driverStatusApi = {
 
       return response;
     } catch (error: any) {
-      console.error('❌ [API] updateOnlineStatus Error:', error);
       throw error;
     }
   },
@@ -230,8 +188,6 @@ export const driverStatusApi = {
    * GET /driver/status
    */
   getDriverStatus: async (): Promise<DriverStatusResponse> => {
-    console.log('📊 [API] getDriverStatus ====================');
-
     const token: string | null = await getToken();
     if (!token) {
       throw { success: false, message: 'No authentication token found' };
@@ -251,7 +207,6 @@ export const driverStatusApi = {
 
       return response;
     } catch (error: any) {
-      console.error('❌ [API] getDriverStatus Error:', error);
       throw error;
     }
   },
@@ -263,8 +218,6 @@ export const driverStatusApi = {
   toggleDriverStatus: async (
     socketId: string | null,
   ): Promise<ToggleStatusResponse> => {
-    console.log('🔄 [API] toggleDriverStatus ====================');
-
     const token: string | null = await getToken();
     if (!token) {
       throw { success: false, message: 'No authentication token found' };
@@ -286,7 +239,6 @@ export const driverStatusApi = {
 
       return response;
     } catch (error: any) {
-      console.error('❌ [API] toggleDriverStatus Error:', error);
       throw error;
     }
   },
@@ -298,9 +250,6 @@ export const driverStatusApi = {
   updateDriverLocation: async (
     locationData: LocationUpdateRequest,
   ): Promise<LocationUpdateResponse> => {
-    console.log('📍 [API] updateDriverLocation ====================');
-    console.log('📍 [API] Location Data:', locationData);
-
     const token: string | null = await getToken();
     if (!token) {
       throw { success: false, message: 'No authentication token found' };
@@ -322,7 +271,6 @@ export const driverStatusApi = {
 
       return response;
     } catch (error: any) {
-      console.error('❌ [API] updateDriverLocation Error:', error);
       throw error;
     }
   },

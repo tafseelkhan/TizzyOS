@@ -61,7 +61,7 @@ type VehicleCategory = 'Car' | 'Bike' | 'Scooter' | 'Auto' | 'Tempo';
 type IdentityType = 'Aadhaar' | 'VoterID' | 'Passport' | 'PAN';
 type ShippingType = 'TRUCK' | 'RIDER';
 
-const TIZZYOS_API_BASE_URL = 'http://10.210.13.121:2000';
+const TIZZYOS_API_BASE_URL = 'http://10.172.218.121:2000';
 
 const getLocationOnce = (): Promise<{ lat: number; lng: number }> =>
   new Promise((res, rej) => {

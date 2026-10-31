@@ -59,32 +59,23 @@ class SocketService {
   }
 
   async connect(): Promise<void> {
-    console.log('🔌 [SocketService] connect() called, state:', this.state);
-
     if (this.socket?.connected) {
-      console.log(
-        '🔌 [SocketService] ✅ Already connected, ID:',
-        this.socket.id,
-      );
       this.state = SocketState.CONNECTED;
       this.isConnected = true;
       return;
     }
 
     if (this.socket && !this.socket.connected) {
-      console.log('🔌 [SocketService] 🔄 Reconnecting...');
       this.state = SocketState.CONNECTING;
       this.socket.connect();
       return;
     }
 
-    console.log('🔌 [SocketService] 🆕 Creating new connection...');
     this.state = SocketState.CONNECTING;
 
     try {
       const token = await getToken();
       if (!token) {
-        console.warn('⚠️ [SocketService] No token found');
         this.state = SocketState.ERROR;
         return;
       }
@@ -103,7 +94,6 @@ class SocketService {
       this.setupCoreListeners();
       this.socket.connect();
     } catch (error) {
-      console.error('❌ [SocketService] Connection failed:', error);
       this.state = SocketState.ERROR;
       throw error;
     }
@@ -112,20 +102,13 @@ class SocketService {
   waitForConnection(
     timeout: number = CONFIG.SOCKET_TIMEOUT,
   ): Promise<string | null> {
-    console.log(
-      '⏳ [SocketService] waitForConnection() called, state:',
-      this.state,
-    );
-
     if (this.socket?.connected && this.socket.id) {
-      console.log('✅ [SocketService] Already connected, ID:', this.socket.id);
       this.state = SocketState.CONNECTED;
       this.isConnected = true;
       return Promise.resolve(this.socket.id);
     }
 
     if (this.connectionPromise) {
-      console.log('⏳ [SocketService] Already waiting for connection...');
       return this.connectionPromise;
     }
 
@@ -138,7 +121,6 @@ class SocketService {
       }
 
       this.connectionTimeoutId = setTimeout(() => {
-        console.error('⏰ [SocketService] Connection timeout!');
         this.connectionPromise = null;
         this.connectionResolve = null;
         this.connectionReject = null;
@@ -149,16 +131,9 @@ class SocketService {
     });
 
     if (this.socket && !this.socket.connected) {
-      console.log(
-        '🔄 [SocketService] Socket exists but not connected, triggering connect...',
-      );
       this.socket.connect();
     } else if (!this.socket) {
-      console.log(
-        '🆕 [SocketService] Socket is null, creating new connection...',
-      );
       this.connect().catch(err => {
-        console.error('❌ [SocketService] Connection failed:', err);
         if (this.connectionReject) {
           this.connectionReject(err);
         }
@@ -171,27 +146,16 @@ class SocketService {
   waitForAuthentication(
     timeout: number = CONFIG.SOCKET_TIMEOUT,
   ): Promise<boolean> {
-    console.log(
-      '⏳ [SocketService] waitForAuthentication() called, state:',
-      this.state,
-    );
-
     if (
       this.state === SocketState.AUTHENTICATED ||
       this.state === SocketState.READY
     ) {
-      console.log('✅ [SocketService] Already authenticated');
       return Promise.resolve(true);
     }
 
     if (this.authPromise) {
-      console.log(
-        '⏳ [SocketService] Auth already in progress, sharing existing promise...',
-      );
       return this.authPromise;
     }
-
-    console.log('🔐 [SocketService] Starting authentication...');
 
     this.authPromise = new Promise((resolve, reject) => {
       this.authResolve = resolve;
@@ -202,7 +166,6 @@ class SocketService {
       }
 
       this.authTimeoutId = setTimeout(() => {
-        console.error('⏰ [SocketService] Authentication timeout!');
         this.authPromise = null;
         this.authResolve = null;
         this.authReject = null;
@@ -213,7 +176,6 @@ class SocketService {
     });
 
     if (!this.isConnected) {
-      console.log('⏳ [SocketService] Waiting for connection before auth...');
       this.waitForConnection(timeout)
         .then(() => {
           if (
@@ -240,8 +202,6 @@ class SocketService {
     authenticated: boolean;
     state: SocketState;
   }> {
-    console.log('⏳ [SocketService] waitForReady() called, timeout:', timeout);
-
     try {
       const socketId = await this.waitForConnection(timeout);
       if (!socketId) {
@@ -255,7 +215,6 @@ class SocketService {
 
       return { socketId, authenticated, state: this.state };
     } catch (error) {
-      console.error('[SocketService] waitForReady error:', error);
       return { socketId: null, authenticated: false, state: SocketState.ERROR };
     }
   }
@@ -265,7 +224,6 @@ class SocketService {
     this.heartbeatInterval = setInterval(() => {
       if (this.socket?.connected) {
         this.socket.emit('ping');
-        console.log('💓 [SocketService] Heartbeat sent');
       }
     }, 15000);
   }
@@ -280,11 +238,7 @@ class SocketService {
   private setupCoreListeners(): void {
     if (!this.socket) return;
 
-    console.log('📡 [SocketService] Setting up core event listeners...');
-
     this.socket.on('connect', () => {
-      console.log('✅ [SocketService] SOCKET CONNECTED!');
-      console.log('📡 [SocketService] Socket ID:', this.socket?.id);
       this.state = SocketState.CONNECTED;
       this.isConnected = true;
       this.reconnectAttempts = 0;
@@ -292,7 +246,6 @@ class SocketService {
       this.startHeartbeat();
 
       if (this.connectionResolve) {
-        console.log('✅ [SocketService] Resolving connection promise...');
         this.connectionResolve(this.socket?.id || null);
         this.connectionPromise = null;
         this.connectionResolve = null;
@@ -313,7 +266,6 @@ class SocketService {
     });
 
     this.socket.on('disconnect', (reason: string) => {
-      console.log('❌ [SocketService] SOCKET DISCONNECTED:', reason);
       this.state = SocketState.DISCONNECTED;
       this.isConnected = false;
       this.stopHeartbeat();
@@ -332,7 +284,6 @@ class SocketService {
     });
 
     this.socket.on('reconnect', (attempt: number) => {
-      console.log('🔄 [SocketService] RECONNECTED:', attempt);
       this.state = SocketState.CONNECTED;
       this.isConnected = true;
       this.authRetryCount = 0;
@@ -347,17 +298,14 @@ class SocketService {
 
     this.socket.on('reconnect_attempt', (attempt: number) => {
       this.reconnectAttempts = attempt;
-      console.log('🔄 [SocketService] Reconnect attempt:', attempt);
       this.state = SocketState.CONNECTING;
     });
 
     this.socket.on('reconnect_failed', () => {
-      console.error('❌ [SocketService] RECONNECT FAILED');
       this.state = SocketState.ERROR;
     });
 
     this.socket.on('connect_error', (error: Error) => {
-      console.error('❌ [SocketService] Connection error:', error.message);
       this.state = SocketState.ERROR;
 
       if (this.connectionReject) {
@@ -376,12 +324,10 @@ class SocketService {
     // 🔥 FIX: AUTH EVENTS - Listen for both 'authenticated' and 'auth-success'
     // ============================================================
     this.socket.on('authenticated', (data: any) => {
-      console.log('🔐 [SocketService] AUTHENTICATED (event: authenticated)');
       this.state = SocketState.AUTHENTICATED;
       this.authRetryCount = 0;
 
       if (this.authResolve) {
-        console.log('✅ [SocketService] Resolving auth promise...');
         this.authResolve(true);
         this.authPromise = null;
         this.authResolve = null;
@@ -395,12 +341,10 @@ class SocketService {
 
     // 🔥 FIX: Also listen for 'auth-success' event (backend emits this)
     this.socket.on('auth-success', (data: any) => {
-      console.log('🔐 [SocketService] AUTHENTICATED (event: auth-success)');
       this.state = SocketState.AUTHENTICATED;
       this.authRetryCount = 0;
 
       if (this.authResolve) {
-        console.log('✅ [SocketService] Resolving auth promise...');
         this.authResolve(true);
         this.authPromise = null;
         this.authResolve = null;
@@ -413,7 +357,6 @@ class SocketService {
     });
 
     this.socket.on('auth-error', (data: any) => {
-      console.error('🚫 [SocketService] AUTH ERROR:', data);
       this.state = SocketState.ERROR;
       this.authRetryCount++;
 
@@ -429,9 +372,6 @@ class SocketService {
       }
 
       if (this.authRetryCount < this.maxAuthRetries && this.isConnected) {
-        console.log(
-          `🔄 [SocketService] Retrying authentication (${this.authRetryCount}/${this.maxAuthRetries})...`,
-        );
         setTimeout(() => {
           if (this.isConnected && this.state !== SocketState.AUTHENTICATED) {
             this.authenticate();
@@ -444,12 +384,7 @@ class SocketService {
     // ERROR HANDLER
     // ============================================================
     this.socket.on('error', (error: any) => {
-      console.warn('⚠️ [SocketService] SOCKET ERROR:', error);
-
       if (error?.message === 'Request is no longer pending') {
-        console.log(
-          'ℹ️ [SocketService] Request already processed, ignoring error',
-        );
         return;
       }
 
@@ -458,7 +393,6 @@ class SocketService {
         error?.message?.includes('already processed') ||
         error?.message === 'Failed to process response'
       ) {
-        console.log('ℹ️ [SocketService] Request already processed, ignoring');
         return;
       }
 
@@ -483,8 +417,6 @@ class SocketService {
       if (skipEvents.includes(event)) return;
       this.emitEvent(event, ...args);
     });
-
-    console.log('📡 [SocketService] ✅ Core listeners registered');
   }
 
   private registerDriver(): void {
@@ -496,7 +428,6 @@ class SocketService {
     if (token) {
       const userId = this.extractUserIdFromToken(token);
       if (userId && this.socket?.connected) {
-        console.log('📤 [SocketService] Emitting driver:register for:', userId);
         this.socket.emit('driver:register', { userId });
       }
     }
@@ -518,19 +449,16 @@ class SocketService {
       this.state === SocketState.AUTHENTICATED ||
       this.state === SocketState.READY
     ) {
-      console.log('🔐 [SocketService] Already authenticated');
       return;
     }
 
     if (this.state === SocketState.AUTHENTICATING) {
-      console.log('⏳ [SocketService] Authentication already in progress');
       return;
     }
 
     try {
       const token = await getToken();
       if (!token) {
-        console.error('❌ [SocketService] No token for authentication');
         if (this.authReject) {
           this.authReject(new Error('No token available'));
         }
@@ -541,12 +469,6 @@ class SocketService {
       const payload = this.decodeToken(token);
       const userType = payload?.userType || payload?.role || 'driver';
 
-      console.log(
-        '🔐 [SocketService] Authenticating as:',
-        userType,
-        'userId:',
-        userId,
-      );
       this.state = SocketState.AUTHENTICATING;
 
       if (this.socket?.connected) {
@@ -557,20 +479,14 @@ class SocketService {
           userId: userId,
           token: token,
         });
-        console.log(
-          '🔐 [SocketService] ✅ Authentication sent on event:',
-          authEvent,
-        );
         this.authEmitTime = Date.now();
       } else {
-        console.error('❌ [SocketService] Socket not connected for auth');
         this.state = SocketState.ERROR;
         if (this.authReject) {
           this.authReject(new Error('Socket not connected'));
         }
       }
     } catch (error) {
-      console.error('❌ [SocketService] Auth failed:', error);
       this.state = SocketState.ERROR;
       if (this.authReject) {
         this.authReject(error as Error);
@@ -593,20 +509,12 @@ class SocketService {
     status: 'accepted' | 'rejected',
     driverId: string,
   ): void {
-    console.log('📤 [SocketService] driverResponse() called:', {
-      requestId,
-      status,
-      driverId,
-    });
-
     if (this.isProcessing) {
-      console.warn('⚠️ [SocketService] Already processing, ignoring duplicate');
       return;
     }
 
     const key = `${requestId}-${status}`;
     if (this.processedRequests.has(key)) {
-      console.warn('⚠️ [SocketService] Request already processed:', key);
       return;
     }
 
@@ -633,12 +541,8 @@ class SocketService {
 
   emit<T = any>(event: string, data?: T): void {
     if (!this.socket?.connected) {
-      console.warn(
-        `⚠️ [SocketService] Socket not connected, cannot emit: ${event}`,
-      );
       return;
     }
-    console.log(`📤 [SocketService] Emitting: ${event}`);
     this.socket.emit(event, data);
   }
 
@@ -684,7 +588,6 @@ class SocketService {
   }
 
   disconnect(): void {
-    console.log('🔌 [SocketService] 🔴 INTENTIONAL DISCONNECT');
     this.stopHeartbeat();
 
     if (this.authResolve) {
@@ -719,11 +622,9 @@ class SocketService {
       }
     }
     this.listeners.clear();
-    console.log('🔌 [SocketService] ✅ Socket intentionally disconnected');
   }
 
   cleanup(): void {
-    console.log('🧹 [SocketService] 🧹 FULL CLEANUP');
     this.stopHeartbeat();
 
     if (this.authResolve) {
@@ -758,7 +659,6 @@ class SocketService {
         this.connectionTimeoutId = null;
       }
     }
-    console.log('🧹 [SocketService] ✅ Cleanup complete');
   }
 }
 

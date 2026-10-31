@@ -100,7 +100,7 @@ export default function SellerProductsGrid() {
       }
 
       const url =
-        'http://10.210.13.121:2000/api/v0/seller/forms/categories/user';
+        'http://10.172.218.121:2000/api/v0/seller/forms/categories/user';
       console.log('🔵 Fetching:', url);
 
       const response = await fetch(url, {
@@ -245,7 +245,7 @@ export default function SellerProductsGrid() {
       }
 
       const response = await fetch(
-        `http://10.210.13.121:2000/api/v0/delete/product`,
+        `http://10.172.218.121:2000/api/v0/delete/product`,
         {
           method: 'DELETE',
           headers: {

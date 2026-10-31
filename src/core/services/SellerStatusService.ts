@@ -1,7 +1,7 @@
 // utils/api/v0/seller/status/seller.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const TIZZYOS_API_BASE_URL = 'http://10.210.13.121:2000';
+const TIZZYOS_API_BASE_URL = 'http://10.172.218.121:2000';
 
 export interface SellerStatusResponse {
   success: boolean;

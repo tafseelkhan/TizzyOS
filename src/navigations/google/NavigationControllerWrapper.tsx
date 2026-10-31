@@ -6,9 +6,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Text,
-  Dimensions,
   Platform,
-  Alert,
   TouchableOpacity,
   AppState,
   PermissionsAndroid,
@@ -26,8 +24,6 @@ import {
   RouteStatus,
 } from '@googlemaps/react-native-navigation-sdk';
 import { Booking, LiveTrackingData } from '../../core/types/RideTypes';
-
-const { height } = Dimensions.get('window');
 
 type NavigationLifecycle =
   | 'idle'
@@ -49,10 +45,21 @@ type NavigationLifecycle =
   | 'error'
   | 'destroyed';
 
+export interface DriverRawLocation {
+  lat: number;
+  lng: number;
+  timestamp: number;
+}
+
 interface NavigationControllerWrapperProps {
   booking: Booking;
   liveTracking: LiveTrackingData;
-  target: 'pickup' | 'destination';
+  /**
+   * Confirmed navigation target. `null` disables route setup and QR
+   * eligibility — used when the booking status is unknown or not in a
+   * ride phase.
+   */
+  target: 'pickup' | 'destination' | null;
   onArrival: () => void;
   onRerouting: () => void;
   onNavigationStateUpdate: (data: {
@@ -60,18 +67,35 @@ interface NavigationControllerWrapperProps {
     eta: number;
     instruction: string;
     maneuver?: string;
+    /** Confirmed route target the distance belongs to. */
+    target: 'pickup' | 'destination';
   }) => void;
   onReady: () => void;
   onDriverLocationUpdate?: (location: { lat: number; lng: number }) => void;
+  onDriverRawLocationUpdate?: (location: DriverRawLocation) => void;
 }
+
+// GPS jump filter constants
+const GPS_JUMP_MAX_DISTANCE_METERS = 500;
+const GPS_JUMP_MAX_TIME_MS = 2000;
+const MAX_PLAUSIBLE_SPEED_MPS = 60; // 216 km/h — generous for ride-hailing
+const LOCATION_MAX_AGE_MS = 20000;
+
+// Route-distance settling window after setDestinations + startGuidance.
+// NOTE: this delay alone does NOT prove callback-route attribution —
+// SDK 0.18.0 provides no route id in `setOnRemainingTimeOrDistanceChanged`.
+// It is only one of several guards (see target change invalidation +
+// routeTransitionSeqRef + confirmedRouteTargetRef tagging).
+const ROUTE_DISTANCE_SETTLE_MS = 1500;
 
 const checkLocationPermission = async (): Promise<boolean> => {
   if (Platform.OS === 'android') {
     try {
-      const granted = await PermissionsAndroid.check(
+      const fineGranted = await PermissionsAndroid.check(
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
       );
-      return granted;
+      console.log('[Navigation] 🔐 Fine location:', fineGranted);
+      return fineGranted;
     } catch (error) {
       console.warn('[Navigation] Permission check error:', error);
       return false;
@@ -115,6 +139,32 @@ const openSettings = () => {
   Linking.openSettings();
 };
 
+const isValidLat = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isFinite(v) && v >= -90 && v <= 90;
+
+const isValidLng = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isFinite(v) && v >= -180 && v <= 180;
+
+const haversineDistanceMeters = (
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+): number => {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
 export const NavigationControllerWrapper: React.FC<
   NavigationControllerWrapperProps
 > = ({
@@ -126,10 +176,8 @@ export const NavigationControllerWrapper: React.FC<
   onNavigationStateUpdate,
   onReady,
   onDriverLocationUpdate,
+  onDriverRawLocationUpdate,
 }) => {
-  // ============================================================
-  // HOOKS & REFS
-  // ============================================================
   const {
     navigationController,
     removeAllListeners,
@@ -137,21 +185,27 @@ export const NavigationControllerWrapper: React.FC<
     setOnRouteChanged,
     setOnNavigationReady,
     setOnLocationChanged,
+    setOnRemainingTimeOrDistanceChanged,
   } = useNavigation();
 
-  // ✅ FIX: Store navigationController in ref for stable access
   const navigationControllerRef = useRef(navigationController);
   useEffect(() => {
     navigationControllerRef.current = navigationController;
   }, [navigationController]);
 
-  // ✅ FIX: Store removeAllListeners in ref
   const removeAllListenersRef = useRef(removeAllListeners);
   useEffect(() => {
     removeAllListenersRef.current = removeAllListeners;
   }, [removeAllListeners]);
 
-  // ✅ FIX: Store callback setters in refs
+  const setOnRemainingTimeOrDistanceChangedRef = useRef(
+    setOnRemainingTimeOrDistanceChanged,
+  );
+  useEffect(() => {
+    setOnRemainingTimeOrDistanceChangedRef.current =
+      setOnRemainingTimeOrDistanceChanged;
+  }, [setOnRemainingTimeOrDistanceChanged]);
+
   const setOnArrivalRef = useRef(setOnArrival);
   const setOnRouteChangedRef = useRef(setOnRouteChanged);
   const setOnNavigationReadyRef = useRef(setOnNavigationReady);
@@ -169,11 +223,11 @@ export const NavigationControllerWrapper: React.FC<
     setOnLocationChanged,
   ]);
 
-  // ✅ FIX: Store props callbacks in refs
   const onArrivalRef = useRef(onArrival);
   const onReroutingRef = useRef(onRerouting);
   const onReadyRef = useRef(onReady);
   const onDriverLocationUpdateRef = useRef(onDriverLocationUpdate);
+  const onDriverRawLocationUpdateRef = useRef(onDriverRawLocationUpdate);
   const onNavigationStateUpdateRef = useRef(onNavigationStateUpdate);
 
   useEffect(() => {
@@ -181,22 +235,23 @@ export const NavigationControllerWrapper: React.FC<
     onReroutingRef.current = onRerouting;
     onReadyRef.current = onReady;
     onDriverLocationUpdateRef.current = onDriverLocationUpdate;
+    onDriverRawLocationUpdateRef.current = onDriverRawLocationUpdate;
     onNavigationStateUpdateRef.current = onNavigationStateUpdate;
   }, [
     onArrival,
     onRerouting,
     onReady,
     onDriverLocationUpdate,
+    onDriverRawLocationUpdate,
     onNavigationStateUpdate,
   ]);
 
-  // State
   const [lifecycle, setLifecycle] = useState<NavigationLifecycle>('idle');
   const [initError, setInitError] = useState<string | null>(null);
+  const [routeError, setRouteError] = useState<string | null>(null);
   const [showTermsUI, setShowTermsUI] = useState(false);
   const [showPermissionUI, setShowPermissionUI] = useState(false);
 
-  // ✅ FIX: All refs for tracking state
   const isMountedRef = useRef(true);
   const lifecycleRef = useRef<NavigationLifecycle>('idle');
   const isGuidanceStartedRef = useRef(false);
@@ -207,14 +262,41 @@ export const NavigationControllerWrapper: React.FC<
   const routeSetupInProgressRef = useRef(false);
   const routeSetupTriggeredRef = useRef(false);
   const targetChangeInProgressRef = useRef(false);
-  const currentTargetRef = useRef<'pickup' | 'destination'>(target);
+  const currentTargetRef = useRef<'pickup' | 'destination' | null>(target);
   const pendingTargetRef = useRef<'pickup' | 'destination' | null>(null);
   const permissionsCheckedRef = useRef(false);
   const termsHandledRef = useRef(false);
   const listenersRegisteredRef = useRef(false);
-  const guidanceCleanupRef = useRef<(() => void) | null>(null);
+  const confirmedRouteTargetRef = useRef<'pickup' | 'destination' | null>(
+    null,
+  );
+  const lastInstructionRef = useRef<string>('');
 
-  // Timers
+  // Route transition / distance validity.
+  // `routeTransitionInProgressRef` — true while setDestinations/startGuidance
+  // is running; distance callbacks are dropped until cleared.
+  // `routeDistanceValidRef` — true only after the settling window passes
+  // for the current confirmed route.
+  const routeTransitionInProgressRef = useRef(false);
+  const routeDistanceValidRef = useRef(false);
+  const routeDistanceSettlingRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+
+  // Local operation sequence — used to prevent a slow async route setup
+  // from publishing a result after it was superseded. NOT a substitute for
+  // an SDK route id (which SDK 0.18.0 does not provide).
+  const routeTransitionSeqRef = useRef(0);
+
+  // GPS jump filter
+  const lastValidLocationRef = useRef<{
+    lat: number;
+    lng: number;
+    timestamp: number;
+  } | null>(null);
+
+  const rawLocationSequenceRef = useRef(0);
+
   const safetyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const locationFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -224,9 +306,6 @@ export const NavigationControllerWrapper: React.FC<
   );
   const lastEmitLocationRef = useRef<{ lat: number; lng: number } | null>(null);
 
-  // ============================================================
-  // UPDATE LIFECYCLE
-  // ============================================================
   const updateLifecycle = useCallback((newState: NavigationLifecycle) => {
     if (!isMountedRef.current) return;
     lifecycleRef.current = newState;
@@ -234,24 +313,27 @@ export const NavigationControllerWrapper: React.FC<
     console.log(`[Navigation] 🔄 Lifecycle: ${newState}`);
   }, []);
 
-  // ============================================================
-  // HELPERS
-  // ============================================================
-  const getTargetCoords = useCallback(() => {
-    return target === 'pickup' ? booking.pickup : booking.destination;
-  }, [target, booking]);
+  const getTargetCoords = useCallback(
+    (forTarget: 'pickup' | 'destination') => {
+      return forTarget === 'pickup' ? booking.pickup : booking.destination;
+    },
+    [booking],
+  );
 
-  const getLatLng = useCallback((): LatLng => {
-    const coords = getTargetCoords();
-    return { lat: coords.latitude, lng: coords.longitude };
-  }, [getTargetCoords]);
+  const getLatLng = useCallback(
+    (forTarget: 'pickup' | 'destination'): LatLng => {
+      const coords = getTargetCoords(forTarget);
+      return { lat: coords.latitude, lng: coords.longitude };
+    },
+    [getTargetCoords],
+  );
 
   const getWaypoint = useCallback(
-    (): Waypoint => ({
-      title: target === 'pickup' ? 'Pickup Location' : 'Destination',
-      position: getLatLng(),
+    (forTarget: 'pickup' | 'destination'): Waypoint => ({
+      title: forTarget === 'pickup' ? 'Pickup Location' : 'Destination',
+      position: getLatLng(forTarget),
     }),
-    [target, getLatLng],
+    [getLatLng],
   );
 
   const getRoutingOptions = useCallback(
@@ -264,9 +346,6 @@ export const NavigationControllerWrapper: React.FC<
     [],
   );
 
-  // ============================================================
-  // LOCATION EMIT - ✅ FIXED with null check
-  // ============================================================
   const emitDriverLocation = useCallback(
     (latitude: number, longitude: number) => {
       if (locationEmitThrottleRef.current) {
@@ -274,6 +353,8 @@ export const NavigationControllerWrapper: React.FC<
       }
 
       locationEmitThrottleRef.current = setTimeout(() => {
+        if (!isMountedRef.current) return;
+
         if (lastEmitLocationRef.current) {
           const last = lastEmitLocationRef.current;
           const latDiff = Math.abs(latitude - last.lat) * 111000;
@@ -282,14 +363,10 @@ export const NavigationControllerWrapper: React.FC<
             111000 *
             Math.cos((last.lat * Math.PI) / 180);
           const distance = Math.sqrt(latDiff * latDiff + lngDiff * lngDiff);
-
-          if (distance < 10) {
-            return;
-          }
+          if (distance < 10) return;
         }
 
         lastEmitLocationRef.current = { lat: latitude, lng: longitude };
-        // ✅ FIX: Safe call with optional chaining
         if (onDriverLocationUpdateRef.current) {
           onDriverLocationUpdateRef.current({ lat: latitude, lng: longitude });
         }
@@ -298,9 +375,6 @@ export const NavigationControllerWrapper: React.FC<
     [],
   );
 
-  // ============================================================
-  // PERMISSION & TERMS
-  // ============================================================
   const handleLocationPermission = useCallback(async (): Promise<boolean> => {
     if (!isMountedRef.current) return false;
 
@@ -333,19 +407,14 @@ export const NavigationControllerWrapper: React.FC<
       ));
 
     if (isPermanentlyDenied) {
-      console.log('[Navigation] ❌ Location permission permanently denied');
       setInitError(
         'Location permission permanently denied. Please enable it in settings.',
       );
-      updateLifecycle('locationPermissionDenied');
-      setShowPermissionUI(true);
     } else {
-      console.log('[Navigation] ❌ Location permission denied');
       setInitError('Location permission required for navigation.');
-      updateLifecycle('locationPermissionDenied');
-      setShowPermissionUI(true);
     }
-
+    updateLifecycle('locationPermissionDenied');
+    setShowPermissionUI(true);
     return false;
   }, [updateLifecycle]);
 
@@ -355,7 +424,6 @@ export const NavigationControllerWrapper: React.FC<
     if (!controller) return false;
 
     if (termsHandledRef.current) {
-      console.log('[Navigation] 📜 Terms already handled in this session');
       return true;
     }
 
@@ -363,17 +431,14 @@ export const NavigationControllerWrapper: React.FC<
     updateLifecycle('checkingTerms');
 
     try {
-      console.log('[Navigation] 📜 Showing Terms and Conditions dialog');
       const termsAccepted = await controller.showTermsAndConditionsDialog();
 
       if (!termsAccepted) {
-        console.log('[Navigation] ❌ User declined Terms and Conditions');
         updateLifecycle('termsRequired');
         setShowTermsUI(true);
         return false;
       }
 
-      console.log('[Navigation] ✅ Terms and Conditions accepted');
       termsHandledRef.current = true;
       updateLifecycle('termsAccepted');
       return true;
@@ -385,21 +450,12 @@ export const NavigationControllerWrapper: React.FC<
     }
   }, [updateLifecycle]);
 
-  // ============================================================
-  // SDK INIT
-  // ============================================================
   const initializeSDK = useCallback(async (): Promise<boolean> => {
     if (!isMountedRef.current) return false;
     const controller = navigationControllerRef.current;
-    if (!controller) {
-      console.log('[Navigation] ❌ No navigation controller available');
-      return false;
-    }
+    if (!controller) return false;
 
-    if (initStartedRef.current) {
-      console.log('[Navigation] ⏳ Init already started');
-      return false;
-    }
+    if (initStartedRef.current) return false;
 
     console.log('[Navigation] 📡 SDK_INIT_START');
     updateLifecycle('initializing');
@@ -410,17 +466,14 @@ export const NavigationControllerWrapper: React.FC<
       console.log(`[Navigation] 📡 SDK_INIT_STATUS: ${status}`);
 
       if (status === NavigationSessionStatus.OK) {
-        console.log('[Navigation] ✅ SDK_INIT_SUCCESS');
         updateLifecycle('initialized');
         return true;
       } else {
-        console.error('[Navigation] ❌ Init failed with status:', status);
         setInitError(`Navigation initialization failed: ${status}`);
         updateLifecycle('error');
         return false;
       }
     } catch (error: any) {
-      console.error('[Navigation] ❌ Init error:', error?.message || error);
       setInitError(error?.message || 'Unknown initialization error');
       updateLifecycle('error');
       return false;
@@ -429,20 +482,14 @@ export const NavigationControllerWrapper: React.FC<
     }
   }, [updateLifecycle]);
 
-  // ============================================================
-  // AUDIO GUIDANCE
-  // ============================================================
   const setAudioGuidance = useCallback(async (): Promise<boolean> => {
     const controller = navigationControllerRef.current;
     if (!controller) return false;
-
-    console.log('[Navigation] 🔊 Setting audio guidance...');
 
     try {
       await controller.setAudioGuidanceType(
         AudioGuidance.VOICE_ALERTS_AND_GUIDANCE,
       );
-      console.log('[Navigation] ✅ Audio set to VOICE_ALERTS_AND_GUIDANCE');
       return true;
     } catch (error) {
       console.warn('[Navigation] ⚠️ Failed to set audio guidance:', error);
@@ -450,37 +497,218 @@ export const NavigationControllerWrapper: React.FC<
     }
   }, []);
 
-  // ============================================================
-  // ROUTE SETUP
-  // ============================================================
+  const stopGuidanceIntentional = useCallback(async (reason: string) => {
+    const controller = navigationControllerRef.current;
+    if (!controller) return;
+    if (!isGuidanceStartedRef.current) return;
+
+    console.log(`[Navigation] 🛑 STOP_GUIDANCE: ${reason}`);
+    try {
+      await controller.stopGuidance();
+      isGuidanceStartedRef.current = false;
+    } catch (e) {
+      console.warn('[Navigation] ⚠️ Stop guidance error:', e);
+    }
+  }, []);
+
+  const invalidateRouteDistance = useCallback(() => {
+    routeDistanceValidRef.current = false;
+    if (routeDistanceSettlingRef.current) {
+      clearTimeout(routeDistanceSettlingRef.current);
+      routeDistanceSettlingRef.current = null;
+    }
+  }, []);
+
+  const resetRouteStateForRetry = useCallback(() => {
+    confirmedRouteTargetRef.current = null;
+    routeTransitionInProgressRef.current = false;
+    invalidateRouteDistance();
+    if (routeDistanceSettlingRef.current) {
+      clearTimeout(routeDistanceSettlingRef.current);
+      routeDistanceSettlingRef.current = null;
+    }
+  }, [invalidateRouteDistance]);
+
+  /**
+   * Applies a route to `routeTarget`. Uses a local operation sequence id
+   * (`routeTransitionSeqRef`) so a slow operation that has been superseded
+   * cannot publish a confirmed target or enable distance validity.
+   *
+   * SDK 0.18.0 limitation: `setOnRemainingTimeOrDistanceChanged` carries no
+   * route id. The seq guard protects wrapper-side async races, not SDK-side
+   * callback attribution.
+   */
+  const applyRouteForTarget = useCallback(
+    async (routeTarget: 'pickup' | 'destination'): Promise<boolean> => {
+      const controller = navigationControllerRef.current;
+      if (!controller) return false;
+
+      // Reject if the intended target has already moved on.
+      if (currentTargetRef.current !== routeTarget) {
+        console.warn(
+          `[Navigation] ⚠️ applyRouteForTarget superseded: wanted=${routeTarget} current=${currentTargetRef.current}`,
+        );
+        return false;
+      }
+
+      // Bump op sequence for this transition. Everything below will check it.
+      routeTransitionSeqRef.current += 1;
+      const opSeq = routeTransitionSeqRef.current;
+
+      await stopGuidanceIntentional(`route → ${routeTarget}`);
+
+      // Guard between async boundaries.
+      if (
+        !isMountedRef.current ||
+        opSeq !== routeTransitionSeqRef.current ||
+        currentTargetRef.current !== routeTarget
+      ) {
+        console.warn(
+          `[Navigation] ⚠️ applyRouteForTarget aborted mid-transition (seq=${opSeq}/${routeTransitionSeqRef.current})`,
+        );
+        return false;
+      }
+
+      // Invalidate everything *before* setting destinations.
+      confirmedRouteTargetRef.current = null;
+      lastInstructionRef.current = '';
+      routeTransitionInProgressRef.current = true;
+      invalidateRouteDistance();
+      setRouteError(null);
+
+      const waypoint = getWaypoint(routeTarget);
+      const routingOptions = getRoutingOptions();
+      const waypointPosition = waypoint.position ?? getLatLng(routeTarget);
+      const safeWaypoint: Waypoint = {
+        ...waypoint,
+        position: waypointPosition,
+      };
+
+      console.log(
+        `[Navigation] 🎯 APPLY_ROUTE: ${routeTarget} → ${waypointPosition.lat},${waypointPosition.lng}`,
+      );
+
+      let routeStatus: RouteStatus;
+      try {
+        routeStatus = await controller.setDestinations([safeWaypoint], {
+          routingOptions,
+        });
+      } catch (err: any) {
+        console.error(`[Navigation] ❌ setDestinations threw:`, err);
+        if (opSeq === routeTransitionSeqRef.current) {
+          routeTransitionInProgressRef.current = false;
+          invalidateRouteDistance();
+        }
+        return false;
+      }
+
+      // Guard: superseded while awaiting setDestinations.
+      if (
+        !isMountedRef.current ||
+        opSeq !== routeTransitionSeqRef.current ||
+        currentTargetRef.current !== routeTarget
+      ) {
+        console.warn(
+          `[Navigation] ⚠️ setDestinations result discarded (superseded, seq=${opSeq}/${routeTransitionSeqRef.current})`,
+        );
+        return false;
+      }
+
+      console.log(`[Navigation] 🛣️ ROUTE_STATUS(${routeTarget}): ${routeStatus}`);
+
+      if (routeStatus !== RouteStatus.OK) {
+        console.error(`[Navigation] ❌ Route failed: ${routeStatus}`);
+        routeTransitionInProgressRef.current = false;
+        invalidateRouteDistance();
+        return false;
+      }
+
+      await setAudioGuidance();
+
+      if (
+        !isMountedRef.current ||
+        opSeq !== routeTransitionSeqRef.current ||
+        currentTargetRef.current !== routeTarget
+      ) {
+        console.warn(
+          `[Navigation] ⚠️ startGuidance skipped (superseded, seq=${opSeq}/${routeTransitionSeqRef.current})`,
+        );
+        return false;
+      }
+
+      try {
+        await controller.startGuidance();
+      } catch (err: any) {
+        console.error(`[Navigation] ❌ startGuidance threw:`, err);
+        if (opSeq === routeTransitionSeqRef.current) {
+          routeTransitionInProgressRef.current = false;
+          invalidateRouteDistance();
+        }
+        return false;
+      }
+
+      // Final guard — target must still match and op must still be latest.
+      if (
+        !isMountedRef.current ||
+        opSeq !== routeTransitionSeqRef.current ||
+        currentTargetRef.current !== routeTarget
+      ) {
+        console.warn(
+          `[Navigation] ⚠️ Route confirmed for ${routeTarget} but superseded (seq=${opSeq}/${routeTransitionSeqRef.current}); discarding.`,
+        );
+        return false;
+      }
+
+      isGuidanceStartedRef.current = true;
+      confirmedRouteTargetRef.current = routeTarget;
+      routeTransitionInProgressRef.current = false;
+
+      // Settling window before we accept distance updates.
+      // NOTE: this delay alone does NOT prove SDK callback attribution —
+      // SDK 0.18.0 provides no route id. Combined with
+      // routeTransitionSeqRef + confirmedRouteTargetRef tagging it reduces,
+      // but cannot eliminate, stale-callback risk.
+      routeDistanceSettlingRef.current = setTimeout(() => {
+        if (!isMountedRef.current) return;
+        if (opSeq !== routeTransitionSeqRef.current) return;
+        if (confirmedRouteTargetRef.current !== routeTarget) return;
+        routeDistanceValidRef.current = true;
+        routeDistanceSettlingRef.current = null;
+      }, ROUTE_DISTANCE_SETTLE_MS);
+
+      console.log(`[Navigation] ✅ ROUTE_CONFIRMED: ${routeTarget}`);
+      return true;
+    },
+    [
+      getWaypoint,
+      getLatLng,
+      getRoutingOptions,
+      setAudioGuidance,
+      stopGuidanceIntentional,
+      invalidateRouteDistance,
+    ],
+  );
+
   const startRouteSetup = useCallback(() => {
     if (!isMountedRef.current) return;
-    if (routeSetupTriggeredRef.current) {
-      console.log('[Navigation] ⏳ Route setup already triggered');
-      return;
-    }
+    if (routeSetupTriggeredRef.current) return;
+    if (routeSetupInProgressRef.current) return;
+    if (!isNavigatorReadyRef.current) return;
 
-    if (routeSetupInProgressRef.current) {
-      console.log('[Navigation] ⏳ Route setup already in progress');
-      return;
-    }
-
-    if (!isNavigatorReadyRef.current) {
-      console.log('[Navigation] ⏳ Navigator not ready');
+    // No target yet — wait for the parent to publish a booking phase.
+    if (currentTargetRef.current === null) {
+      console.log('[Navigation] ⏸️ No target yet; skipping route setup');
       return;
     }
 
     if (!locationReceivedRef.current) {
-      console.log('[Navigation] ⏳ Waiting for location...');
       if (locationFallbackTimerRef.current) {
         clearTimeout(locationFallbackTimerRef.current);
       }
       locationFallbackTimerRef.current = setTimeout(() => {
         if (!isMountedRef.current) return;
         if (!locationReceivedRef.current && isNavigatorReadyRef.current) {
-          console.warn(
-            '[Navigation] ⚠️ Location timeout - forcing route setup without location callback',
-          );
+          console.warn('[Navigation] ⚠️ Location timeout');
           locationReceivedRef.current = true;
           updateLifecycle('locationReady');
           startRouteSetup();
@@ -489,369 +717,338 @@ export const NavigationControllerWrapper: React.FC<
       return;
     }
 
-    if (isGuidanceStartedRef.current) {
-      console.log('[Navigation] ℹ️ Guidance already active');
-      return;
-    }
+    if (isGuidanceStartedRef.current) return;
 
     routeSetupTriggeredRef.current = true;
     routeSetupInProgressRef.current = true;
-
-    console.log('[Navigation] 🎯 Setting destination...');
     updateLifecycle('settingDestination');
 
-    const performRouteSetup = async () => {
+    const performInitialSetup = async () => {
       try {
-        const controller = navigationControllerRef.current;
-        if (!controller) {
-          console.error('[Navigation] ❌ No controller for route setup');
-          return;
-        }
-
-        await setAudioGuidance();
-
-        const waypoint = getWaypoint();
-        const routingOptions = getRoutingOptions();
-        console.log(`[Navigation] 🎯 Destination: ${target}`);
-
-        const routeStatus = await controller.setDestinations([waypoint], {
-          routingOptions,
-        });
-
-        console.log(`[Navigation] 🛣️ ROUTE_STATUS: ${routeStatus}`);
-
-        if (routeStatus !== RouteStatus.OK) {
-          console.error(
-            '[Navigation] ❌ Route calculation failed:',
-            routeStatus,
-          );
-          setInitError(`Route calculation failed: ${routeStatus}`);
-          updateLifecycle('error');
-          routeSetupTriggeredRef.current = false;
+        const initialTarget = currentTargetRef.current;
+        if (initialTarget === null) {
           routeSetupInProgressRef.current = false;
+          routeSetupTriggeredRef.current = false;
+          return;
+        }
+        const success = await applyRouteForTarget(initialTarget);
+
+        if (!success) {
+          setRouteError('Initial route setup failed');
+          updateLifecycle('error');
           return;
         }
 
-        updateLifecycle('routeReady');
-        console.log('[Navigation] ✅ ROUTE_CALCULATED');
-
-        console.log('[Navigation] 🚀 START_GUIDANCE');
-        updateLifecycle('startingGuidance');
-
-        await controller.startGuidance();
-        isGuidanceStartedRef.current = true;
         updateLifecycle('navigating');
-        console.log('[Navigation] ✅ TURN_BY_TURN_ACTIVE');
-        console.log(
-          '[Navigation] 🔊 Voice will trigger when vehicle starts moving and approaches a maneuver',
-        );
-        console.log('[Navigation] ✅ GUIDANCE_ACTIVE');
+        console.log('[Navigation] ✅ INITIAL_ROUTE_ACTIVE');
 
-        if (onReadyRef.current) {
-          onReadyRef.current();
-        }
-        console.log('[Navigation] ✅ SDK_READY');
-
-        routeSetupTriggeredRef.current = false;
-        routeSetupInProgressRef.current = false;
+        if (onReadyRef.current) onReadyRef.current();
       } catch (error: any) {
-        console.error(
-          '[Navigation] ❌ Route setup error:',
-          error?.message || error,
-        );
-        setInitError(error?.message || 'Route setup failed');
+        console.error('[Navigation] ❌ Initial route error:', error);
+        setRouteError(error?.message || 'Route setup failed');
         updateLifecycle('error');
+      } finally {
         routeSetupTriggeredRef.current = false;
         routeSetupInProgressRef.current = false;
       }
     };
 
-    performRouteSetup();
-  }, [
-    getWaypoint,
-    getRoutingOptions,
-    target,
-    updateLifecycle,
-    setAudioGuidance,
-  ]);
+    performInitialSetup();
+  }, [applyRouteForTarget, updateLifecycle]);
 
-  // ============================================================
-  // NAVIGATION LISTENERS - REGISTER ONCE
-  // ============================================================
   const registerListeners = useCallback(() => {
-    if (listenersRegisteredRef.current) {
-      console.log('[Navigation] ℹ️ Listeners already registered');
-      return;
-    }
-
+    if (listenersRegisteredRef.current) return;
     const controller = navigationControllerRef.current;
-    if (!controller) {
-      console.log('[Navigation] ⏳ No controller for listeners');
-      return;
-    }
+    if (!controller) return;
 
-    console.log('[Navigation] 📡 Registering navigation listeners');
     console.log('[Navigation] 📡 LISTENERS_REGISTERED');
 
-    // ✅ NAVIGATOR READY
     setOnNavigationReadyRef.current?.(() => {
       if (!isMountedRef.current) return;
-      console.log('[Navigation] 🧭 NAVIGATOR_READY_EVENT');
+      console.log('[Navigation] 🧭 NAVIGATOR_READY');
       isNavigatorReadyRef.current = true;
       updateLifecycle('navigatorReady');
-
       if (safetyTimeoutRef.current) {
         clearTimeout(safetyTimeoutRef.current);
         safetyTimeoutRef.current = null;
       }
-
       startRouteSetup();
     });
 
-    // ✅ LOCATION CHANGED
     setOnLocationChangedRef.current?.((location: LatLng) => {
       if (!isMountedRef.current) return;
 
-      // ✅ FIX: Safe call with optional chaining
-      if (onDriverLocationUpdateRef.current) {
-        onDriverLocationUpdateRef.current({
+      if (!isValidLat(location?.lat) || !isValidLng(location?.lng)) {
+        console.warn('[Navigation] 🚫 Invalid location rejected:', location);
+        return;
+      }
+
+      const now = Date.now();
+      const last = lastValidLocationRef.current;
+
+      if (last) {
+        const timeDiff = now - last.timestamp;
+
+        if (timeDiff > 0) {
+          const dist = haversineDistanceMeters(
+            location.lat,
+            location.lng,
+            last.lat,
+            last.lng,
+          );
+
+          const maxPlausibleDistance =
+            (timeDiff / 1000) * MAX_PLAUSIBLE_SPEED_MPS;
+
+          if (
+            dist > GPS_JUMP_MAX_DISTANCE_METERS &&
+            dist > maxPlausibleDistance
+          ) {
+            console.warn(
+              `[Navigation] 🚫 GPS JUMP REJECTED: ${Math.round(dist)}m in ${timeDiff}ms`,
+            );
+            return;
+          }
+
+          if (
+            timeDiff < GPS_JUMP_MAX_TIME_MS &&
+            dist > GPS_JUMP_MAX_DISTANCE_METERS
+          ) {
+            console.warn(
+              `[Navigation] 🚫 GPS JUMP REJECTED (short interval): ${Math.round(
+                dist,
+              )}m in ${timeDiff}ms`,
+            );
+            return;
+          }
+        }
+      }
+
+      lastValidLocationRef.current = {
+        lat: location.lat,
+        lng: location.lng,
+        timestamp: now,
+      };
+
+      rawLocationSequenceRef.current += 1;
+
+      console.log(
+        `[Navigation] 📍 Location: ${location.lat.toFixed(
+          6,
+        )}, ${location.lng.toFixed(6)}`,
+      );
+
+      emitDriverLocation(location.lat, location.lng);
+
+      if (onDriverRawLocationUpdateRef.current) {
+        onDriverRawLocationUpdateRef.current({
           lat: location.lat,
           lng: location.lng,
+          timestamp: now,
         });
       }
 
       if (!locationReceivedRef.current) {
         locationReceivedRef.current = true;
-        console.log(
-          `[Navigation] 📍 First location received: ${location.lat}, ${location.lng}`,
-        );
+        console.log(`[Navigation] 📍 First valid location`);
         updateLifecycle('locationReady');
         startRouteSetup();
       }
     });
 
-    // ✅ ARRIVAL
     setOnArrivalRef.current?.((event: ArrivalEvent) => {
       if (!isMountedRef.current) return;
       console.log('[Navigation] 🏁 ARRIVAL_EVENT:', event);
-
       if (event.isFinalDestination) {
         updateLifecycle('arrived');
-        if (onArrivalRef.current) {
-          onArrivalRef.current();
-        }
+        if (onArrivalRef.current) onArrivalRef.current();
       } else {
-        console.log('[Navigation] 📍 Continuing to next destination');
         controller.continueToNextDestination();
       }
     });
 
-    // ✅ ROUTE CHANGED
     setOnRouteChangedRef.current?.(() => {
       if (!isMountedRef.current) return;
-      console.log('[Navigation] 🔄 ROUTE_CHANGED (rerouting)');
-      if (onReroutingRef.current) {
-        onReroutingRef.current();
+      console.log('[Navigation] 🔄 ROUTE_CHANGED');
+      if (onReroutingRef.current) onReroutingRef.current();
+    });
+
+    setOnRemainingTimeOrDistanceChangedRef.current?.((timeAndDistance) => {
+      if (!isMountedRef.current) return;
+
+      // Reject while a route transition is in progress.
+      if (routeTransitionInProgressRef.current) return;
+
+      // Reject until settling window completes.
+      if (!routeDistanceValidRef.current) return;
+
+      const confirmedTarget = confirmedRouteTargetRef.current;
+      if (confirmedTarget === null) return;
+
+      const meters = timeAndDistance?.meters;
+      const seconds = timeAndDistance?.seconds;
+
+      const isValidDistance =
+        typeof meters === 'number' &&
+        Number.isFinite(meters) &&
+        meters >= 0;
+      const isValidEta =
+        typeof seconds === 'number' &&
+        Number.isFinite(seconds) &&
+        seconds >= 0;
+
+      if (!isValidDistance) return;
+
+      if (onNavigationStateUpdateRef.current) {
+        onNavigationStateUpdateRef.current({
+          distance: meters,
+          eta: isValidEta ? seconds : 0,
+          instruction: lastInstructionRef.current || '',
+          target: confirmedTarget,
+        });
       }
     });
 
     listenersRegisteredRef.current = true;
-    console.log('[Navigation] ✅ Listeners registered successfully');
-  }, [updateLifecycle, emitDriverLocation, startRouteSetup]);
+    console.log('[Navigation] ✅ Listeners registered');
+  }, [updateLifecycle, startRouteSetup, emitDriverLocation]);
 
-  // ============================================================
-  // UNREGISTER LISTENERS - ONLY ON MOUNT
-  // ============================================================
   const unregisterListeners = useCallback(() => {
-    if (!listenersRegisteredRef.current) {
-      console.log('[Navigation] ℹ️ Listeners already unregistered');
-      return;
-    }
-
-    console.log('[Navigation] 📡 LISTENERS_REMOVED');
+    if (!listenersRegisteredRef.current) return;
     try {
       removeAllListenersRef.current?.();
-      console.log('[Navigation] 🧹 Listeners removed');
     } catch (e) {
       console.warn('[Navigation] ⚠️ Remove listeners error:', e);
     }
     listenersRegisteredRef.current = false;
   }, []);
 
-  // ============================================================
-  // INTENTIONAL STOP GUIDANCE
-  // ============================================================
-  const stopGuidanceIntentional = useCallback(async (reason: string) => {
-    const controller = navigationControllerRef.current;
-    if (!controller) return;
+  // Serialized target switching. Applies the latest pending target directly.
+  const handleTargetChange = useCallback(async () => {
+    if (!isMountedRef.current) return;
 
-    if (!isGuidanceStartedRef.current) {
-      console.log(`[Navigation] ℹ️ No guidance to stop for: ${reason}`);
+    if (targetChangeInProgressRef.current) {
+      pendingTargetRef.current = target;
       return;
     }
 
-    console.log(`[Navigation] 🛑 INTENTIONAL_STOP_GUIDANCE: ${reason}`);
-    try {
-      await controller.stopGuidance();
-      isGuidanceStartedRef.current = false;
-      console.log('[Navigation] 🧹 GUIDANCE_STOPPED');
-    } catch (e) {
-      console.warn('[Navigation] ⚠️ Stop guidance error:', e);
-    }
-  }, []);
+    const desiredTarget = pendingTargetRef.current ?? target;
+    pendingTargetRef.current = null;
 
-  // ============================================================
-  // TARGET CHANGE
-  // ============================================================
-  const handleTargetChange = useCallback(async () => {
-    if (!isMountedRef.current) return;
-    if (targetChangeInProgressRef.current) {
-      console.log('[Navigation] ⏳ Target change already in progress');
+    // If the parent has published `null`, stop guidance and mark distance
+    // invalid — QR must remain hidden until a valid target reappears.
+    if (desiredTarget === null) {
+      // Bump seq so any in-flight route op cannot publish a confirmed target.
+      routeTransitionSeqRef.current += 1;
+      await stopGuidanceIntentional('target cleared');
+      currentTargetRef.current = null;
+      resetRouteStateForRetry();
       return;
     }
 
     if (
-      lifecycleRef.current !== 'navigating' &&
-      lifecycleRef.current !== 'routeReady' &&
-      lifecycleRef.current !== 'navigatorReady'
+      currentTargetRef.current === desiredTarget &&
+      confirmedRouteTargetRef.current === desiredTarget
     ) {
-      console.log(
-        `[Navigation] ⏳ Target change queued (${lifecycleRef.current})`,
-      );
-      pendingTargetRef.current = target;
+      return;
+    }
+
+    if (lifecycleRef.current !== 'navigating') {
+      pendingTargetRef.current = desiredTarget;
       return;
     }
 
     if (!isNavigatorReadyRef.current) {
-      console.log('[Navigation] ⏳ Target change queued (navigator not ready)');
-      pendingTargetRef.current = target;
+      pendingTargetRef.current = desiredTarget;
       return;
     }
 
-    if (currentTargetRef.current === target) {
-      console.log('[Navigation] ℹ️ Target unchanged');
-      return;
-    }
-
-    console.log(
-      `[Navigation] 🔄 TARGET_CHANGE: ${currentTargetRef.current} → ${target}`,
-    );
-    console.log('[Navigation] 📡 TARGET_CHANGE');
-
-    currentTargetRef.current = target;
     targetChangeInProgressRef.current = true;
 
     try {
-      const controller = navigationControllerRef.current;
-      if (!controller) {
-        console.error('[Navigation] ❌ No controller for target change');
+      console.log(
+        `[Navigation] 🔄 TARGET_CHANGE: ${currentTargetRef.current} → ${desiredTarget}`,
+      );
+
+      const previousTarget = currentTargetRef.current;
+      currentTargetRef.current = desiredTarget;
+
+      const success = await applyRouteForTarget(desiredTarget);
+
+      if (!success) {
+        // Roll back on failure so retry starts from a clean state.
+        currentTargetRef.current = previousTarget;
+        console.error(`[Navigation] ❌ TARGET_CHANGE failed: ${desiredTarget}`);
+        setRouteError(`Failed to switch route to ${desiredTarget}`);
+        resetRouteStateForRetry();
+        updateLifecycle('error');
         return;
       }
 
-      // ✅ Intentional stop guidance for target change
-      await stopGuidanceIntentional('target change');
-
-      const waypoint = getWaypoint();
-      const routingOptions = getRoutingOptions();
-      console.log(`[Navigation] 🎯 Setting new destination: ${target}`);
-
-      const routeStatus = await controller.setDestinations([waypoint], {
-        routingOptions,
-      });
-      console.log(`[Navigation] 🛣️ New ROUTE_STATUS: ${routeStatus}`);
-
-      if (routeStatus === RouteStatus.OK) {
-        await setAudioGuidance();
-
-        await controller.startGuidance();
-        isGuidanceStartedRef.current = true;
-        updateLifecycle('navigating');
-        console.log('[Navigation] ✅ TURN_BY_TURN_ACTIVE');
-        console.log(`[Navigation] ✅ Target switched to: ${target}`);
-        if (onReadyRef.current) {
-          onReadyRef.current();
-        }
-        console.log('[Navigation] ✅ GUIDANCE_ACTIVE');
-      } else {
+      // applyRouteForTarget already rejects if the target changed mid-flight.
+      if (currentTargetRef.current !== desiredTarget) {
         console.warn(
-          '[Navigation] ⚠️ Route calculation failed for target change',
+          `[Navigation] ⚠️ TARGET_CHANGE superseded: ${desiredTarget} → ${currentTargetRef.current}`,
         );
-        setInitError(`Route calculation failed: ${routeStatus}`);
-        updateLifecycle('error');
+        return;
       }
-    } catch (error) {
+
+      updateLifecycle('navigating');
+      console.log(`[Navigation] ✅ TARGET_CHANGE COMPLETE: ${desiredTarget}`);
+
+      if (onReadyRef.current) onReadyRef.current();
+    } catch (error: any) {
       console.error('[Navigation] ❌ Target change error:', error);
-      setInitError('Failed to change target');
+      setRouteError('Target change failed');
+      resetRouteStateForRetry();
       updateLifecycle('error');
     } finally {
       targetChangeInProgressRef.current = false;
     }
 
     if (
-      pendingTargetRef.current &&
-      pendingTargetRef.current !== currentTargetRef.current
+      pendingTargetRef.current !== null &&
+      pendingTargetRef.current !== currentTargetRef.current &&
+      isMountedRef.current
     ) {
-      const pending = pendingTargetRef.current;
-      pendingTargetRef.current = null;
-      handleTargetChange();
+      setTimeout(() => {
+        if (!isMountedRef.current) return;
+        handleTargetChange();
+      }, 0);
     }
   }, [
     target,
-    getWaypoint,
-    getRoutingOptions,
+    applyRouteForTarget,
     updateLifecycle,
-    setAudioGuidance,
+    resetRouteStateForRetry,
     stopGuidanceIntentional,
   ]);
 
-  // ============================================================
-  // INITIALIZE NAVIGATION - ONLY ONCE
-  // ============================================================
   const initializeNavigation = useCallback(async () => {
     if (!isMountedRef.current) return;
     const controller = navigationControllerRef.current;
-    if (!controller) {
-      console.log('[Navigation] ⏳ No controller yet');
-      return;
-    }
-
-    if (initAttemptedRef.current) {
-      console.log('[Navigation] ⏳ Init already attempted');
-      return;
-    }
+    if (!controller) return;
+    if (initAttemptedRef.current) return;
 
     console.log('[Navigation] 🚀 SESSION_MOUNT');
-    console.log('[Navigation] 🚀 Starting navigation initialization');
 
     try {
       await checkAudioSettings();
 
       const hasPermission = await handleLocationPermission();
-      if (!hasPermission) {
-        console.log('[Navigation] ❌ Stopping - location permission required');
-        return;
-      }
+      if (!hasPermission) return;
 
       const termsAccepted = await handleTermsFlow();
-      if (!termsAccepted) {
-        console.log('[Navigation] ❌ Stopping - terms required');
-        return;
-      }
+      if (!termsAccepted) return;
 
       registerListeners();
 
       const initSuccess = await initializeSDK();
-      if (!initSuccess) {
-        console.log('[Navigation] ❌ SDK initialization failed');
-        return;
-      }
+      if (!initSuccess) return;
 
       safetyTimeoutRef.current = setTimeout(() => {
         if (!isMountedRef.current) return;
         if (!isNavigatorReadyRef.current) {
-          console.warn(
-            '[Navigation] ⚠️ Navigator ready timeout - assuming ready',
-          );
           isNavigatorReadyRef.current = true;
           updateLifecycle('navigatorReady');
           startRouteSetup();
@@ -859,14 +1056,9 @@ export const NavigationControllerWrapper: React.FC<
       }, 10000);
 
       initAttemptedRef.current = true;
-      console.log(
-        '[Navigation] ✅ Init flow completed, waiting for navigator/location...',
-      );
+      console.log('[Navigation] ✅ Init flow completed');
     } catch (error: any) {
-      console.error(
-        '[Navigation] ❌ Init flow error:',
-        error?.message || error,
-      );
+      console.error('[Navigation] ❌ Init error:', error);
       setInitError(error?.message || 'Init flow failed');
       updateLifecycle('error');
     }
@@ -879,11 +1071,6 @@ export const NavigationControllerWrapper: React.FC<
     startRouteSetup,
   ]);
 
-  // ============================================================
-  // EFFECTS
-  // ============================================================
-
-  // ✅ EFFECT 1: Initialize navigation - runs only when controller becomes available
   useEffect(() => {
     if (
       navigationControllerRef.current &&
@@ -892,93 +1079,76 @@ export const NavigationControllerWrapper: React.FC<
     ) {
       initializeNavigation();
     }
-    // ✅ Intentionally empty dependency array - only runs on mount/controller change
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ✅ EFFECT 2: Handle target changes
+  // Keep currentTargetRef in sync with the prop, and invalidate distance
+  // IMMEDIATELY when the intended target changes.
   useEffect(() => {
     if (!isMountedRef.current) return;
-    if (
-      lifecycleRef.current === 'navigating' ||
-      lifecycleRef.current === 'routeReady' ||
-      lifecycleRef.current === 'navigatorReady'
-    ) {
+
+    // If target actually changed vs the last confirmed/current target,
+    // clear distance valid + confirmed route right away so QR cannot be
+    // enabled by an old-target snapshot while the wrapper is still
+    // transitioning.
+    if (target !== currentTargetRef.current) {
+      invalidateRouteDistance();
+      confirmedRouteTargetRef.current = null;
+      routeTransitionSeqRef.current += 1;
+    }
+
+    if (lifecycleRef.current === 'navigating') {
       handleTargetChange();
     } else {
+      // Pre-navigating: remember the latest prop value.
+      currentTargetRef.current = target;
       pendingTargetRef.current = target;
     }
-  }, [target, handleTargetChange]);
+  }, [target, handleTargetChange, invalidateRouteDistance]);
 
-  // ✅ EFFECT 3: Process pending target changes
   useEffect(() => {
     if (
-      (lifecycleRef.current === 'navigatorReady' ||
-        lifecycleRef.current === 'navigating' ||
-        lifecycleRef.current === 'routeReady') &&
-      pendingTargetRef.current
+      lifecycleRef.current === 'navigating' &&
+      pendingTargetRef.current !== null &&
+      pendingTargetRef.current !== currentTargetRef.current
     ) {
-      const pending = pendingTargetRef.current;
-      pendingTargetRef.current = null;
-      if (pending !== currentTargetRef.current) {
-        handleTargetChange();
-      }
+      handleTargetChange();
     }
   }, [lifecycle, handleTargetChange]);
 
-  // ✅ EFFECT 4: App state listener
   useEffect(() => {
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (nextAppState === 'active' && lifecycleRef.current === 'navigating') {
-        console.log('[Navigation] 📱 App became active');
+        console.log('[Navigation] 📱 App active');
       }
     });
     return () => subscription.remove();
   }, []);
 
-  // ✅ EFFECT 5: CLEANUP - ONLY ON UNMOUNT (EMPTY DEPENDENCIES)
   useEffect(() => {
     isMountedRef.current = true;
 
     return () => {
-      console.log('[Navigation] 🧹 SESSION_UNMOUNT');
-      console.log('[Navigation] 🧹 CLEANUP_START');
-
       isMountedRef.current = false;
 
-      // Clear timers
-      if (safetyTimeoutRef.current) {
-        clearTimeout(safetyTimeoutRef.current);
-        safetyTimeoutRef.current = null;
-      }
-      if (locationFallbackTimerRef.current) {
+      if (safetyTimeoutRef.current) clearTimeout(safetyTimeoutRef.current);
+      if (locationFallbackTimerRef.current)
         clearTimeout(locationFallbackTimerRef.current);
-        locationFallbackTimerRef.current = null;
-      }
-      if (locationEmitThrottleRef.current) {
+      if (locationEmitThrottleRef.current)
         clearTimeout(locationEmitThrottleRef.current);
-        locationEmitThrottleRef.current = null;
-      }
+      if (routeDistanceSettlingRef.current)
+        clearTimeout(routeDistanceSettlingRef.current);
 
-      // Unregister listeners
       unregisterListeners();
 
-      // Stop guidance if active
       if (isGuidanceStartedRef.current) {
-        console.log(
-          '[Navigation] 🛑 INTENTIONAL_STOP_GUIDANCE: component unmount',
-        );
         const controller = navigationControllerRef.current;
         if (controller) {
-          controller.stopGuidance().catch((e: any) => {
-            console.warn('[Navigation] ⚠️ Stop guidance error on unmount:', e);
-          });
+          controller.stopGuidance().catch(() => {});
           isGuidanceStartedRef.current = false;
-          console.log('[Navigation] 🧹 GUIDANCE_STOPPED');
         }
       }
 
-      // Reset refs
       initStartedRef.current = false;
       isNavigatorReadyRef.current = false;
       initAttemptedRef.current = false;
@@ -990,19 +1160,20 @@ export const NavigationControllerWrapper: React.FC<
       targetChangeInProgressRef.current = false;
       listenersRegisteredRef.current = false;
       lastEmitLocationRef.current = null;
+      lastInstructionRef.current = '';
+      confirmedRouteTargetRef.current = null;
+      lastValidLocationRef.current = null;
+      routeDistanceValidRef.current = false;
+      routeTransitionInProgressRef.current = false;
+      routeTransitionSeqRef.current = 0;
+      rawLocationSequenceRef.current = 0;
 
       updateLifecycle('destroyed');
-
-      console.log('[Navigation] 🧹 CLEANUP_COMPLETE');
     };
-    // ✅ EMPTY DEPENDENCY ARRAY - runs only on mount/unmount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ============================================================
-  // RENDER
-  // ============================================================
-  const onNavigationViewControllerCreated = useCallback((controller: any) => {
+  const onNavigationViewControllerCreated = useCallback(() => {
     console.log('[Navigation] 📱 CONTROLLER_CREATED');
   }, []);
 
@@ -1012,8 +1183,6 @@ export const NavigationControllerWrapper: React.FC<
         <Text style={styles.errorTitle}>Location Permission Required</Text>
         <Text style={styles.errorSubtext}>
           Turn-by-turn navigation requires access to your device location.
-          {'\n\n'}
-          Please allow location access to continue.
         </Text>
         <TouchableOpacity
           style={styles.primaryButton}
@@ -1042,8 +1211,7 @@ export const NavigationControllerWrapper: React.FC<
       <View style={styles.errorContainer}>
         <Text style={styles.errorTitle}>Terms Required</Text>
         <Text style={styles.errorSubtext}>
-          Please accept the Google Navigation Terms of Use to start turn-by-turn
-          navigation.
+          Please accept the Google Navigation Terms of Use.
         </Text>
         <TouchableOpacity
           style={styles.primaryButton}
@@ -1075,10 +1243,37 @@ export const NavigationControllerWrapper: React.FC<
             setInitError(null);
             updateLifecycle('idle');
             initAttemptedRef.current = false;
+            resetRouteStateForRetry();
             initializeNavigation();
           }}
         >
-          <Text style={styles.primaryButtonText}>Retry</Text>
+          <Text style={styles.primaryButtonText}>Retry Initialization</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (routeError && lifecycleRef.current === 'error') {
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorTitle}>Route Error</Text>
+        <Text style={styles.errorSubtext}>{routeError}</Text>
+        <TouchableOpacity
+          style={styles.primaryButton}
+          onPress={async () => {
+            setRouteError(null);
+            resetRouteStateForRetry();
+            routeSetupTriggeredRef.current = false;
+            routeSetupInProgressRef.current = false;
+            isGuidanceStartedRef.current = false;
+            // Restore the current prop target as the desired target.
+            currentTargetRef.current = target;
+            pendingTargetRef.current = target;
+            updateLifecycle('navigating');
+            startRouteSetup();
+          }}
+        >
+          <Text style={styles.primaryButtonText}>Retry Route</Text>
         </TouchableOpacity>
       </View>
     );
@@ -1110,7 +1305,7 @@ export const NavigationControllerWrapper: React.FC<
             {lifecycle === 'checkingTerms' && 'Checking terms...'}
             {lifecycle === 'initializing' && 'Initializing navigation...'}
             {lifecycle === 'initialized' && 'Loading navigation...'}
-            {lifecycle === 'navigatorReady' && 'Getting your location...'}
+            {lifecycle === 'navigatorReady' && 'Acquiring GPS signal...'}
             {lifecycle === 'settingDestination' && 'Calculating route...'}
             {lifecycle === 'startingGuidance' && 'Starting guidance...'}
             {![
@@ -1130,15 +1325,8 @@ export const NavigationControllerWrapper: React.FC<
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    position: 'relative',
-  },
-  navigationView: {
-    flex: 1,
-    width: '100%',
-    height: '100%',
-  },
+  container: { flex: 1, position: 'relative' },
+  navigationView: { flex: 1, width: '100%', height: '100%' },
   loadingOverlay: {
     position: 'absolute',
     top: 0,

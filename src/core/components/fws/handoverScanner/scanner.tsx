@@ -28,7 +28,7 @@ import type { CameraApi } from 'react-native-camera-kit';
 type QRScannerNavigationProp = StackNavigationProp<any>;
 
 // ✅ API Base URL
-const TIZZYOS_API_BASE_URL = 'http://10.210.13.121:2000';
+const TIZZYOS_API_BASE_URL = 'http://10.172.218.121:2000';
 
 // ✅ Auth Helper
 const getAuthToken = async (): Promise<string | null> => {

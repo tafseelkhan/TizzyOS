@@ -209,7 +209,7 @@ type ShippingPartner = {
   kyc?: any;
 };
 
-const TIZZYOS_API_BASE_URL = 'http://10.210.13.121:2000';
+const TIZZYOS_API_BASE_URL = 'http://10.172.218.121:2000';
 
 // Theme colors
 const getThemeColors = (isDark: boolean) => {

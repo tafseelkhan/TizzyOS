@@ -47,7 +47,7 @@ const { width, height } = Dimensions.get('window');
 // CONSTANTS
 // ============================================
 
-const TIZZYOS_API_BASE_URL = 'http://10.210.13.121:2000';
+const TIZZYOS_API_BASE_URL = 'http://10.172.218.121:2000';
 const SHIPPING_API_URL = `${TIZZYOS_API_BASE_URL}/api/v0/delivery/tracking/shipping`;
 const DELIVERY_TRACKING_API_URL = `${TIZZYOS_API_BASE_URL}/api/v0/delivery/tracking/shipping`;
 const TRACKING_API_URL = `${TIZZYOS_API_BASE_URL}/api/v0/tracking`;

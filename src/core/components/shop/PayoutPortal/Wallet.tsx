@@ -72,7 +72,7 @@ const CreateAirXPayAccountScreen: React.FC<CreateAirXPayAccountScreenProps> = ({
   );
   const insets = useSafeAreaInsets();
 
-  const BASE_URL = 'http://10.210.13.121:2000/api';
+  const BASE_URL = 'http://10.172.218.121:2000/api';
   const [formData, setFormData] = useState<FormData>({
     name: '',
     email: '',

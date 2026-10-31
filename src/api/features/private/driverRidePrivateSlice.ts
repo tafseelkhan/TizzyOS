@@ -357,4 +357,33 @@ export const driverRideApi = {
       throw new Error(response.message || 'Failed to reject ride');
     }
   },
+
+  /**
+   * Collect cash after drop QR verification.
+   * POST /api/v0/ride/payments/:bookingId/collect-cash
+   */
+  collectCashPayment: async (
+    bookingId: string,
+  ): Promise<any> => {
+    const token = await getToken();
+
+    const response = await fetchHandler(
+      `${TIZZYOS_API_BASE_URL}/api/v0/ride/payments/${bookingId}/collect-cash`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      },
+    );
+
+    if (!response.success) {
+      throw new Error(
+        response.message || 'Failed to confirm cash payment',
+      );
+    }
+
+    return response.data;
+  },
 };

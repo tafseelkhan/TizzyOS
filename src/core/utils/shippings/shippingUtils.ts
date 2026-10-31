@@ -15,7 +15,7 @@ export const enableLayoutAnimation = () => {
 export const getImageUrl = (image?: string): string => {
   if (!image) return 'https://via.placeholder.com/150';
   if (image.startsWith('http')) return image;
-  if (image.startsWith('/uploads')) return `http://10.210.13.121:2000${image}`;
+  if (image.startsWith('/uploads')) return `http://10.172.218.121:2000${image}`;
   return 'https://via.placeholder.com/150';
 };
 
