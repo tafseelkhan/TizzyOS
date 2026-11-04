@@ -15,25 +15,31 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { StackNavigationProp } from '@react-navigation/stack';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import Icon from 'react-native-vector-icons/Ionicons';
-import { PERMISSIONS, request, check, RESULTS } from 'react-native-permissions';
-import axios from 'axios';
+import {
+  PERMISSIONS,
+  request,
+  check,
+  RESULTS,
+} from 'react-native-permissions';
 
 // ✅ CORRECT: Import Camera and CameraType from react-native-camera-kit v18
 import { Camera, CameraType } from 'react-native-camera-kit';
 import type { CameraApi } from 'react-native-camera-kit';
 
+// ✅ NEW: API slice (auto refresh + retry)
+import {
+  handoverViaQr,
+  HandoverViaQrResponse,
+} from '../../../../api/features/private/qrHandoverPrivateSlice';
+import { ApiError } from '../../../../core/utils/handler/apiClient';
+
 // ✅ Types
 type QRScannerNavigationProp = StackNavigationProp<any>;
 
-// ✅ API Base URL
-const TIZZYOS_API_BASE_URL = 'http://10.172.218.121:2000';
-
-// ✅ Auth Helper
-const getAuthToken = async (): Promise<string | null> => {
-  return await AsyncStorage.getItem('authToken');
-};
+// ============================================================
+// 🧩 COMPONENT
+// ============================================================
 
 const QRScannerScreen = () => {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
@@ -43,7 +49,7 @@ const QRScannerScreen = () => {
 
   const navigation = useNavigation<QRScannerNavigationProp>();
 
-  // ✅ Ref for camera kit - use CameraApi type
+  // ✅ Ref for camera kit
   const cameraRef = useRef<CameraApi>(null);
 
   // ✅ Safe navigation function
@@ -108,54 +114,23 @@ const QRScannerScreen = () => {
     checkCameraPermission();
   }, []);
 
-  // ✅ HANDOVER API (UNCHANGED)
+  // ============================================================
+  // ✅ HANDOVER API — new slice use
+  // ============================================================
   const handoverViaQrApi = async (qrData: string) => {
     setLoading(true);
     setError('');
 
     try {
-      const authToken = await getAuthToken();
-      if (!authToken) {
-        throw new Error('Please login first to scan QR code');
-      }
+      const response: HandoverViaQrResponse = await handoverViaQr(qrData);
 
-      let actualToken = qrData;
-      try {
-        const parsed = JSON.parse(qrData);
-        if (parsed.token) {
-          actualToken = parsed.token;
-          console.log('📝 Extracted token from JSON:', actualToken);
-        }
-      } catch (e) {
-        console.log('📝 Using QR data as raw string');
-      }
-
-      console.log('🔄 Sending QR handover request...');
-
-      const response = await axios.post(
-        `${TIZZYOS_API_BASE_URL}/api/v0/delivery/tracking/shipping/handover/via/qr`,
-        { token: actualToken },
-        {
-          headers: {
-            Authorization: `Bearer ${authToken}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: 15000,
-        },
-      );
-
-      console.log('📦 API Response:', response.data);
-
-      if (
-        response.data.duplicate === true ||
-        response.data.code === 'DUPLICATE_SCAN'
-      ) {
-        console.log('⚠️ Duplicate scan detected');
+      // Duplicate scan (success response mein)
+      if (response.duplicate === true || response.code === 'DUPLICATE_SCAN') {
         Vibration.vibrate(100);
         Alert.alert(
           '⚠️ Duplicate Scan',
-          response.data.details ||
-            response.data.message ||
+          response.details ||
+            response.message ||
             'This QR has already been scanned.',
           [
             {
@@ -170,12 +145,12 @@ const QRScannerScreen = () => {
         return;
       }
 
-      if (response.data.alreadyScanned === true) {
-        console.log('⚠️ Already scanned');
+      // Already scanned
+      if (response.alreadyScanned === true) {
         Vibration.vibrate(100);
         Alert.alert(
           '⚠️ Already Scanned',
-          response.data.message ||
+          response.message ||
             'This QR has already been scanned for this handover.',
           [
             {
@@ -190,12 +165,13 @@ const QRScannerScreen = () => {
         return;
       }
 
-      if (response.data.success) {
+      // Success
+      if (response.success) {
         Vibration.vibrate(200);
         Alert.alert(
           '✅ Handover Successful!',
-          `Order ${response.data.data?.orderId || ''} handed over to ${
-            response.data.data?.toHolder?.type || 'recipient'
+          `Order ${response.data?.orderId || ''} handed over to ${
+            response.data?.toHolder?.type || 'recipient'
           }`,
           [
             {
@@ -208,17 +184,27 @@ const QRScannerScreen = () => {
           ],
         );
       } else {
-        throw new Error(response.data.message || 'Handover failed');
+        throw new Error(response.message || 'Handover failed');
       }
     } catch (error: any) {
-      console.error('❌ QR Processing Error:', error);
+      const errorData =
+        error instanceof ApiError
+          ? (error.data as
+              | {
+                  duplicate?: boolean;
+                  code?: string;
+                  message?: string;
+                  details?: string;
+                }
+              | undefined)
+          : undefined;
 
-      const errorData = error.response?.data;
       const errorMessage =
         errorData?.message ||
-        error.message ||
+        (error instanceof Error ? error.message : null) ||
         'Something went wrong. Please try again.';
 
+      // Duplicate scan detection in error
       if (
         errorData?.duplicate === true ||
         errorData?.code === 'DUPLICATE_SCAN' ||
@@ -227,7 +213,6 @@ const QRScannerScreen = () => {
         errorMessage.includes('already verified') ||
         errorMessage.includes('Duplicate Scan Not Allowed')
       ) {
-        console.log('⚠️ Duplicate scan detected in error response');
         Vibration.vibrate(100);
         Alert.alert(
           '⚠️ Duplicate Scan',
@@ -269,17 +254,13 @@ const QRScannerScreen = () => {
     }
   };
 
-  // ✅ Handle QR code scan from CameraKit
+  // ✅ Handle QR code scan
   const onReadCode = (event: any) => {
-    // Stop scanning immediately
     if (!isScanning || loading) return;
 
-    // CameraKit v18 returns QR data in event.nativeEvent.codeStringValue
     const qrData = event?.nativeEvent?.codeStringValue || event?.data || event;
 
     if (!qrData || typeof qrData !== 'string') return;
-
-    console.log('📸 QR Code Scanned:', qrData);
 
     setIsScanning(false);
     Vibration.vibrate(100);
@@ -316,17 +297,14 @@ const QRScannerScreen = () => {
       <StatusBar barStyle="light-content" />
 
       <View style={styles.cameraContainer}>
-        {/* ✅ CameraKit v18 - ONLY QR CODES */}
         <Camera
           ref={cameraRef}
           style={styles.camera}
           cameraType={CameraType.Back}
           scanBarcode={isScanning && !loading}
-          // surfaceColor REMOVED - doesn't exist in v18
           onReadCode={onReadCode}
         />
 
-        {/* ✅ Overlay on top of camera */}
         <View style={styles.overlay} pointerEvents="none">
           <TouchableOpacity
             style={[styles.backButton, { pointerEvents: 'auto' }]}

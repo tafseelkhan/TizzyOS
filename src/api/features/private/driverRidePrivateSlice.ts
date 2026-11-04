@@ -1,8 +1,10 @@
 // src/api/v0/features/private/driverRidePrivateSlice.ts
 
 import { TIZZYOS_API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
-import { getToken } from '../../connections/token/tokenSlice';
-import { fetchHandler } from '../../../core/utils/handler/fetchHandler';
+import {
+  apiRequest,
+  ApiError,
+} from '../../../core/utils/handler/apiClient';
 import {
   Booking,
   Tracking,
@@ -16,6 +18,24 @@ export interface AcceptRideResponse {
   quoteId?: string;
 }
 
+// ============================================================
+// 🔧 HELPER — extract error message consistently
+// ============================================================
+
+const getErrMessage = (error: unknown, fallback: string): string => {
+  if (error instanceof ApiError) {
+    return error.message || fallback;
+  }
+  if (error instanceof Error) {
+    return error.message || fallback;
+  }
+  return fallback;
+};
+
+// ============================================================
+// 🚗 DRIVER RIDE API
+// ============================================================
+
 export const driverRideApi = {
   /**
    * Get active trip for the driver
@@ -23,15 +43,15 @@ export const driverRideApi = {
    */
   getActiveTrip: async (): Promise<Tracking | null> => {
     try {
-      const token = await getToken();
-      const response = await fetchHandler(
+      const response = await apiRequest<{
+        success?: boolean;
+        data?: Tracking;
+      }>(
         `${TIZZYOS_API_BASE_URL}/api/v0/ride/tracking/active?type=driver`,
-        {
-          method: 'GET',
-          headers: { Authorization: `Bearer ${token}` },
-        },
+        { method: 'GET' },
       );
-      return response.success ? response.data : null;
+
+      return response.success ? response.data ?? null : null;
     } catch {
       return null;
     }
@@ -40,110 +60,60 @@ export const driverRideApi = {
   /**
    * Get full trip details by booking ID
    * GET /api/v0/ride/booking/:bookingId
-   *
-   * ✅ Now returns enriched data with customer and driver info
    */
   getTripDetails: async (bookingId: string): Promise<Booking> => {
-    const token = await getToken();
-    console.log('[driverRideApi] 📡 getTripDetails called:');
-    console.log('[driverRideApi] 📦 bookingId:', bookingId);
-    console.log(
-      '[driverRideApi] 🔗 URL:',
-      `${TIZZYOS_API_BASE_URL}/api/v0/ride/booking/${bookingId}`,
-    );
-
     try {
-      const response = await fetchHandler(
+      const response = await apiRequest<{
+        success?: boolean;
+        message?: string;
+        data: Booking;
+      }>(
         `${TIZZYOS_API_BASE_URL}/api/v0/ride/booking/${bookingId}`,
-        {
-          method: 'GET',
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      );
-
-      console.log(
-        '[driverRideApi] 📦 getTripDetails response:',
-        JSON.stringify(response, null, 2),
+        { method: 'GET' },
       );
 
       if (!response.success) {
-        console.error(
-          '[driverRideApi] ❌ getTripDetails failed:',
-          response.message,
-        );
         throw new Error(response.message || 'Failed to fetch trip details');
       }
 
-      console.log('[driverRideApi] ✅ getTripDetails success');
-      console.log(
-        '[driverRideApi] 👤 Customer:',
-        response.data?.customer?.name || 'Not found',
-      );
-      console.log(
-        '[driverRideApi] 🚗 Driver:',
-        response.data?.driver?.name || 'Not assigned',
-      );
-
       return response.data;
-    } catch (error: any) {
-      console.error('[driverRideApi] ❌ getTripDetails error:', error.message);
-      throw error;
+    } catch (error) {
+      throw new Error(getErrMessage(error, 'Failed to fetch trip details'));
     }
   },
 
   /**
-   * ✅ NEW: Get live tracking data by trackingId
+   * ✅ Get live tracking data by trackingId
    * GET /cab/ride/tracking/:bookingId/:trackingId
-   *
-   * This is the NEW Live Tracking API that provides:
-   * - Driver location (from RideDriverLocation)
-   * - Customer location (from BuyerLocation)
-   * - Pickup and destination details
-   * - Ride status and metadata
    */
   getLiveTracking: async (
     bookingId: string,
     trackingId: string,
     quoteId: string,
   ): Promise<LiveTrackingData> => {
-    const token = await getToken();
-    console.log('[driverRideApi] 📡 getLiveTracking called:');
-    console.log('[driverRideApi] 📦 bookingId:', bookingId);
-    console.log('[driverRideApi] 📦 trackingId:', trackingId);
-    console.log(
-      '[driverRideApi] 🔗 URL:',
-      `${TIZZYOS_API_BASE_URL}/api/v0/ride/live/tracking/connect/${bookingId}/session/${trackingId}`,
-    );
-
     try {
-      const response = await fetchHandler(
-        `${TIZZYOS_API_BASE_URL}/api/v0/ride/live/tracking/connect/${bookingId}/session/${trackingId}?quoteId=${quoteId}`,
-        {
-          method: 'GET',
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      );
-
-      console.log(
-        '[driverRideApi] 📦 getLiveTracking response:',
-        JSON.stringify(response, null, 2),
+      const response = await apiRequest<{
+        success?: boolean;
+        message?: string;
+        data: LiveTrackingData;
+      }>(
+        `${TIZZYOS_API_BASE_URL}/api/v0/ride/live/tracking/connect/${bookingId}/session/${trackingId}?quoteId=${encodeURIComponent(
+          quoteId,
+        )}`,
+        { method: 'GET' },
       );
 
       if (!response.success) {
-        console.error(
-          '[driverRideApi] ❌ getLiveTracking failed:',
-          response.message,
-        );
         throw new Error(
           response.message || 'Failed to fetch live tracking data',
         );
       }
 
-      console.log('[driverRideApi] ✅ getLiveTracking success');
       return response.data;
-    } catch (error: any) {
-      console.error('[driverRideApi] ❌ getLiveTracking error:', error.message);
-      throw error;
+    } catch (error) {
+      throw new Error(
+        getErrMessage(error, 'Failed to fetch live tracking data'),
+      );
     }
   },
 
@@ -152,46 +122,23 @@ export const driverRideApi = {
    * GET /api/v0/ride/tracking/:trackingId
    */
   getTrackingByBooking: async (trackingId: string): Promise<Tracking> => {
-    const token = await getToken();
-    console.log(
-      '[driverRideApi] 📡 getTrackingByBooking called with trackingId:',
-      trackingId,
-    );
-    console.log(
-      '[driverRideApi] 🔗 URL:',
-      `${TIZZYOS_API_BASE_URL}/api/v0/ride/tracking/${trackingId}`,
-    );
-
     try {
-      const response = await fetchHandler(
+      const response = await apiRequest<{
+        success?: boolean;
+        message?: string;
+        data: Tracking;
+      }>(
         `${TIZZYOS_API_BASE_URL}/api/v0/ride/tracking/${trackingId}`,
-        {
-          method: 'GET',
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      );
-
-      console.log(
-        '[driverRideApi] 📦 getTrackingByBooking response:',
-        JSON.stringify(response, null, 2),
+        { method: 'GET' },
       );
 
       if (!response.success) {
-        console.error(
-          '[driverRideApi] ❌ getTrackingByBooking failed:',
-          response.message,
-        );
         throw new Error(response.message || 'Failed to fetch tracking');
       }
 
-      console.log('[driverRideApi] ✅ getTrackingByBooking success');
       return response.data;
-    } catch (error: any) {
-      console.error(
-        '[driverRideApi] ❌ getTrackingByBooking error:',
-        error.message,
-      );
-      throw error;
+    } catch (error) {
+      throw new Error(getErrMessage(error, 'Failed to fetch tracking'));
     }
   },
 
@@ -203,22 +150,27 @@ export const driverRideApi = {
     trackingId: string,
     status: string,
   ): Promise<Tracking> => {
-    const token = await getToken();
-    const response = await fetchHandler(
-      `${TIZZYOS_API_BASE_URL}/api/v0/ride/tracking/${trackingId}/status`,
-      {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+    try {
+      const response = await apiRequest<{
+        success?: boolean;
+        message?: string;
+        data: Tracking;
+      }>(
+        `${TIZZYOS_API_BASE_URL}/api/v0/ride/tracking/${trackingId}/status`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({ status }),
         },
-        body: JSON.stringify({ status }),
-      },
-    );
-    if (!response.success) {
-      throw new Error(response.message || 'Failed to update status');
+      );
+
+      if (!response.success) {
+        throw new Error(response.message || 'Failed to update status');
+      }
+
+      return response.data;
+    } catch (error) {
+      throw new Error(getErrMessage(error, 'Failed to update status'));
     }
-    return response.data;
   },
 
   /**
@@ -226,20 +178,23 @@ export const driverRideApi = {
    * POST /api/v0/ride/cancel/:bookingId
    */
   cancelBooking: async (bookingId: string, reason: string): Promise<void> => {
-    const token = await getToken();
-    const response = await fetchHandler(
-      `${TIZZYOS_API_BASE_URL}/api/v0/ride/cancel/${bookingId}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+    try {
+      const response = await apiRequest<{
+        success?: boolean;
+        message?: string;
+      }>(
+        `${TIZZYOS_API_BASE_URL}/api/v0/ride/cancel/${bookingId}`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ cancelReason: reason }),
         },
-        body: JSON.stringify({ cancelReason: reason }),
-      },
-    );
-    if (!response.success) {
-      throw new Error(response.message || 'Failed to cancel booking');
+      );
+
+      if (!response.success) {
+        throw new Error(response.message || 'Failed to cancel booking');
+      }
+    } catch (error) {
+      throw new Error(getErrMessage(error, 'Failed to cancel booking'));
     }
   },
 
@@ -251,18 +206,24 @@ export const driverRideApi = {
     page: number = 1,
     limit: number = 20,
   ): Promise<{ bookings: Booking[]; total: number }> => {
-    const token = await getToken();
-    const response = await fetchHandler(
-      `${TIZZYOS_API_BASE_URL}/api/v0/ride/bookings/driver?page=${page}&limit=${limit}`,
-      {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${token}` },
-      },
-    );
-    if (!response.success) {
-      throw new Error(response.message || 'Failed to fetch bookings');
+    try {
+      const response = await apiRequest<{
+        success?: boolean;
+        message?: string;
+        data: { bookings: Booking[]; total: number };
+      }>(
+        `${TIZZYOS_API_BASE_URL}/api/v0/ride/bookings/driver?page=${page}&limit=${limit}`,
+        { method: 'GET' },
+      );
+
+      if (!response.success) {
+        throw new Error(response.message || 'Failed to fetch bookings');
+      }
+
+      return response.data;
+    } catch (error) {
+      throw new Error(getErrMessage(error, 'Failed to fetch bookings'));
     }
-    return response.data;
   },
 
   /**
@@ -270,20 +231,20 @@ export const driverRideApi = {
    * POST /api/v0/ride/qr/verify-pickup
    */
   verifyPickup: async (qrToken: string): Promise<void> => {
-    const token = await getToken();
-    const response = await fetchHandler(
-      `${TIZZYOS_API_BASE_URL}/api/v0/ride/qr/verify-pickup`,
-      {
+    try {
+      const response = await apiRequest<{
+        success?: boolean;
+        message?: string;
+      }>(`${TIZZYOS_API_BASE_URL}/api/v0/ride/qr/verify-pickup`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
         body: JSON.stringify({ token: qrToken }),
-      },
-    );
-    if (!response.success) {
-      throw new Error(response.message || 'Failed to verify pickup');
+      });
+
+      if (!response.success) {
+        throw new Error(response.message || 'Failed to verify pickup');
+      }
+    } catch (error) {
+      throw new Error(getErrMessage(error, 'Failed to verify pickup'));
     }
   },
 
@@ -292,49 +253,59 @@ export const driverRideApi = {
    * POST /api/v0/ride/qr/verify-drop
    */
   verifyDrop: async (qrToken: string): Promise<void> => {
-    const token = await getToken();
-    const response = await fetchHandler(
-      `${TIZZYOS_API_BASE_URL}/api/v0/ride/qr/verify-drop`,
-      {
+    try {
+      const response = await apiRequest<{
+        success?: boolean;
+        message?: string;
+      }>(`${TIZZYOS_API_BASE_URL}/api/v0/ride/qr/verify-drop`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
         body: JSON.stringify({ token: qrToken }),
-      },
-    );
-    if (!response.success) {
-      throw new Error(response.message || 'Failed to verify drop');
+      });
+
+      if (!response.success) {
+        throw new Error(response.message || 'Failed to verify drop');
+      }
+    } catch (error) {
+      throw new Error(getErrMessage(error, 'Failed to verify drop'));
     }
   },
 
   /**
-   * ✅ FIXED: Accept ride request (REST fallback)
+   * ✅ Accept ride request (REST fallback)
    * POST /api/v0/ride/requests/:requestId/accept
-   * ✅ Returns trackingId, bookingId, and quoteId from backend
    */
   acceptRideRequest: async (requestId: string): Promise<AcceptRideResponse> => {
-    const token = await getToken();
-    const response = await fetchHandler(
-      `${TIZZYOS_API_BASE_URL}/api/v0/ride/requests/${requestId}/accept`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      },
-    );
-    if (!response.success) {
-      throw new Error(response.message || 'Failed to accept ride');
+    try {
+      const response = await apiRequest<{
+        success?: boolean;
+        message?: string;
+        data?: {
+          trackingId?: string;
+          tracking_id?: string;
+          bookingId?: string;
+          booking_id?: string;
+          quoteId?: string;
+          quote_id?: string;
+        };
+      }>(
+        `${TIZZYOS_API_BASE_URL}/api/v0/ride/requests/${requestId}/accept`,
+        { method: 'POST' },
+      );
+
+      if (!response.success) {
+        throw new Error(response.message || 'Failed to accept ride');
+      }
+
+      return {
+        trackingId:
+          response.data?.trackingId || response.data?.tracking_id || '',
+        bookingId:
+          response.data?.bookingId || response.data?.booking_id || '',
+        quoteId: response.data?.quoteId || response.data?.quote_id || '',
+      };
+    } catch (error) {
+      throw new Error(getErrMessage(error, 'Failed to accept ride'));
     }
-    // ✅ Return all 3 IDs from response
-    return {
-      trackingId: response.data?.trackingId || response.data?.tracking_id || '',
-      bookingId: response.data?.bookingId || response.data?.booking_id || '',
-      quoteId: response.data?.quoteId || response.data?.quote_id || '',
-    };
   },
 
   /**
@@ -342,19 +313,20 @@ export const driverRideApi = {
    * POST /api/v0/ride/requests/:requestId/reject
    */
   rejectRideRequest: async (requestId: string): Promise<void> => {
-    const token = await getToken();
-    const response = await fetchHandler(
-      `${TIZZYOS_API_BASE_URL}/api/v0/ride/requests/${requestId}/reject`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      },
-    );
-    if (!response.success) {
-      throw new Error(response.message || 'Failed to reject ride');
+    try {
+      const response = await apiRequest<{
+        success?: boolean;
+        message?: string;
+      }>(
+        `${TIZZYOS_API_BASE_URL}/api/v0/ride/requests/${requestId}/reject`,
+        { method: 'POST' },
+      );
+
+      if (!response.success) {
+        throw new Error(response.message || 'Failed to reject ride');
+      }
+    } catch (error) {
+      throw new Error(getErrMessage(error, 'Failed to reject ride'));
     }
   },
 
@@ -362,28 +334,28 @@ export const driverRideApi = {
    * Collect cash after drop QR verification.
    * POST /api/v0/ride/payments/:bookingId/collect-cash
    */
-  collectCashPayment: async (
-    bookingId: string,
-  ): Promise<any> => {
-    const token = await getToken();
+  collectCashPayment: async (bookingId: string): Promise<any> => {
+    try {
+      const response = await apiRequest<{
+        success?: boolean;
+        message?: string;
+        data?: any;
+      }>(
+        `${TIZZYOS_API_BASE_URL}/api/v0/ride/payments/${bookingId}/collect-cash`,
+        { method: 'POST' },
+      );
 
-    const response = await fetchHandler(
-      `${TIZZYOS_API_BASE_URL}/api/v0/ride/payments/${bookingId}/collect-cash`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      },
-    );
+      if (!response.success) {
+        throw new Error(
+          response.message || 'Failed to confirm cash payment',
+        );
+      }
 
-    if (!response.success) {
+      return response.data;
+    } catch (error) {
       throw new Error(
-        response.message || 'Failed to confirm cash payment',
+        getErrMessage(error, 'Failed to confirm cash payment'),
       );
     }
-
-    return response.data;
   },
 };

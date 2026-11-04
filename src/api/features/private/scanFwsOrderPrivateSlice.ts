@@ -1,16 +1,13 @@
-// ============================================================
-// FILE: src/api/v0/scan.api.ts
-// ============================================================
+// src/api/v0/scan.api.ts
 
-import axios from 'axios';
 import {
   ScanResponse,
   OrderDetails,
   TrackingStatus,
 } from '../../../core/types/orderTypes';
 import { API_ENDPOINTS } from '../../connections/snippet/apiEndpoints';
-import { getToken } from '../../connections/token/tokenSlice';
 import { TIZZYOS_API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
+import { apiRequest } from '../../../core/utils/handler/apiClient';
 
 export interface OrderDetailsData {
   _id: string;
@@ -78,129 +75,74 @@ export interface OrderDetailsResponse {
   data: OrderDetailsData;
 }
 
+// ============================================================
+// VERIFY QR + MARK READY FOR DISPATCH
+// ============================================================
+
 export const verifyQRAndMarkReadyForDispatch = async (
   qrData: any,
 ): Promise<ScanResponse> => {
-  try {
-    const token = await getToken();
-
-    const response = await axios.post(
-      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.VERIFY_QR_AND_MARK_READY_FOR_DISPATCH}`,
-      { qrData },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      },
-    );
-
-    return response.data;
-  } catch (error: any) {
-    console.error('❌ QR Scan API Error:', error);
-    throw new Error(error.response?.data?.error || 'Failed to scan QR code');
-  }
+  return apiRequest<ScanResponse>(
+    `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.VERIFY_QR_AND_MARK_READY_FOR_DISPATCH}`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ qrData }),
+    },
+  );
 };
 
-// ✅ NEW: Get all orders for FWS
+// ============================================================
+// ✅ Get all orders for FWS
+// ============================================================
+
 export const getFWSOrders = async (): Promise<any> => {
-  try {
-    const token = await getToken();
+  const response = await apiRequest<{ data: any }>(
+    `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_FWS_ORDER}`,
+    { method: 'GET' },
+  );
 
-    const response = await axios.get(
-      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_FWS_ORDER}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      },
-    );
-
-    return response.data.data;
-  } catch (error: any) {
-    console.error('❌ Get FWS Orders API Error:', error);
-    throw new Error(
-      error.response?.data?.error || 'Failed to fetch FWS orders',
-    );
-  }
+  return response.data;
 };
 
-// ✅ Get single order details (existing)
+// ============================================================
+// ✅ Get single order details
+// ============================================================
+
 export const getOrderDetails = async (
   orderId: string,
 ): Promise<OrderDetails> => {
-  try {
-    const token = await getToken();
+  const response = await apiRequest<{ data: OrderDetails }>(
+    `${TIZZYOS_API_BASE_URL}/orders/${orderId}`,
+    { method: 'GET' },
+  );
 
-    const response = await axios.get(`${TIZZYOS_API_BASE_URL}/orders/${orderId}`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    return response.data.data;
-  } catch (error: any) {
-    console.error('❌ Get Order API Error:', error);
-    throw new Error(
-      error.response?.data?.error || 'Failed to fetch order details',
-    );
-  }
+  return response.data;
 };
+
+// ============================================================
+// Get tracking status
+// ============================================================
 
 export const getTrackingStatus = async (
   orderId: string,
 ): Promise<TrackingStatus> => {
-  try {
-    const token = await getToken();
-
-    const response = await axios.get(
-      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_TRACKING_HISTORY}?orderId=${orderId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      },
-    );
-
-    return response.data;
-  } catch (error: any) {
-    console.error('❌ Get Tracking API Error:', error);
-    throw new Error(
-      error.response?.data?.error || 'Failed to fetch tracking status',
-    );
-  }
+  return apiRequest<TrackingStatus>(
+    `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_TRACKING_HISTORY}?orderId=${encodeURIComponent(
+      orderId,
+    )}`,
+    { method: 'GET' },
+  );
 };
 
-/**
- * ✅ Fetch order details by orderId
- * @param orderId - The order ID to fetch
- * @returns Promise<OrderDetailsResponse>
- */
+// ============================================================
+// ✅ Fetch order details by orderId
+// ============================================================
+
 export const getOrderById = async (
   orderId: string,
 ): Promise<OrderDetailsResponse> => {
-  try {
-    console.log(`🔄 Fetching order details for: ${orderId}`);
-    const token = await getToken();
-    console.log(
-      'API URL:',
-      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_ORDER_BY_ID}/${orderId}`,
-    );
-    const response = await axios.get<OrderDetailsResponse>(
-      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_ORDER_BY_ID}/${orderId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      },
-    );
-
-    console.log('✅ Order details fetched successfully');
-    return response.data;
-  } catch (error: any) {
-    console.error('❌ getOrderById Error:', error);
-    throw new Error(
-      error.response?.data?.message || 'Failed to fetch order details',
-    );
-  }
+  return apiRequest<OrderDetailsResponse>(
+    `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_ORDER_BY_ID}/${orderId}`,
+    { method: 'GET' },
+  );
 };

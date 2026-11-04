@@ -1,3 +1,5 @@
+// RiderRegistrationScreen.tsx
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
@@ -15,8 +17,6 @@ import {
   Alert,
   Switch,
   PermissionsAndroid,
-  AppState,
-  AppStateStatus,
   LogBox,
   Dimensions,
 } from 'react-native';
@@ -27,7 +27,6 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import Fontisto from 'react-native-vector-icons/Fontisto';
 import FWSOnboardingScreen from '../FWSOnboardingScreen';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { launchImageLibrary } from 'react-native-image-picker';
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 import DeviceInfo from 'react-native-device-info';
@@ -36,6 +35,17 @@ import GetLocation from 'react-native-get-location';
 import LocationService, {
   LocationWithMetadata,
 } from '../../../../utils/shippings/LocationService';
+
+// ✅ API slice
+import {
+  checkShippingForm,
+  updateShipperOnlineStatus,
+  startRiderLocation,
+  registerRider,
+  ShippingData,
+  RiderRegistrationPayload,
+} from '../../../../../api/features/private/riderRegistrationPrivateSlice';
+import { ApiError } from '../../../../../core/utils/handler/apiClient';
 
 const { width } = Dimensions.get('window');
 LogBox.ignoreLogs(['new NativeEventEmitter']);
@@ -61,24 +71,16 @@ type VehicleCategory = 'Car' | 'Bike' | 'Scooter' | 'Auto' | 'Tempo';
 type IdentityType = 'Aadhaar' | 'VoterID' | 'Passport' | 'PAN';
 type ShippingType = 'TRUCK' | 'RIDER';
 
-const TIZZYOS_API_BASE_URL = 'http://10.172.218.121:2000';
-
 const getLocationOnce = (): Promise<{ lat: number; lng: number }> =>
   new Promise((res, rej) => {
-    console.log('📍📱 [GET_LOCATION_ONCE] Getting single location...');
     GetLocation.getCurrentPosition({
       enableHighAccuracy: false,
       timeout: 15000,
     })
       .then(loc => {
-        console.log('📍✅ [GET_LOCATION_ONCE] Location obtained:', {
-          lat: loc.latitude,
-          lng: loc.longitude,
-        });
         res({ lat: loc.latitude, lng: loc.longitude });
       })
       .catch(err => {
-        console.log('📍❌ [GET_LOCATION_ONCE] Error:', err);
         rej(err);
       });
   });
@@ -98,7 +100,6 @@ function useDebounce<T extends (...args: any[]) => any>(
 }
 
 export async function requestLocationPermission(): Promise<boolean> {
-  console.log('🔐📱 [REQUEST_LOCATION_PERMISSION] Called from export');
   return await LocationService.requestPermissions();
 }
 
@@ -122,8 +123,9 @@ async function requestStoragePermission(): Promise<boolean> {
 }
 
 // ============================================================
-// FULL SCREEN LOADER COMPONENT
+// UI COMPONENTS
 // ============================================================
+
 const FullScreenLoader: React.FC<{ visible: boolean; message?: string }> = ({
   visible,
   message = 'Submitting your application...',
@@ -145,10 +147,6 @@ const FullScreenLoader: React.FC<{ visible: boolean; message?: string }> = ({
     </View>
   );
 };
-
-// ============================================================
-// UI COMPONENTS - PURE BLUE THEME
-// ============================================================
 
 const FormCard: React.FC<{
   title: string;
@@ -279,10 +277,9 @@ const UploadField: React.FC<{
   </View>
 );
 
-// Simple Battery Info Card - Shows battery level only
-const BatteryInfoCard: React.FC<{
-  batteryLevel: number;
-}> = ({ batteryLevel }) => {
+const BatteryInfoCard: React.FC<{ batteryLevel: number }> = ({
+  batteryLevel,
+}) => {
   const getBatteryColor = (level: number) => {
     if (level > 50) return '#10B981';
     if (level > 20) return '#F59E0B';
@@ -323,9 +320,7 @@ const BatteryInfoCard: React.FC<{
         </View>
         <View style={styles.batteryStatItem}>
           <Icon name="speed" size={32} color="#2563EB" />
-          <Text style={[styles.batteryStatValue, { color: '#2563EB' }]}>
-            5s
-          </Text>
+          <Text style={[styles.batteryStatValue, { color: '#2563EB' }]}>5s</Text>
           <Text style={styles.batteryStatLabel}>Interval</Text>
         </View>
         <View style={styles.batteryStatItem}>
@@ -352,7 +347,7 @@ const BatteryInfoCard: React.FC<{
 };
 
 // ============================================================
-// MAIN SCREEN COMPONENT
+// MAIN COMPONENT
 // ============================================================
 
 interface ModelItem {
@@ -360,32 +355,7 @@ interface ModelItem {
   value: string;
   originalIndex?: number;
 }
-interface ShippingData {
-  _id: string;
-  status: string;
-  name: string;
-  vehicleBrand: string;
-  vehicleModel: string;
-  isOnline: boolean;
-  lastOnlineAt?: string;
-  lastOfflineAt?: string;
-  shippingType?: string;
-  city?: string;
-  state?: string;
-  vehicleCategory?: string;
-  vehicleNumber?: string;
-  maxOrdersPerDay?: number;
-  kyc?: {
-    drivingLicenseNumber: string;
-    drivingLicenseImage: string;
-    identityType: string;
-    identityNumber: string;
-    identityImage: string;
-    status: string;
-    verified?: boolean;
-  };
-  kycVerified?: boolean;
-}
+
 interface ItemType<T> {
   label: string;
   value: T;
@@ -446,9 +416,6 @@ const RiderRegistrationScreen: React.FC = () => {
   const [shippingId, setShippingId] = useState<string | null>(null);
   const [showOnboarding, setShowOnboarding] = useState<boolean>(false);
 
-  // ============================================================
-  // 📍 LOCATION STATE (UI ONLY)
-  // ============================================================
   const [lastLocation, setLastLocation] = useState<LocationWithMetadata | null>(
     null,
   );
@@ -476,12 +443,8 @@ const RiderRegistrationScreen: React.FC = () => {
   ];
 
   const checkPermissionStatus = useCallback(async () => {
-    console.log('🔐📱 [checkPermissionStatus] Checking permission status...');
     const hasPermission = await LocationService.requestPermissions();
     setHasLocationPermission(hasPermission);
-    console.log(
-      `🔐 [checkPermissionStatus] Permission status: ${hasPermission}`,
-    );
   }, []);
 
   const loadVehicleBrands = useCallback((category: VehicleCategory) => {
@@ -525,7 +488,6 @@ const RiderRegistrationScreen: React.FC = () => {
     else setAllModels([]);
   }, [vehicleCategory, vehicleBrand, loadVehicleModels]);
 
-  // Get battery level
   const updateBatteryLevel = async () => {
     try {
       const level = await DeviceInfo.getBatteryLevel();
@@ -535,15 +497,7 @@ const RiderRegistrationScreen: React.FC = () => {
     }
   };
 
-  // ============================================================
-  // 📱 MAIN useEffect - MOUNT & UNMOUNT
-  // ============================================================
   useEffect(() => {
-    console.log('==================================================');
-    console.log('📱 [SCREEN] ════════════════════════════════════');
-    console.log('📱 [SCREEN] 🏗️ MOUNTING RiderRegistrationScreen');
-    console.log('==================================================');
-
     isMounted.current = true;
 
     Animated.parallel([
@@ -562,53 +516,19 @@ const RiderRegistrationScreen: React.FC = () => {
     checkPermissionStatus();
     updateBatteryLevel();
 
-    // ============================================================
-    // 📍 SUBSCRIBE TO LOCATION UPDATES - UI ONLY
-    // LocationService owns the API upload
-    // ============================================================
-
-    console.log('📱 [SCREEN] 📞 Subscribing to location updates (UI only)...');
-
     locationSubscriptionRef.current = LocationService.subscribeToLocation(
       (locationData: LocationWithMetadata) => {
-        console.log('==================================================');
-        console.log('📍 [SCREEN] ════════════════════════════════════');
-        console.log(
-          `📍 [SCREEN] 📍 LOCATION UPDATE #${++locationUpdateCountRef.current}`,
-        );
-        console.log(`📍 [SCREEN] 📅 Time: ${new Date().toISOString()}`);
-        console.log('📍 [SCREEN] ════════════════════════════════════');
-        console.log('📍 [SCREEN] 📊 Location Data:', {
-          lat: locationData.latitude,
-          lng: locationData.longitude,
-          accuracy: locationData.accuracy,
-          speed: locationData.speed,
-          batteryLevel: locationData.batteryLevel,
-          networkType: locationData.networkType,
-          isFresh: locationData.isFresh,
-          isCached: locationData.isCached,
-        });
-        console.log('==================================================');
+        if (!isMounted.current) return;
 
-        if (!isMounted.current) {
-          console.log('📍 [SCREEN] ⏸️ Screen unmounted, ignoring location');
-          return;
-        }
-
-        // ✅ ONLY UPDATE UI - NO API CALL HERE
-        // LocationService handles the API upload
         setLastLocation(locationData);
         setIsLocationAvailable(true);
       },
     );
 
     return () => {
-      console.log('📱 [SCREEN] 🧹 UNMOUNTING RiderRegistrationScreen');
       isMounted.current = false;
 
-      // Unsubscribe from location updates
       if (locationSubscriptionRef.current) {
-        console.log('📱 [SCREEN] 📞 Unsubscribing from location updates...');
         locationSubscriptionRef.current();
         locationSubscriptionRef.current = null;
       }
@@ -616,12 +536,8 @@ const RiderRegistrationScreen: React.FC = () => {
   }, []);
 
   const handleRequestPermissions = async () => {
-    console.log(
-      '🔐📱 [handleRequestPermissions] Requesting location permissions...',
-    );
     const granted = await requestLocationPermission();
     setHasLocationPermission(granted);
-    console.log(`🔐 [handleRequestPermissions] Permission granted: ${granted}`);
     Toast.show({
       type: granted ? 'success' : 'error',
       text1: granted ? 'Permission Granted' : 'Permission Required',
@@ -629,183 +545,107 @@ const RiderRegistrationScreen: React.FC = () => {
     });
   };
 
-  // ============================================================
-  // 🟢 GO ONLINE WITH LOCATION
-  // ============================================================
   const goOnlineWithLocation = async (
     shippingId: string,
-    authToken: string,
   ): Promise<boolean> => {
-    console.log('🟢🚀 [GO_ONLINE_WITH_LOCATION] ===== GOING ONLINE =====');
-    console.log(`🟢🚀 [GO_ONLINE_WITH_LOCATION] Shipping ID: ${shippingId}`);
-
     try {
-      console.log('📍 [GO_ONLINE_WITH_LOCATION] Getting initial location...');
       const location = await LocationService.getCurrentLocationOnce();
 
       if (location) {
-        console.log(
-          `📍 [GO_ONLINE_WITH_LOCATION] Initial location: ${location.latitude}, ${location.longitude}`,
-        );
-
-        console.log(
-          '🌐 [GO_ONLINE_WITH_LOCATION] Sending start action to backend...',
-        );
-        await fetch(`${TIZZYOS_API_BASE_URL}/api/v0/track/rider/location`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authToken}`,
-          },
-          body: JSON.stringify({
-            shippingId: shippingId,
-            action: 'start',
-            latitude: location.latitude,
-            longitude: location.longitude,
-          }),
-        });
-        console.log(
-          '✅ [GO_ONLINE_WITH_LOCATION] Start action sent successfully',
-        );
-      } else {
-        console.log(
-          '⚠️ [GO_ONLINE_WITH_LOCATION] No initial location available',
-        );
+        try {
+          await startRiderLocation(
+            shippingId,
+            location.latitude,
+            location.longitude,
+          );
+        } catch {
+          // Non-critical — continue
+        }
       }
-    } catch (error) {
-      console.log(
-        '⚠️ [GO_ONLINE_WITH_LOCATION] Error sending start action:',
-        error,
-      );
+    } catch {
+      // Non-critical — continue
     }
 
-    console.log('🎯 [GO_ONLINE_WITH_LOCATION] Starting continuous tracking...');
-
-    // ✅ PASS shippingId to startTracking
     const success = await LocationService.startTracking(shippingId);
 
     if (isMounted.current && success) {
       setIsTrackingOn(true);
-      console.log('✅ [GO_ONLINE_WITH_LOCATION] Tracking started successfully');
-    } else {
-      console.log('❌ [GO_ONLINE_WITH_LOCATION] Failed to start tracking');
     }
     return success;
   };
 
-  // ============================================================
-  // 🛑 STOP LIVE TRACKING
-  // ============================================================
   const stopLiveTracking = async (): Promise<boolean> => {
-    console.log('📍🛑 [STOP_LIVE_TRACKING] ===== STOPPING LIVE TRACKING =====');
     const success = await LocationService.stopTracking();
     if (isMounted.current && success) {
       setIsTrackingOn(false);
-      console.log('📍✅ [STOP_LIVE_TRACKING] Live tracking stopped');
     }
     return success;
   };
 
   useFocusEffect(
     useCallback(() => {
-      console.log(
-        '📱🔍 [USE_FOCUS_EFFECT] Screen focused - fetching shipping data',
-      );
       fetchShippingData();
       checkPermissionStatus();
     }, []),
   );
 
-  const getAuthToken = async (): Promise<string | null> => {
-    try {
-      const token = await AsyncStorage.getItem('authToken');
-      console.log(`🔑 [GET_AUTH_TOKEN] Auth token present: ${!!token}`);
-      return token;
-    } catch (error) {
-      console.log('🔑❌ [GET_AUTH_TOKEN] Error:', error);
-      return null;
-    }
-  };
-
   const fetchShippingData = async () => {
     if (!isMounted.current) return;
+
     try {
       setCheckingExisting(true);
-      const token = await getAuthToken();
-      if (!token) {
-        console.log('🔑 [FETCH_SHIPPING] No auth token found');
-        setCheckingExisting(false);
+
+      const data = await checkShippingForm();
+
+      if (data.exists && data.shippingData) {
+        const reg = data.shippingData;
+        setShippingId(reg._id);
+        setShippingData(reg);
+        setIsOnline(reg.isOnline || false);
+        setLastOnlineAt(reg.lastOnlineAt || null);
+        setLastOfflineAt(reg.lastOfflineAt || null);
+        setShowOnboarding(false);
+
+        if (reg.kyc && isMounted.current) {
+          setDrivingLicenseNumber(reg.kyc.drivingLicenseNumber || '');
+          setIdentityType((reg.kyc.identityType as IdentityType) || null);
+          setIdentityNumber(reg.kyc.identityNumber || '');
+          if (reg.kyc.drivingLicenseImage)
+            setDrivingLicenseImage(reg.kyc.drivingLicenseImage);
+          if (reg.kyc.identityImage) setIdentityImage(reg.kyc.identityImage);
+        }
+
+        const approved = reg.status === 'approved';
+        const kycVerified =
+          reg.kyc?.status === 'verified' ||
+          reg.kyc?.verified === true ||
+          reg.kycVerified === true;
+
+        if (approved && kycVerified && reg.isOnline) {
+          await LocationService.startTracking(reg._id);
+          if (isMounted.current) setIsTrackingOn(true);
+        }
+      } else {
         setShowOnboarding(true);
-        return;
+      }
+    } catch (error: any) {
+      if (__DEV__) {
+        console.warn('[fetchShippingData]', error);
       }
 
-      console.log('🌐 [FETCH_SHIPPING] Fetching shipping data from backend...');
-      const res = await fetch(`${TIZZYOS_API_BASE_URL}/api/v0/shipping/form/check`, {
-        method: 'GET',
-        headers: {
-          Accept: 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.exists && data.shippingData) {
-          const reg = data.shippingData;
-          console.log(`✅ [FETCH_SHIPPING] Shipping data found: ${reg._id}`);
-          setShippingId(reg._id);
-          setShippingData(reg);
-          setIsOnline(reg.isOnline || false);
-          setLastOnlineAt(reg.lastOnlineAt || null);
-          setLastOfflineAt(reg.lastOfflineAt || null);
-          setShowOnboarding(false);
-
-          if (reg.kyc && isMounted.current) {
-            setDrivingLicenseNumber(reg.kyc.drivingLicenseNumber || '');
-            setIdentityType((reg.kyc.identityType as IdentityType) || null);
-            setIdentityNumber(reg.kyc.identityNumber || '');
-            if (reg.kyc.drivingLicenseImage)
-              setDrivingLicenseImage(reg.kyc.drivingLicenseImage);
-            if (reg.kyc.identityImage) setIdentityImage(reg.kyc.identityImage);
-          }
-
-          const approved = reg.status === 'approved';
-          const kycVerified =
-            reg.kyc?.status === 'verified' ||
-            reg.kyc?.verified === true ||
-            reg.kycVerified === true;
-
-          if (approved && kycVerified && reg.isOnline) {
-            console.log(
-              '🔄 [FETCH_SHIPPING] Restarting tracking for existing online session',
-            );
-            // ✅ PASS shippingId to startTracking
-            await LocationService.startTracking(reg._id);
-            if (isMounted.current) setIsTrackingOn(true);
-          }
-        } else {
-          console.log('🔍 [FETCH_SHIPPING] No shipping data found');
-          setShowOnboarding(true);
-        }
-      } else if (res.status === 404) {
-        console.log('🔍 [FETCH_SHIPPING] No shipping registration found (404)');
+      if (error instanceof ApiError && error.status === 404) {
         if (isMounted.current) {
           setShippingData(null);
           setShowOnboarding(true);
         }
       }
-    } catch (error) {
-      console.log('❌ [FETCH_SHIPPING] Error fetching shipping data:', error);
     } finally {
       if (isMounted.current) setCheckingExisting(false);
     }
   };
 
   const toggleOnlineStatusCore = async () => {
-    console.log('🔄🟢 [TOGGLE_ONLINE_CORE] ===== TOGGLING ONLINE STATUS =====');
-
     if (!shippingData) {
-      console.log('🔄❌ [TOGGLE_ONLINE_CORE] No shipping data');
       Toast.show({
         type: 'error',
         text1: 'No Registration',
@@ -821,7 +661,6 @@ const RiderRegistrationScreen: React.FC = () => {
       shippingData.kycVerified === true;
 
     if (!approved || !kycVerified) {
-      console.log('🔄❌ [TOGGLE_ONLINE_CORE] Not approved/verified');
       Toast.show({
         type: 'error',
         text1: 'Verification Pending',
@@ -831,90 +670,50 @@ const RiderRegistrationScreen: React.FC = () => {
       return;
     }
 
-    if (isUpdatingOnlineStatus) {
-      console.log('🔄⚠️ [TOGGLE_ONLINE_CORE] Already updating, returning');
-      return;
-    }
+    if (isUpdatingOnlineStatus) return;
     setIsUpdatingOnlineStatus(true);
 
     try {
-      const token = await getAuthToken();
-      if (!token) {
-        console.log('🔄❌ [TOGGLE_ONLINE_CORE] No auth token');
-        navigation.navigate('Login');
-        return;
-      }
-
       const newStatus = !isOnline;
-      console.log(
-        `🔄 [TOGGLE_ONLINE_CORE] Toggling online status to: ${newStatus}`,
-      );
       setIsOnline(newStatus);
 
-      console.log(
-        '🌐 [TOGGLE_ONLINE_CORE] Sending online status to backend...',
-      );
-      const res = await fetch(`${TIZZYOS_API_BASE_URL}/api/v0/shipper/online-status`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ isOnline: newStatus }),
-      });
+      const res = await updateShipperOnlineStatus(newStatus);
 
-      const data = await res.json();
-      console.log('🌐 [TOGGLE_ONLINE_CORE] Response:', data);
-
-      if (res.ok && data.success) {
-        const now = new Date().toISOString();
-        if (data.data) {
-          setLastOnlineAt(data.data.lastOnlineAt || now);
-          setLastOfflineAt(data.data.lastOfflineAt || now);
-        } else {
-          if (newStatus) setLastOnlineAt(now);
-          else setLastOfflineAt(now);
-        }
-
-        ReactNativeHapticFeedback.trigger(
-          newStatus ? 'notificationSuccess' : 'notificationWarning',
-          hapticOptions,
-        );
-
-        if (newStatus) {
-          console.log(
-            '🟢 [TOGGLE_ONLINE_CORE] Going online - starting location tracking',
-          );
-          await goOnlineWithLocation(shippingData._id, token);
-          Toast.show({
-            type: 'success',
-            text1: 'You are now Online',
-            text2: 'Location tracking enabled',
-          });
-        } else {
-          console.log(
-            '🔴 [TOGGLE_ONLINE_CORE] Going offline - stopping location tracking',
-          );
-          await stopLiveTracking();
-          Toast.show({
-            type: 'info',
-            text1: 'You are now Offline',
-            text2: 'Tracking stopped',
-          });
-        }
+      const now = new Date().toISOString();
+      if (res.data) {
+        setLastOnlineAt(res.data.lastOnlineAt || now);
+        setLastOfflineAt(res.data.lastOfflineAt || now);
       } else {
-        setIsOnline(!newStatus);
-        throw new Error(data.message || 'Failed to update');
+        if (newStatus) setLastOnlineAt(now);
+        else setLastOfflineAt(now);
+      }
+
+      ReactNativeHapticFeedback.trigger(
+        newStatus ? 'notificationSuccess' : 'notificationWarning',
+        hapticOptions,
+      );
+
+      if (newStatus) {
+        await goOnlineWithLocation(shippingData._id);
+        Toast.show({
+          type: 'success',
+          text1: 'You are now Online',
+          text2: 'Location tracking enabled',
+        });
+      } else {
+        await stopLiveTracking();
+        Toast.show({
+          type: 'info',
+          text1: 'You are now Offline',
+          text2: 'Tracking stopped',
+        });
       }
     } catch (error: any) {
-      console.log(
-        '❌ [TOGGLE_ONLINE_CORE] Error toggling online status:',
-        error,
-      );
+      setIsOnline(!isOnline);
       Toast.show({
         type: 'error',
         text1: 'Update Failed',
-        text2: error.message,
+        text2: error?.message || 'Failed to update online status',
       });
     } finally {
       if (isMounted.current) setIsUpdatingOnlineStatus(false);
@@ -923,17 +722,8 @@ const RiderRegistrationScreen: React.FC = () => {
 
   const toggleOnlineStatus = useDebounce(toggleOnlineStatusCore, 1500);
 
-  // ============================================================
-  // 📍 TOGGLE LOCATION TRACKING
-  // ============================================================
   const toggleLocationTrackingCore = async () => {
-    console.log(
-      '📍🔄 [TOGGLE_TRACKING_CORE] ===== TOGGLING LOCATION TRACKING =====',
-    );
-    console.log(`📍🔄 [TOGGLE_TRACKING_CORE] isTrackingOn: ${isTrackingOn}`);
-
     if (!shippingData) {
-      console.log('📍❌ [TOGGLE_TRACKING_CORE] No shipping data');
       Toast.show({
         type: 'error',
         text1: 'No Registration',
@@ -943,7 +733,6 @@ const RiderRegistrationScreen: React.FC = () => {
     }
 
     if (!isOnline) {
-      console.log('📍❌ [TOGGLE_TRACKING_CORE] Not online');
       Toast.show({
         type: 'error',
         text1: 'Go Online First',
@@ -952,24 +741,12 @@ const RiderRegistrationScreen: React.FC = () => {
       return;
     }
 
-    if (isUpdatingTrackingStatus) {
-      console.log('📍⚠️ [TOGGLE_TRACKING_CORE] Already updating, returning');
-      return;
-    }
+    if (isUpdatingTrackingStatus) return;
 
     setIsUpdatingTrackingStatus(true);
 
     try {
-      const token = await getAuthToken();
-      if (!token) {
-        console.log('📍❌ [TOGGLE_TRACKING_CORE] No auth token');
-        navigation.navigate('Login');
-        return;
-      }
-
       if (!isTrackingOn) {
-        console.log('📍🟢 [TOGGLE_TRACKING_CORE] Starting location tracking');
-        // ✅ PASS shippingId to startTracking
         const success = await LocationService.startTracking(shippingData._id);
         if (success && isMounted.current) {
           setIsTrackingOn(true);
@@ -984,7 +761,6 @@ const RiderRegistrationScreen: React.FC = () => {
           });
         }
       } else {
-        console.log('📍🔴 [TOGGLE_TRACKING_CORE] Stopping location tracking');
         const success = await LocationService.stopTracking();
         if (success && isMounted.current) {
           setIsTrackingOn(false);
@@ -1000,14 +776,10 @@ const RiderRegistrationScreen: React.FC = () => {
         }
       }
     } catch (error: any) {
-      console.log(
-        '📍❌ [TOGGLE_TRACKING_CORE] Error toggling tracking:',
-        error,
-      );
       Toast.show({
         type: 'error',
         text1: 'Update Failed',
-        text2: error.message,
+        text2: error?.message || 'Failed to update tracking',
       });
     } finally {
       if (isMounted.current) setIsUpdatingTrackingStatus(false);
@@ -1097,32 +869,8 @@ const RiderRegistrationScreen: React.FC = () => {
     return true;
   };
 
-  const submitRegistration = async (formData: any) => {
-    const token = await getAuthToken();
-    if (!token) throw new Error('Auth token missing');
-    const res = await fetch(`${TIZZYOS_API_BASE_URL}/api/v0/shipping/register`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(formData),
-    });
-    if (!res.ok) {
-      const err = await res.text();
-      if (res.status === 409) throw new Error('Already registered');
-      if (res.status === 401) {
-        await AsyncStorage.removeItem('authToken');
-        throw new Error('Session expired');
-      }
-      throw new Error(err);
-    }
-    return await res.json();
-  };
-
   const proceedWithRegistration = async () => {
-    const formData = {
+    const payload: RiderRegistrationPayload = {
       name: name.trim(),
       shippingType: shippingType,
       city: city.trim(),
@@ -1143,19 +891,15 @@ const RiderRegistrationScreen: React.FC = () => {
       agreedToTerms: true,
       agreedAt: new Date().toISOString(),
     };
-    const res = await submitRegistration(formData);
+
+    const res = await registerRider(payload);
     const newId = res.shipping?._id || res._id || res.id;
     if (!newId) throw new Error('No ID received');
     navigation.navigate('RegistrationSuccess', { shippingId: newId });
   };
 
-  const delay = (ms: number): Promise<void> => {
-    return new Promise(resolve => {
-      setTimeout(() => {
-        resolve();
-      }, ms);
-    });
-  };
+  const delay = (ms: number): Promise<void> =>
+    new Promise(resolve => setTimeout(resolve, ms));
 
   const handleSubmit = async () => {
     if (!validateForm()) return;
@@ -1170,17 +914,16 @@ const RiderRegistrationScreen: React.FC = () => {
       await proceedWithRegistration();
       setLoadingMessage('Registration successful! Redirecting...');
     } catch (error: any) {
-      if (error.message.includes('already'))
-        Alert.alert('Duplicate', error.message);
-      else if (error.message.includes('expired')) {
+      const msg = error?.message || 'Registration failed';
+      if (msg.includes('already')) Alert.alert('Duplicate', msg);
+      else if (msg.includes('expired')) {
         Toast.show({
           type: 'error',
           text1: 'Session Expired',
           text2: 'Login again',
         });
         setTimeout(() => navigation.navigate('Login'), 1500);
-      } else
-        Toast.show({ type: 'error', text1: 'Failed', text2: error.message });
+      } else Toast.show({ type: 'error', text1: 'Failed', text2: msg });
     } finally {
       setLoading(false);
     }
@@ -1498,7 +1241,6 @@ const RiderRegistrationScreen: React.FC = () => {
     );
   }
 
-  // Registration Form
   return (
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
@@ -1734,10 +1476,8 @@ const RiderRegistrationScreen: React.FC = () => {
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Full Screen Loader */}
       <FullScreenLoader visible={loading} message={loadingMessage} />
 
-      {/* Modals */}
       <Modal
         visible={showShippingTypeModal}
         animationType="slide"
@@ -2044,6 +1784,10 @@ const RiderRegistrationScreen: React.FC = () => {
   );
 };
 
+// ============================================================
+// STYLES (same as before)
+// ============================================================
+
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F8FAFC' },
   container: { flex: 1 },
@@ -2065,8 +1809,6 @@ const styles = StyleSheet.create({
     color: '#64748B',
     textAlign: 'center',
   },
-
-  // Full Screen Loader Styles
   fullScreenLoader: {
     position: 'absolute',
     top: 0,
@@ -2119,8 +1861,6 @@ const styles = StyleSheet.create({
   dot1: { opacity: 0.4 },
   dot2: { opacity: 0.7 },
   dot3: { opacity: 1 },
-
-  // Form Header - Pure Blue
   formHeader: { marginBottom: 24, marginTop: 8 },
   formHeaderGradient: {
     backgroundColor: '#2563EB',
@@ -2143,8 +1883,6 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.9)',
     marginTop: 2,
   },
-
-  // Progress Steps
   progressSteps: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2181,8 +1919,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginBottom: 20,
   },
-
-  // Form Card
   formCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
@@ -2209,8 +1945,6 @@ const styles = StyleSheet.create({
     marginLeft: 10,
   },
   formCardContent: { padding: 20 },
-
-  // Input Fields
   inputFieldContainer: { marginBottom: 18 },
   inputLabelRow: {
     flexDirection: 'row',
@@ -2270,8 +2004,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginLeft: 10,
   },
-
-  // Terms
   termsContainer: { marginVertical: 16 },
   checkboxRow: {
     flexDirection: 'row',
@@ -2296,8 +2028,6 @@ const styles = StyleSheet.create({
   checkboxBoxChecked: { backgroundColor: '#2563EB', borderColor: '#2563EB' },
   checkboxText: { fontSize: 14, fontWeight: '600', color: '#1E293B' },
   checkboxSubtext: { fontSize: 11, color: '#64748B', marginTop: 2 },
-
-  // Submit Button
   submitBtn: {
     marginTop: 12,
     marginBottom: 12,
@@ -2320,8 +2050,6 @@ const styles = StyleSheet.create({
     color: '#64748B',
     marginBottom: 20,
   },
-
-  // Dashboard Styles
   dashboardHeader: {
     backgroundColor: '#2563EB',
     borderRadius: 20,
@@ -2514,8 +2242,6 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   newRegBtnText: { fontSize: 14, fontWeight: '600', color: '#2563EB' },
-
-  // Battery Card
   batteryCard: {
     backgroundColor: '#1E293B',
     borderRadius: 20,
@@ -2548,8 +2274,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   batteryProgressFill: { height: '100%', borderRadius: 3 },
-
-  // Modals
   modalContainer: { flex: 1, backgroundColor: '#FFFFFF' },
   modalHeader: {
     flexDirection: 'row',

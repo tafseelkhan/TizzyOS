@@ -1,15 +1,15 @@
 // api/features/private/driverLocationOnlinePrivateSlice.ts
 
-import axios, { AxiosError, AxiosResponse } from 'axios';
 import { Platform } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { TIZZYOS_API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
 import { API_ENDPOINTS } from '../../connections/snippet/apiEndpoints';
-import { getToken } from '../../connections/token/tokenSlice';
-import { decode as base64Decode } from 'base-64';
+import {
+  apiRequest,
+  ApiError,
+} from '../../../core/utils/handler/apiClient';
 
 // ================================
-// INTERFACES / TYPES
+// INTERFACES / TYPES (same)
 // ================================
 
 export interface DriverStatusResponse {
@@ -74,7 +74,6 @@ export interface OnlineCountResponse {
   };
 }
 
-// ✅ Location Update Request
 export interface LocationUpdateRequest {
   latitude: number;
   longitude: number;
@@ -96,55 +95,15 @@ export interface LocationUpdateResponse {
 }
 
 // ================================
-// FETCH HANDLER WITH AXIOS
+// PLATFORM HEADERS — ek jagah
 // ================================
 
-interface FetchHandlerOptions {
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
-  headers?: Record<string, string>;
-  body?: any;
-}
-
-async function fetchHandler(
-  url: string,
-  options: FetchHandlerOptions,
-): Promise<any> {
-  try {
-    const config: any = {
-      method: options.method,
-      url: url,
-      headers: options.headers || {},
-    };
-
-    if (options.body) {
-      config.data = options.body;
-    }
-
-    const response: AxiosResponse = await axios(config);
-
-    return response.data;
-  } catch (error: any) {
-    if (axios.isAxiosError(error)) {
-      const axiosError = error as AxiosError;
-      if (axiosError.response) {
-        throw (
-          axiosError.response.data || {
-            success: false,
-            message: 'Server error',
-          }
-        );
-      } else if (axiosError.request) {
-        throw {
-          success: false,
-          message: 'Network error - No response from server',
-        };
-      } else {
-        throw { success: false, message: axiosError.message };
-      }
-    }
-    throw error;
-  }
-}
+const platformHeaders: Record<string, string> =
+  Platform.OS === 'android'
+    ? { 'X-Platform': 'android' }
+    : Platform.OS === 'ios'
+    ? { 'X-Platform': 'ios' }
+    : {};
 
 // ================================
 // DRIVER STATUS API
@@ -158,29 +117,14 @@ export const driverStatusApi = {
   updateOnlineStatus: async (
     isOnline: boolean,
   ): Promise<UpdateOnlineStatusResponse> => {
-    const token: string | null = await getToken();
-    if (!token) {
-      throw { success: false, message: 'No authentication token found' };
-    }
-
-    const url = `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.UPDATE_DRIVER_ONLINE_STATUS}`;
-
-    try {
-      const response = await fetchHandler(url, {
+    return apiRequest<UpdateOnlineStatusResponse>(
+      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.UPDATE_DRIVER_ONLINE_STATUS}`,
+      {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-          ...(Platform.OS === 'android' && { 'X-Platform': 'android' }),
-          ...(Platform.OS === 'ios' && { 'X-Platform': 'ios' }),
-        },
-        body: { isOnline },
-      });
-
-      return response;
-    } catch (error: any) {
-      throw error;
-    }
+        headers: platformHeaders,
+        body: JSON.stringify({ isOnline } as UpdateOnlineStatusRequest),
+      },
+    );
   },
 
   /**
@@ -188,27 +132,13 @@ export const driverStatusApi = {
    * GET /driver/status
    */
   getDriverStatus: async (): Promise<DriverStatusResponse> => {
-    const token: string | null = await getToken();
-    if (!token) {
-      throw { success: false, message: 'No authentication token found' };
-    }
-
-    const url = `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_DRIVER_AVAILABLE_STATUS}`;
-
-    try {
-      const response = await fetchHandler(url, {
+    return apiRequest<DriverStatusResponse>(
+      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_DRIVER_AVAILABLE_STATUS}`,
+      {
         method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          ...(Platform.OS === 'android' && { 'X-Platform': 'android' }),
-          ...(Platform.OS === 'ios' && { 'X-Platform': 'ios' }),
-        },
-      });
-
-      return response;
-    } catch (error: any) {
-      throw error;
-    }
+        headers: platformHeaders,
+      },
+    );
   },
 
   /**
@@ -218,61 +148,31 @@ export const driverStatusApi = {
   toggleDriverStatus: async (
     socketId: string | null,
   ): Promise<ToggleStatusResponse> => {
-    const token: string | null = await getToken();
-    if (!token) {
-      throw { success: false, message: 'No authentication token found' };
-    }
-
-    const url = `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.TOGGLE_DRIVER_STATUS}`;
-
-    try {
-      const response = await fetchHandler(url, {
+    return apiRequest<ToggleStatusResponse>(
+      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.TOGGLE_DRIVER_STATUS}`,
+      {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-          ...(Platform.OS === 'android' && { 'X-Platform': 'android' }),
-          ...(Platform.OS === 'ios' && { 'X-Platform': 'ios' }),
-        },
-        body: { socketId: socketId || null },
-      });
-
-      return response;
-    } catch (error: any) {
-      throw error;
-    }
+        headers: platformHeaders,
+        body: JSON.stringify({ socketId: socketId || null }),
+      },
+    );
   },
 
   /**
-   * ✅ ✅ NEW: Update Driver Location
+   * ✅ Update Driver Location
    * POST /locations/driver
    */
   updateDriverLocation: async (
     locationData: LocationUpdateRequest,
   ): Promise<LocationUpdateResponse> => {
-    const token: string | null = await getToken();
-    if (!token) {
-      throw { success: false, message: 'No authentication token found' };
-    }
-
-    const url = `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.UPDATE_DRIVER_LOCATION}`;
-
-    try {
-      const response = await fetchHandler(url, {
+    return apiRequest<LocationUpdateResponse>(
+      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.UPDATE_DRIVER_LOCATION}`,
+      {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-          ...(Platform.OS === 'android' && { 'X-Platform': 'android' }),
-          ...(Platform.OS === 'ios' && { 'X-Platform': 'ios' }),
-        },
-        body: locationData,
-      });
-
-      return response;
-    } catch (error: any) {
-      throw error;
-    }
+        headers: platformHeaders,
+        body: JSON.stringify(locationData),
+      },
+    );
   },
 };
 

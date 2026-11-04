@@ -1,10 +1,4 @@
-// PendingOrdersScreen.tsx - FULL FINAL CODE
-// 🔥 FIXED: QR Code visibility based on qrOwnershipHistory ONLY
-// 🔥 FIXED: Authentication - userId always decoded from JWT token (no caching)
-// 🔥 FIXED: OTP Delivery - Using new production-grade OTP API
-// 🔥 FIXED: OTP Modal - Keyboard now works properly with visible TextInput
-// 🔥 FIXED: Duplicate scan detection with proper error handling
-// 🔥 FIXED: Current/Available/Completed orders with proper categorization
+// PendingOrdersScreen.tsx
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
@@ -29,10 +23,8 @@ import {
   TextInput,
   KeyboardAvoidingView,
 } from 'react-native';
-import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-// ✅ With these imports
 import { Camera, CameraType } from 'react-native-camera-kit';
 import type { CameraApi } from 'react-native-camera-kit';
 import { PERMISSIONS, request, check, RESULTS } from 'react-native-permissions';
@@ -41,328 +33,66 @@ import MaterialIcon from 'react-native-vector-icons/MaterialIcons';
 import MaterialCommunityIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import FontAwesome5 from 'react-native-vector-icons/FontAwesome5';
 
+// ✅ API slice
+import {
+  getMyAssignedOrders,
+  acceptAssignment,
+  handoverViaQrDelivery,
+  initiateDelivery,
+  verifyDeliveryOTP,
+  requestNewDeliveryOTP,
+  getTrackingStatus,
+  getOrderQRCode,
+  OrderData,
+  OrderWithBasicInfo,
+  TrackingStatusResponse,
+  TrackingHistoryEntry,
+  QRCodeData,
+} from '../../../../api/features/private/pendingOrdersPrivateSlice';
+import { ApiError } from '../../../../core/utils/handler/apiClient';
+
 const { width, height } = Dimensions.get('window');
 
 // ============================================
-// CONSTANTS
-// ============================================
-
-const TIZZYOS_API_BASE_URL = 'http://10.172.218.121:2000';
-const SHIPPING_API_URL = `${TIZZYOS_API_BASE_URL}/api/v0/delivery/tracking/shipping`;
-const DELIVERY_TRACKING_API_URL = `${TIZZYOS_API_BASE_URL}/api/v0/delivery/tracking/shipping`;
-const TRACKING_API_URL = `${TIZZYOS_API_BASE_URL}/api/v0/tracking`;
-const DELIVERY_API_URL = `${TIZZYOS_API_BASE_URL}/api/v0/buyer/order`;
-
-// ============================================
-// HELPER: Get Auth Token & User ID
+// AUTH HELPERS
 // ============================================
 
 const getAuthToken = async (): Promise<string | null> => {
   return await AsyncStorage.getItem('authToken');
 };
 
-/**
- * 🔥 FIXED: Get userId directly from JWT token
- * Never cache userId - always decode from current token
- */
 const getUserIdFromToken = async (): Promise<string | null> => {
   try {
-    console.log('\n🔐 ========== AUTH DEBUG ==========');
     const token = await getAuthToken();
-    console.log('🔑 Token present:', !!token);
-    if (token) {
-      console.log('🔑 Token length:', token.length);
-      console.log('🔑 Token preview:', token.substring(0, 50) + '...');
-    }
-
-    if (!token) {
-      console.log('❌ No auth token found');
-      console.log('================================\n');
-      return null;
-    }
+    if (!token) return null;
 
     const parts = token.split('.');
-    if (parts.length !== 3) {
-      console.log('❌ Invalid token format');
-      console.log('================================\n');
-      return null;
-    }
+    if (parts.length !== 3) return null;
 
     const payload = JSON.parse(atob(parts[1]));
-    console.log('📋 Decoded Payload:', JSON.stringify(payload, null, 2));
-
     const userId =
       payload.userId || payload.sub || payload.id || payload._id || null;
-    console.log('👤 User ID From Token:', userId);
-    console.log('================================\n');
 
-    if (!userId) {
-      console.warn('⚠️ No userId found in token payload');
-      return null;
-    }
+    if (!userId) return null;
 
     // Remove stale cached userId
     try {
       const cachedUserId = await AsyncStorage.getItem('userId');
       if (cachedUserId && cachedUserId !== userId) {
-        console.warn(
-          `🧹 Cleaning up stale userId cache: ${cachedUserId} -> ${userId}`,
-        );
         await AsyncStorage.removeItem('userId');
       }
-    } catch (cacheError) {
-      console.warn('Cache cleanup error (non-critical):', cacheError);
+    } catch {
+      // ignore
     }
 
     return userId;
-  } catch (error) {
-    console.error('❌ Error decoding userId from token:', error);
-    console.log('================================\n');
+  } catch {
     return null;
   }
 };
 
-/**
- * 🧹 Clear all authentication state on logout
- */
-const clearAuthState = async (): Promise<void> => {
-  try {
-    console.log('\n🧹 ========== CLEARING AUTH STATE ==========');
-    const keysToRemove = [
-      'authToken',
-      'userId',
-      'selectedAccount',
-      'activeAccount',
-      'groupData',
-      'userData',
-      'fwsData',
-      'truckData',
-      'riderData',
-    ];
-
-    for (const key of keysToRemove) {
-      const exists = await AsyncStorage.getItem(key);
-      if (exists !== null) {
-        await AsyncStorage.removeItem(key);
-        console.log(`   ✅ Removed: ${key}`);
-      }
-    }
-    console.log('✅ Auth state cleared successfully');
-    console.log('========================================\n');
-  } catch (error) {
-    console.error('❌ Error clearing auth state:', error);
-  }
-};
-
 // ============================================
-// INTERFACES
-// ============================================
-
-interface PendingAssignment {
-  assignmentId: string;
-  assigneeId: string;
-  assigneeType: string;
-  status: 'PENDING_ACCEPTANCE' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED';
-  assignedAt: string;
-  expiresAt: string;
-}
-
-interface QrOwnershipHistory {
-  holderId: string;
-  holderType: string;
-  holderName: string;
-  receivedAt: string;
-  releasedAt: string | null;
-}
-
-interface TrackingHistoryEntry {
-  status: string;
-  holderType?: string;
-  holderId?: string;
-  note?: string;
-  createdAt: string;
-  performedByType?: string;
-  fwsProcessingStage?: string;
-  scanInfo?: {
-    status: string;
-    holderType: string;
-    holderId: string;
-    holderName: string;
-    note: string;
-    fwsProcessingStage?: string;
-    createdAt: string;
-  };
-}
-
-interface TrackingStatusResponse {
-  success: boolean;
-  orderId: string;
-  fulfillmentType: 'SELLER' | 'FWS';
-  pendingAssignment: PendingAssignment | null;
-  trackingHistory: TrackingHistoryEntry[];
-  qrOwnershipHistory: QrOwnershipHistory[];
-  currentStatus: string;
-  currentHolderType: string;
-  currentHolderId: string;
-  currentFWS?: {
-    userId: string;
-    fwsCode: string;
-    fwsName: string;
-    city: string;
-    processingStage: string;
-  };
-  // ✅ ADD THESE MISSING PROPERTIES
-  assignmentHistory?: Array<{
-    assignmentId: string;
-    assigneeId: string;
-    assigneeType: string;
-    assignedBy: string;
-    assignedByType: string;
-    assignedAt: string;
-    acceptedAt?: string;
-    rejectedAt?: string;
-    cancelledAt?: string;
-    assignmentType: string;
-    distance: number;
-    status: string;
-  }>;
-  currentShipping?: {
-    shippingUserId: string;
-    shippingName: string;
-    latitude: number;
-    longitude: number;
-    shippingType: string;
-    updatedAt: string;
-  };
-}
-interface OrderData {
-  _id: string;
-  orderId: string;
-  sellerAddress: {
-    address: string;
-    latitude: number;
-    longitude: number;
-  };
-  buyerAddress: {
-    address: string;
-    latitude: number;
-    longitude: number;
-  };
-  finalAmount: number;
-  paymentStatus: string;
-  fulfillmentType: string;
-  createdAt: string;
-  status: string;
-}
-
-interface OrderWithBasicInfo {
-  order: OrderData;
-}
-
-interface MyAssignedOrdersResponse {
-  success: boolean;
-  data: {
-    orders: OrderWithBasicInfo[];
-    stats: {
-      current: number;
-      delivered: number;
-      total: number;
-      remaining: number;
-    };
-  };
-}
-
-interface AcceptOrderResponse {
-  success: boolean;
-  message: string;
-  data: {
-    orderId: string;
-    deliveryStatus: string;
-  };
-}
-
-// ✅ UPDATED: HandoverResponse with duplicate fields
-interface HandoverResponse {
-  success: boolean;
-  message: string;
-  alreadyScanned?: boolean;
-  duplicate?: boolean;
-  code?: string;
-  details?: string;
-  data?: {
-    orderId: string;
-    fromHolder: string;
-    toHolder: string;
-  };
-}
-
-interface DeliveryInitiateResponse {
-  success: boolean;
-  message: string;
-  data: {
-    orderId: string;
-    trackingId: string;
-    requiresOtp: boolean;
-    expiresAt: string;
-    expiresInMinutes: number;
-    buyerEmail?: string;
-    buyerName?: string;
-    otp?: string;
-    otpExpiry?: {
-      expiresAt: string;
-      expiresIn: number;
-      expiresInMinutes: number;
-    };
-  };
-}
-
-interface OTPVerifyResponse {
-  success: boolean;
-  message: string;
-  data: {
-    orderId: string;
-    trackingId: string;
-    deliveredAt: string;
-    deliveredBy: {
-      userId: string;
-      userType: string;
-      userName: string;
-    };
-    buyerName: string;
-    buyerId: string;
-    previousHolder: {
-      userId: string;
-      userType: string;
-      userName: string;
-    };
-  };
-}
-
-interface RequestOTPResponse {
-  success: boolean;
-  message: string;
-  data: {
-    orderId: string;
-    expiresAt: string;
-    expiresInMinutes: number;
-    buyerEmail?: string;
-    buyerName?: string;
-    otp?: string;
-  };
-}
-
-interface QRCodeData {
-  showQR: boolean;
-  completed?: boolean;
-  message?: string;
-  qrCodeUrl?: string;
-  qrData?: string;
-  holderType?: string;
-  status?: string;
-}
-
-// ============================================
-// 🔥 HELPER FUNCTIONS
+// HELPER FUNCTIONS
 // ============================================
 
 const getLastTrackingStatus = (
@@ -373,27 +103,10 @@ const getLastTrackingStatus = (
   return lastEntry.status || lastEntry.scanInfo?.status || null;
 };
 
-const hasActiveQROwnership = (
-  qrOwnershipHistory: QrOwnershipHistory[] | undefined,
-  userId: string,
-): boolean => {
-  if (!qrOwnershipHistory || qrOwnershipHistory.length === 0 || !userId) {
-    return false;
-  }
-  const activeEntry = qrOwnershipHistory.find(
-    entry => entry.releasedAt === null,
-  );
-  return (
-    !!activeEntry && activeEntry.holderId?.toString() === userId?.toString()
-  );
-};
-
 const getCurrentQROwner = (
-  qrOwnershipHistory: QrOwnershipHistory[] | undefined,
-): QrOwnershipHistory | null => {
-  if (!qrOwnershipHistory || qrOwnershipHistory.length === 0) {
-    return null;
-  }
+  qrOwnershipHistory: any[] | undefined,
+): any | null => {
+  if (!qrOwnershipHistory || qrOwnershipHistory.length === 0) return null;
   const activeEntry = qrOwnershipHistory.find(
     entry => entry.releasedAt === null,
   );
@@ -401,7 +114,7 @@ const getCurrentQROwner = (
 };
 
 // ============================================
-// QR CODE MODAL COMPONENT
+// QR CODE MODAL
 // ============================================
 
 interface QRCodeModalProps {
@@ -466,21 +179,13 @@ const QRCodeModal: React.FC<QRCodeModalProps> = ({
 // QR INFO MODAL
 // ============================================
 
-interface QRInfoModalProps {
+const QRInfoModal: React.FC<{
   visible: boolean;
   onClose: () => void;
   onShowQR: () => void;
   orderId: string;
   loading?: boolean;
-}
-
-const QRInfoModal: React.FC<QRInfoModalProps> = ({
-  visible,
-  onClose,
-  onShowQR,
-  orderId,
-  loading = false,
-}) => {
+}> = ({ visible, onClose, onShowQR, orderId, loading = false }) => {
   return (
     <Modal
       visible={visible}
@@ -529,21 +234,13 @@ const QRInfoModal: React.FC<QRInfoModalProps> = ({
 // MANUAL QR INPUT MODAL
 // ============================================
 
-interface ManualQRInputModalProps {
+const ManualQRInputModal: React.FC<{
   visible: boolean;
   onClose: () => void;
   onSubmit: (qrCode: string) => void;
   loading?: boolean;
   error?: string;
-}
-
-const ManualQRInputModal: React.FC<ManualQRInputModalProps> = ({
-  visible,
-  onClose,
-  onSubmit,
-  loading = false,
-  error,
-}) => {
+}> = ({ visible, onClose, onSubmit, loading = false, error }) => {
   const [qrInput, setQrInput] = useState('');
 
   const handleSubmit = () => {
@@ -598,8 +295,7 @@ const ManualQRInputModal: React.FC<ManualQRInputModalProps> = ({
           <TouchableOpacity
             style={[
               manualQRStyles.submitButton,
-              (!qrInput.trim() || loading) &&
-                manualQRStyles.submitButtonDisabled,
+              (!qrInput.trim() || loading) && manualQRStyles.submitButtonDisabled,
             ]}
             onPress={handleSubmit}
             disabled={!qrInput.trim() || loading}
@@ -622,19 +318,12 @@ const ManualQRInputModal: React.FC<ManualQRInputModalProps> = ({
 // QR SCAN SELECTION MODAL
 // ============================================
 
-interface QRScanSelectionModalProps {
+const QRScanSelectionModal: React.FC<{
   visible: boolean;
   onClose: () => void;
   onCameraScan: () => void;
   onManualEntry: () => void;
-}
-
-const QRScanSelectionModal: React.FC<QRScanSelectionModalProps> = ({
-  visible,
-  onClose,
-  onCameraScan,
-  onManualEntry,
-}) => {
+}> = ({ visible, onClose, onCameraScan, onManualEntry }) => {
   return (
     <Modal
       visible={visible}
@@ -685,21 +374,17 @@ const QRScanSelectionModal: React.FC<QRScanSelectionModalProps> = ({
   );
 };
 
-interface CameraQRScannerProps {
+// ============================================
+// CAMERA QR SCANNER
+// ============================================
+
+const CameraQRScanner: React.FC<{
   visible: boolean;
   onClose: () => void;
   onScan: (qrData: string) => void;
   loading?: boolean;
   error?: string;
-}
-
-const CameraQRScanner: React.FC<CameraQRScannerProps> = ({
-  visible,
-  onClose,
-  onScan,
-  loading = false,
-  error,
-}) => {
+}> = ({ visible, onClose, onScan, loading = false, error }) => {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [scanned, setScanned] = useState(false);
   const cameraRef = useRef<CameraApi>(null);
@@ -723,8 +408,7 @@ const CameraQRScanner: React.FC<CameraQRScannerProps> = ({
       } else {
         requestCameraPermission();
       }
-    } catch (error) {
-      console.error('Check permission error:', error);
+    } catch {
       setHasPermission(false);
     }
   };
@@ -749,22 +433,18 @@ const CameraQRScanner: React.FC<CameraQRScannerProps> = ({
           ],
         );
       }
-    } catch (error) {
-      console.error('Request permission error:', error);
+    } catch {
       setHasPermission(false);
     }
   };
 
-  // ✅ Handle QR code scan from CameraKit v18
   const onReadCode = (event: any) => {
     if (scanned || loading) return;
 
-    // CameraKit v18 returns QR data in event.nativeEvent.codeStringValue
     const qrData = event?.nativeEvent?.codeStringValue || event?.data || event;
 
     if (!qrData || typeof qrData !== 'string') return;
 
-    console.log('📸 QR Code Scanned:', qrData);
     setScanned(true);
     Vibration.vibrate(100);
     onScan(qrData);
@@ -798,7 +478,6 @@ const CameraQRScanner: React.FC<CameraQRScannerProps> = ({
 
         {hasPermission === true ? (
           <View style={{ flex: 1 }}>
-            {/* ✅ CameraKit v18 for QR scanning - ONLY QR CODES */}
             <Camera
               ref={cameraRef}
               style={cameraStyles.camera}
@@ -806,9 +485,11 @@ const CameraQRScanner: React.FC<CameraQRScannerProps> = ({
               scanBarcode={!scanned && !loading}
               onReadCode={onReadCode}
             />
-            
-            {/* Overlay text on top of camera */}
-            <View style={cameraStyles.overlayTextContainer} pointerEvents="none">
+
+            <View
+              style={cameraStyles.overlayTextContainer}
+              pointerEvents="none"
+            >
               <Text style={cameraStyles.scanText}>
                 Align QR code within the frame
               </Text>
@@ -848,9 +529,7 @@ const CameraQRScanner: React.FC<CameraQRScannerProps> = ({
             <Icon name="alert-circle" size={20} color="#EF4444" />
             <Text style={cameraStyles.errorText}>{error}</Text>
             <TouchableOpacity
-              onPress={() => {
-                setScanned(false);
-              }}
+              onPress={() => setScanned(false)}
               style={cameraStyles.tryAgainButton}
             >
               <Text style={cameraStyles.tryAgainText}>Try Again</Text>
@@ -871,8 +550,9 @@ const CameraQRScanner: React.FC<CameraQRScannerProps> = ({
     </Modal>
   );
 };
+
 // ============================================
-// GOOGLE MAPS NAVIGATION ENGINE
+// NAVIGATION ENGINE
 // ============================================
 
 const NavigationEngine = {
@@ -907,12 +587,12 @@ const NavigationEngine = {
         }
       }
       return false;
-    } catch (error) {
+    } catch {
       try {
         const browserUrl = `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
         await Linking.openURL(browserUrl);
         return true;
-      } catch (fallbackError) {
+      } catch {
         Alert.alert(
           'Navigation Failed',
           'Please install Google Maps from Play Store/App Store',
@@ -925,7 +605,7 @@ const NavigationEngine = {
 };
 
 // ============================================
-// ACTION BUTTON COMPONENT
+// ACTION BUTTON
 // ============================================
 
 interface ActionButtonProps {
@@ -947,13 +627,11 @@ const ActionButton: React.FC<ActionButtonProps> = ({
   disabled = false,
   loading = false,
 }) => {
-  const [isPressed, setIsPressed] = useState(false);
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const handlePressIn = () => {
     if (!disabled && !loading) {
       Vibration.vibrate(10);
-      setIsPressed(true);
       Animated.spring(scaleAnim, {
         toValue: 0.95,
         useNativeDriver: true,
@@ -963,7 +641,6 @@ const ActionButton: React.FC<ActionButtonProps> = ({
   };
 
   const handlePressOut = () => {
-    setIsPressed(false);
     Animated.spring(scaleAnim, {
       toValue: 1,
       useNativeDriver: true,
@@ -1019,7 +696,7 @@ const ActionButton: React.FC<ActionButtonProps> = ({
 };
 
 // ============================================
-// OTP MODAL - FIXED WITH VISIBLE INPUT
+// OTP MODAL
 // ============================================
 
 interface OTPModalProps {
@@ -1050,7 +727,7 @@ const OTPModal: React.FC<OTPModalProps> = ({
   const [activeIndex, setActiveIndex] = useState<number>(-1);
   const [timeLeft, setTimeLeft] = useState<number>(expiryTime);
   const [isExpired, setIsExpired] = useState<boolean>(false);
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<React.ElementRef<typeof TextInput>>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -1133,7 +810,6 @@ const OTPModal: React.FC<OTPModalProps> = ({
           onPress={() => inputRef.current?.focus()}
         >
           <View style={otpModalStyles.container}>
-            {/* Header */}
             <View style={otpModalStyles.header}>
               <TouchableOpacity
                 style={otpModalStyles.closeButton}
@@ -1152,7 +828,6 @@ const OTPModal: React.FC<OTPModalProps> = ({
               </View>
             </View>
 
-            {/* Timer */}
             <View style={otpModalStyles.timerContainer}>
               <View
                 style={[
@@ -1194,7 +869,6 @@ const OTPModal: React.FC<OTPModalProps> = ({
               )}
             </View>
 
-            {/* OTP Boxes */}
             <View style={otpModalStyles.otpSection}>
               <View style={otpModalStyles.otpContainer}>
                 {[0, 1, 2, 3, 4, 5].map(index => (
@@ -1221,7 +895,6 @@ const OTPModal: React.FC<OTPModalProps> = ({
                 ))}
               </View>
 
-              {/* 🔥 FIXED: Visible TextInput instead of hidden */}
               <TextInput
                 ref={inputRef}
                 style={otpModalStyles.visibleInput}
@@ -1239,7 +912,6 @@ const OTPModal: React.FC<OTPModalProps> = ({
               />
             </View>
 
-            {/* Error */}
             {error && (
               <View style={otpModalStyles.errorContainer}>
                 <Icon name="alert-circle" size={16} color="#EF4444" />
@@ -1247,7 +919,6 @@ const OTPModal: React.FC<OTPModalProps> = ({
               </View>
             )}
 
-            {/* Verify Button */}
             <TouchableOpacity
               style={[
                 otpModalStyles.verifyButton,
@@ -1271,7 +942,6 @@ const OTPModal: React.FC<OTPModalProps> = ({
               </View>
             </TouchableOpacity>
 
-            {/* Resend Option */}
             {!isExpired && timeLeft < 60 && (
               <TouchableOpacity
                 style={otpModalStyles.resendOption}
@@ -1291,16 +961,12 @@ const OTPModal: React.FC<OTPModalProps> = ({
 };
 
 // ============================================
-// TRACKING TIMELINE COMPONENT
+// TRACKING TIMELINE
 // ============================================
 
-interface TrackingTimelineProps {
+const TrackingTimeline: React.FC<{
   trackingHistory: TrackingHistoryEntry[];
-}
-
-const TrackingTimeline: React.FC<TrackingTimelineProps> = ({
-  trackingHistory,
-}) => {
+}> = ({ trackingHistory }) => {
   if (!trackingHistory || trackingHistory.length === 0) return null;
 
   const getStatusIcon = (status: string) => {
@@ -1385,7 +1051,7 @@ const TrackingTimeline: React.FC<TrackingTimelineProps> = ({
 };
 
 // ============================================
-// ORDER CARD COMPONENT
+// ORDER CARD
 // ============================================
 
 interface OrderCardProps {
@@ -1431,34 +1097,13 @@ const OrderCard: React.FC<OrderCardProps> = ({
   const activeOwnerId = activeOwner?.holderId?.toString();
   const currentUserId = loggedInUserId?.toString();
 
-  // 🔥 FIXED: Show Scan button when:
-  // 1. There is an active QR owner
-  // 2. The active owner is NOT the current user
-  // 3. The order is not completed
   const showScanButton =
     !!activeOwner && activeOwnerId !== currentUserId && !isCompleted;
 
-  // 🔥 FIXED: Show QR button when:
-  // 1. There is an active QR owner
-  // 2. The active owner IS the current user
-  // 3. The order is not completed
   const showShowQRButton =
     !!activeOwner && activeOwnerId === currentUserId && !isCompleted;
 
   const hasQR = showShowQRButton;
-
-  console.log('\n🔍 ========== QR DEBUG ==========');
-  console.log(`📦 Order ID: ${order.orderId}`);
-  console.log(`👤 loggedInUserId: ${loggedInUserId}`);
-  console.log(
-    `📋 QR History:`,
-    JSON.stringify(trackingStatus?.qrOwnershipHistory, null, 2),
-  );
-  console.log(`🎯 Active Owner:`, activeOwner);
-  console.log(`🆔 Active Owner ID: ${activeOwnerId}`);
-  console.log(`🔍 showScanButton: ${showScanButton}`);
-  console.log(`📱 showShowQRButton: ${showShowQRButton}`);
-  console.log('================================\n');
 
   const [showQRInfoModal, setShowQRInfoModal] = useState(false);
 
@@ -1691,7 +1336,6 @@ const PendingOrdersScreen = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [acceptingOrderId, setAcceptingOrderId] = useState<string | null>(null);
-  const [authError, setAuthError] = useState(false);
   const [selectedOrderForOTP, setSelectedOrderForOTP] =
     useState<OrderWithBasicInfo | null>(null);
   const [showOTPModal, setShowOTPModal] = useState(false);
@@ -1721,172 +1365,14 @@ const PendingOrdersScreen = () => {
   }>({});
 
   // ============================================
-  // API CALLS
-  // ============================================
-
-  const fetchMyAssignedOrders = async (): Promise<MyAssignedOrdersResponse> => {
-    const token = await getAuthToken();
-    const response = await axios.get(`${DELIVERY_TRACKING_API_URL}/my-orders`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      timeout: 15000,
-    });
-    return response.data;
-  };
-
-  const acceptOrderApi = async (
-    orderId: string,
-    assignmentId: string,
-  ): Promise<AcceptOrderResponse> => {
-    const token = await getAuthToken();
-    const response = await axios.post(
-      `${SHIPPING_API_URL}/accept-assignment`,
-      { orderId, assignmentId },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15000,
-      },
-    );
-    return response.data;
-  };
-
-  // ✅ Updated handoverViaQrApi with proper response type
-  const handoverViaQrApi = async (
-    qrData: string,
-  ): Promise<HandoverResponse> => {
-    const authToken = await getAuthToken();
-    let actualToken = qrData;
-    try {
-      const parsed = JSON.parse(qrData);
-      if (parsed.token) {
-        actualToken = parsed.token;
-      }
-    } catch (e) {}
-    const response = await axios.post(
-      `${DELIVERY_TRACKING_API_URL}/handover/via/qr`,
-      { token: actualToken },
-      {
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15000,
-      },
-    );
-    return response.data;
-  };
-
-  const initiateDeliveryApi = async (
-    orderId: string,
-  ): Promise<DeliveryInitiateResponse> => {
-    const token = await getAuthToken();
-    const response = await axios.post(
-      `${DELIVERY_API_URL}/initiate-delivery`,
-      { orderId },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15000,
-      },
-    );
-    return response.data;
-  };
-
-  const verifyOTPApi = async (
-    orderId: string,
-    otp: string,
-  ): Promise<OTPVerifyResponse> => {
-    const token = await getAuthToken();
-    const response = await axios.post(
-      `${DELIVERY_API_URL}/deliver-with-otp`,
-      { orderId, otp },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15000,
-      },
-    );
-    return response.data;
-  };
-
-  const requestNewOTPApi = async (
-    orderId: string,
-  ): Promise<RequestOTPResponse> => {
-    const token = await getAuthToken();
-    const response = await axios.post(
-      `${DELIVERY_API_URL}/request-otp`,
-      { orderId },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15000,
-      },
-    );
-    return response.data;
-  };
-
-  const fetchTrackingStatus = async (
-    orderId: string,
-  ): Promise<TrackingStatusResponse | null> => {
-    try {
-      const token = await getAuthToken();
-      const response = await axios.get(`${TRACKING_API_URL}/history/status`, {
-        params: { orderId },
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 10000,
-      });
-      if (response.data.success) return response.data;
-      return null;
-    } catch (error: any) {
-      console.error('Error fetching tracking status:', error.message);
-      return null;
-    }
-  };
-
-  const fetchQRCode = async (orderId: string): Promise<QRCodeData | null> => {
-    try {
-      const token = await getAuthToken();
-      if (!token) return null;
-      const response = await axios.get(
-        `${TIZZYOS_API_BASE_URL}/api/v0/delivery/tracking/${orderId}/qr`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          timeout: 10000,
-        },
-      );
-      if (response.data && response.data.success && response.data.data) {
-        return response.data.data;
-      }
-      return null;
-    } catch (error: any) {
-      console.error(`QR Code fetch error for ${orderId}:`, error.message);
-      return null;
-    }
-  };
-
-  // ============================================
-  // DATA FETCHING
+  // FETCH ALL ORDERS
   // ============================================
 
   const getAllOrders = async () => {
     try {
       setLoading(true);
-      setAuthError(false);
-      const response = await fetchMyAssignedOrders();
+
+      const response = await getMyAssignedOrders();
 
       if (response.success) {
         const allOrders = response.data.orders || [];
@@ -1895,12 +1381,8 @@ const PendingOrdersScreen = () => {
         const available: OrderWithBasicInfo[] = [];
         const completed: OrderWithBasicInfo[] = [];
 
-        console.log(`\n📦 Total orders from API: ${allOrders.length}`);
-        console.log(`👤 Logged in User ID: ${loggedInUserId}`);
-        console.log(`========================================\n`);
-
         for (const orderItem of allOrders) {
-          const tracking = await fetchTrackingStatus(orderItem.order.orderId);
+          const tracking = await getTrackingStatus(orderItem.order.orderId);
 
           if (tracking) {
             setTrackingStatusMap(prev => ({
@@ -1910,61 +1392,44 @@ const PendingOrdersScreen = () => {
 
             const lastStatus = getLastTrackingStatus(tracking.trackingHistory);
 
-            console.log(`\n🔍 Order: ${orderItem.order.orderId}`);
-            console.log(`   Last Status: ${lastStatus}`);
-
             const isDelivered =
               lastStatus === 'delivered' ||
               tracking.currentStatus === 'delivered';
 
-            // 🔥 FIXED: Check if this order has a pending assignment for this user
             const hasPendingAssignment =
               tracking.pendingAssignment &&
               tracking.pendingAssignment.status === 'PENDING_ACCEPTANCE' &&
               tracking.pendingAssignment.assigneeId === loggedInUserId;
 
-            // 🔥 FIXED: Check if this order is currently assigned to this user
             const isCurrentlyAssigned =
               tracking.currentShipping?.shippingUserId?.toString() ===
               loggedInUserId;
 
-            // 🔥 FIXED: Check if this order has active QR ownership
             const hasActiveQR = tracking.qrOwnershipHistory?.some(
               (q: any) =>
                 q.releasedAt === null && q.holderId === loggedInUserId,
             );
 
             if (isDelivered) {
-              // ✅ Delivered orders go to completed
               completed.push(orderItem);
             } else if (hasPendingAssignment) {
-              // ✅ Orders pending acceptance go to available
               available.push(orderItem);
             } else if (isCurrentlyAssigned || hasActiveQR) {
-              // ✅ Orders assigned to this user or with QR ownership go to current
               current.push(orderItem);
             } else {
-              // ✅ Fallback: If order has any assignment history with this user
               const hasAssignmentHistory = tracking.assignmentHistory?.some(
                 (a: any) => a.assigneeId === loggedInUserId,
               );
               if (hasAssignmentHistory) {
                 current.push(orderItem);
               } else {
-                // Default to current
                 current.push(orderItem);
               }
             }
           } else {
-            // If no tracking status, put in current as fallback
             current.push(orderItem);
           }
         }
-
-        console.log(`\n📊 FINAL SUMMARY:`);
-        console.log(`   │ Current Orders   : ${current.length}`);
-        console.log(`   │ Available Orders : ${available.length}`);
-        console.log(`   │ Completed Orders : ${completed.length}`);
 
         setCurrentOrders(current);
         setAvailableOrders(available);
@@ -1976,11 +1441,15 @@ const PendingOrdersScreen = () => {
         setCompletedOrders([]);
       }
     } catch (error: any) {
-      console.error('❌ Error in getAllOrders:', error);
-      if (error.response?.status === 401) {
-        setAuthError(true);
+      if (__DEV__) {
+        console.error('❌ Error in getAllOrders:', error);
+      }
+      if (error instanceof ApiError && error.status === 401) {
+        Alert.alert('Session Expired', 'Please login again', [
+          { text: 'Login', onPress: () => navigation.navigate('Login' as never) },
+        ]);
       } else {
-        Alert.alert('Error', error.message || 'Failed to fetch orders');
+        Alert.alert('Error', error?.message || 'Failed to fetch orders');
       }
       setCurrentOrders([]);
       setAvailableOrders([]);
@@ -1997,7 +1466,7 @@ const PendingOrdersScreen = () => {
   };
 
   // ============================================
-  // ORDER ACTIONS
+  // ACCEPT ORDER
   // ============================================
 
   const acceptOrder = async (orderItem: OrderWithBasicInfo) => {
@@ -2009,7 +1478,7 @@ const PendingOrdersScreen = () => {
         Alert.alert('Error', 'No assignment found for this order');
         return;
       }
-      const response = await acceptOrderApi(
+      const response = await acceptAssignment(
         orderItem.order.orderId,
         assignmentId,
       );
@@ -2020,17 +1489,20 @@ const PendingOrdersScreen = () => {
         Alert.alert('Error', response.message || 'Failed to accept order');
       }
     } catch (error: any) {
-      console.error('Accept Order Error:', error);
-      Alert.alert('Error', error.message || 'Failed to accept order');
+      Alert.alert('Error', error?.message || 'Failed to accept order');
     } finally {
       setAcceptingOrderId(null);
     }
   };
 
+  // ============================================
+  // SHOW QR
+  // ============================================
+
   const handleShowQRPress = async (orderId: string) => {
     try {
       setShowQRLoading(orderId);
-      const qrData = await fetchQRCode(orderId);
+      const qrData = await getOrderQRCode(orderId);
       if (!qrData) {
         Alert.alert('Error', 'Unable to fetch QR code. Please try again.');
         return;
@@ -2048,13 +1520,16 @@ const PendingOrdersScreen = () => {
       } else {
         Alert.alert('Error', 'QR code URL not found.');
       }
-    } catch (error: any) {
-      console.error('Show QR Error:', error);
+    } catch {
       Alert.alert('Error', 'Failed to load QR code');
     } finally {
       setShowQRLoading(null);
     }
   };
+
+  // ============================================
+  // SCAN
+  // ============================================
 
   const handleScanPress = () => {
     setQrScanError('');
@@ -2071,30 +1546,20 @@ const PendingOrdersScreen = () => {
     setShowManualQRInput(true);
   };
 
-  // ============================================================
-  // 🔥 FIXED: Handle QR scan result with COMPLETE duplicate detection
-  // ============================================================
   const handleQRScanResult = async (qrCode: string) => {
     try {
       setQrScanLoading(true);
       setQrScanError('');
 
-      console.log('🔄 Processing QR scan result...');
-      console.log('QR Code:', qrCode);
+      const response = await handoverViaQrDelivery(qrCode);
 
-      const response = await handoverViaQrApi(qrCode);
-
-      console.log('📦 Handover API Response:', JSON.stringify(response, null, 2));
-
-      // ============================================================
-      // ✅ STEP 1: Check for Duplicate Scan (NEW)
-      // ============================================================
       if (response.duplicate === true || response.code === 'DUPLICATE_SCAN') {
-        console.log('⚠️ DUPLICATE SCAN DETECTED!');
         Vibration.vibrate(100);
         Alert.alert(
           '⚠️ Duplicate Scan',
-          response.details || response.message || 'This QR has already been scanned.',
+          response.details ||
+            response.message ||
+            'This QR has already been scanned.',
           [
             {
               text: 'OK',
@@ -2104,16 +1569,12 @@ const PendingOrdersScreen = () => {
                 getAllOrders();
               },
             },
-          ]
+          ],
         );
         return;
       }
 
-      // ============================================================
-      // ✅ STEP 2: Check for alreadyScanned (Backward Compatibility)
-      // ============================================================
       if (response.alreadyScanned === true) {
-        console.log('⚠️ Already scanned (backward compatibility)');
         Vibration.vibrate(100);
         Alert.alert(
           '⚠️ Already Scanned',
@@ -2128,16 +1589,12 @@ const PendingOrdersScreen = () => {
                 getAllOrders();
               },
             },
-          ]
+          ],
         );
         return;
       }
 
-      // ============================================================
-      // ✅ STEP 3: Check for Success
-      // ============================================================
       if (response.success) {
-        console.log('✅ Handover successful!');
         Vibration.vibrate(200);
         Alert.alert('✅ Success', 'Handover completed successfully!', [
           {
@@ -2150,22 +1607,15 @@ const PendingOrdersScreen = () => {
           },
         ]);
       } else {
-        console.log('❌ Handover failed:', response.message);
         setQrScanError(response.message || 'Failed to complete handover');
         Vibration.vibrate(100);
       }
     } catch (error: any) {
-      console.error('❌ QR Scan Result Error:', error);
-
-      // ✅ Check if error response contains duplicate data
-      const errorData = error.response?.data;
+      const errorData =
+        error instanceof ApiError ? (error.data as any) : undefined;
       const errorMessage =
-        errorData?.message || error.message || 'Failed to complete handover';
+        errorData?.message || error?.message || 'Failed to complete handover';
 
-      console.log('Error Data:', JSON.stringify(errorData, null, 2));
-      console.log('Error Message:', errorMessage);
-
-      // ✅ Check for duplicate scan in error response
       if (
         errorData?.duplicate === true ||
         errorData?.code === 'DUPLICATE_SCAN' ||
@@ -2174,7 +1624,6 @@ const PendingOrdersScreen = () => {
         errorMessage.includes('already verified') ||
         errorMessage.includes('Duplicate Scan Not Allowed')
       ) {
-        console.log('⚠️ Duplicate scan detected in error response');
         Vibration.vibrate(100);
         Alert.alert(
           '⚠️ Duplicate Scan',
@@ -2188,7 +1637,7 @@ const PendingOrdersScreen = () => {
                 getAllOrders();
               },
             },
-          ]
+          ],
         );
         return;
       }
@@ -2200,21 +1649,19 @@ const PendingOrdersScreen = () => {
     }
   };
 
+  // ============================================
+  // DELIVERY COMPLETE (OTP FLOW)
+  // ============================================
+
   const handleDeliveryButtonComplete = async (orderId: string) => {
     try {
       setDeliveryLoading(orderId);
       setOtpError('');
 
-      console.log(`\n🚚 Initiating delivery for order: ${orderId}`);
-
-      const response = await initiateDeliveryApi(orderId);
+      const response = await initiateDelivery(orderId);
 
       if (response.success) {
-        console.log('✅ Delivery initiated successfully');
-        console.log('Response data:', JSON.stringify(response.data, null, 2));
-
         const expiresInMinutes = response.data.expiresInMinutes || 5;
-        console.log(`   OTP Expiry: ${expiresInMinutes} minutes`);
 
         const allOrders = [
           ...currentOrders,
@@ -2235,12 +1682,9 @@ const PendingOrdersScreen = () => {
         Alert.alert('Error', response.message || 'Failed to initiate delivery');
       }
     } catch (error: any) {
-      console.error('❌ Initiate delivery error:', error);
       Alert.alert(
         'Error',
-        error.response?.data?.message ||
-          error.message ||
-          'Failed to initiate delivery',
+        error?.message || 'Failed to initiate delivery',
       );
     } finally {
       setDeliveryLoading(null);
@@ -2263,20 +1707,12 @@ const PendingOrdersScreen = () => {
       setOtpLoading(true);
       setOtpError('');
 
-      console.log(
-        `\n🔐 Verifying OTP for order: ${selectedOrderForOTP.order.orderId}`,
-      );
-
-      const response = await verifyOTPApi(
+      const response = await verifyDeliveryOTP(
         selectedOrderForOTP.order.orderId,
         otp,
       );
 
       if (response.success) {
-        console.log('✅ Delivery completed successfully!');
-        console.log(`   Delivered by: ${response.data.deliveredBy.userName}`);
-        console.log(`   Delivered at: ${response.data.deliveredAt}`);
-
         setShowOTPModal(false);
         setOtp('');
         setOtpError('');
@@ -2299,12 +1735,7 @@ const PendingOrdersScreen = () => {
         Vibration.vibrate(100);
       }
     } catch (error: any) {
-      console.error('❌ OTP verification error:', error);
-      setOtpError(
-        error.response?.data?.message ||
-          error.message ||
-          'OTP verification failed',
-      );
+      setOtpError(error?.message || 'OTP verification failed');
       Vibration.vibrate(100);
     } finally {
       setOtpLoading(false);
@@ -2321,18 +1752,11 @@ const PendingOrdersScreen = () => {
       setOtpResendLoading(true);
       setOtpError('');
 
-      console.log(
-        `\n🔄 Requesting new OTP for order: ${selectedOrderForOTP.order.orderId}`,
-      );
-
-      const response = await requestNewOTPApi(
+      const response = await requestNewDeliveryOTP(
         selectedOrderForOTP.order.orderId,
       );
 
       if (response.success) {
-        console.log('✅ New OTP requested successfully');
-        console.log(`   Expires in: ${response.data.expiresInMinutes} minutes`);
-
         setOtpExpiryTime(response.data.expiresInMinutes * 60);
         setOtp('');
         Alert.alert(
@@ -2343,13 +1767,7 @@ const PendingOrdersScreen = () => {
         Alert.alert('Error', response.message || 'Failed to request new OTP');
       }
     } catch (error: any) {
-      console.error('❌ Resend OTP error:', error);
-      Alert.alert(
-        'Error',
-        error.response?.data?.message ||
-          error.message ||
-          'Failed to request new OTP',
-      );
+      Alert.alert('Error', error?.message || 'Failed to request new OTP');
     } finally {
       setOtpResendLoading(false);
     }
@@ -2382,7 +1800,7 @@ const PendingOrdersScreen = () => {
   };
 
   // ============================================
-  // RENDER FUNCTIONS
+  // RENDER
   // ============================================
 
   const renderOrderItem = ({ item }: { item: OrderWithBasicInfo }) => {
@@ -2467,16 +1885,10 @@ const PendingOrdersScreen = () => {
   useFocusEffect(
     useCallback(() => {
       const init = async () => {
-        console.log('\n🔄 ========== INIT DEBUG ==========');
-
         const userId = await getUserIdFromToken();
-        console.log('✅ Final userId from token:', userId);
 
         if (userId) {
           setLoggedInUserId(userId);
-          console.log('✅ State updated with userId:', userId);
-        } else {
-          console.warn('⚠️ No userId found - user may not be authenticated');
         }
 
         const token = await getAuthToken();
@@ -2494,7 +1906,6 @@ const PendingOrdersScreen = () => {
             ],
           );
         }
-        console.log('================================\n');
       };
       init();
     }, []),
@@ -2543,7 +1954,7 @@ const PendingOrdersScreen = () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar backgroundColor="#F3F4F6" barStyle="dark-content" />
+      <StatusBar barStyle="dark-content" />
       <View style={styles.header}>
         <View style={styles.headerContent}>
           <View>
@@ -3538,8 +2949,6 @@ const styles = StyleSheet.create({
   },
 });
 
-export default PendingOrdersScreen;
-
 function atob(base64String: string): string {
   const base64 = base64String.replace(/-/g, '+').replace(/_/g, '/');
   const padding = base64.length % 4;
@@ -3607,3 +3016,5 @@ function decodeUtf8(str: string): string {
   }
   return utf8;
 }
+
+export default PendingOrdersScreen;

@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+// SellerApplicationScreen.tsx
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   ScrollView,
@@ -25,17 +27,20 @@ import { Camera, useCameraDevices } from 'react-native-vision-camera';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
-import { launchImageLibrary } from 'react-native-image-picker'; // Add this import
+import { launchImageLibrary } from 'react-native-image-picker';
 import {
-  sellerApplicationAPI,
+  submitSellerApplication,
+  checkSellerFormStatus,
   SellerApplicationData,
-} from '../../../services/SellerApplication';
-import { checkSellerFormStatus } from '../../../services/SellerStatusService';
+} from '../../../../api/features/private/sellerPrivateSlice';
 
 const { width, height } = Dimensions.get('window');
 const isMobile = width < 768;
 
-// Types
+// ============================================================
+// TYPES
+// ============================================================
+
 interface FormData {
   fullName: string;
   email: string;
@@ -259,7 +264,7 @@ export const SellerApplicationScreen: React.FC<
   SellerApplicationScreenProps
 > = ({ onApplicationSubmitSuccess }) => {
   const navigation = useNavigation();
-  const { isDark, theme } = useTheme();
+  const { isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const [activeStep, setActiveStep] = useState(0);
   const [formData, setFormData] = useState<FormData>({
@@ -297,10 +302,10 @@ export const SellerApplicationScreen: React.FC<
   );
   const [customSubcategory, setCustomSubcategory] = useState('');
 
-  // Camera states
   const [cameraModalVisible, setCameraModalVisible] = useState(false);
   const [cameraType, setCameraType] = useState<'front' | 'back'>('front');
-  const cameraRef = useRef<Camera>(null);
+
+  const cameraRef = useRef<any>(null);
   const devices = useCameraDevices();
   const device =
     cameraType === 'front'
@@ -311,8 +316,8 @@ export const SellerApplicationScreen: React.FC<
     useState(true);
   const [hasExistingApplication, setHasExistingApplication] = useState(false);
 
-  const scrollViewRef = useRef<ScrollView>(null);
-  const inputRefs = useRef<{ [key: string]: TextInput | null }>({});
+  const scrollViewRef = useRef<any>(null);
+  const inputRefs = useRef<Record<string, any>>({});
 
   const shakeAnimations = useRef({
     fullName: new Animated.Value(0),
@@ -334,7 +339,7 @@ export const SellerApplicationScreen: React.FC<
   }).current;
 
   useFocusEffect(
-    React.useCallback(() => {
+    useCallback(() => {
       const checkExistingApplication = async () => {
         try {
           setCheckingExistingApplication(true);
@@ -342,341 +347,25 @@ export const SellerApplicationScreen: React.FC<
 
           if (result.success && result.canSubmit === false) {
             setHasExistingApplication(true);
-
             setTimeout(() => {
               navigation.navigate('SellerStatus' as never);
             }, 100);
           } else {
             setHasExistingApplication(false);
           }
-        } catch (error: any) {
+        } catch {
           setHasExistingApplication(false);
         } finally {
           setCheckingExistingApplication(false);
         }
       };
-
       checkExistingApplication();
     }, [navigation]),
   );
 
-  const styles = StyleSheet.create({
-    container: {
-      flex: 1,
-      backgroundColor: isDark ? '#0F172A' : '#F8FAFC',
-      paddingTop: insets.top,
-    },
-    contentContainer: {
-      flex: 1,
-      padding: isMobile ? 16 : 32,
-    },
-    stepContainer: {
-      marginBottom: 20,
-    },
-    stepText: {
-      fontSize: 24,
-      fontWeight: 'bold',
-      color: isDark ? '#E2E8F0' : '#1E293B',
-      marginBottom: 20,
-    },
-    input: {
-      borderWidth: 1,
-      borderColor: isDark ? '#374151' : '#CBD5E1',
-      borderRadius: 12,
-      padding: 16,
-      marginBottom: 16,
-      color: isDark ? '#FFFFFF' : '#000000',
-      backgroundColor: isDark ? '#1E293B' : '#FFFFFF',
-      fontSize: 16,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.1,
-      shadowRadius: 3,
-      elevation: 2,
-    },
-    inputError: {
-      borderColor: '#EF4444',
-      backgroundColor: isDark ? '#2A1A1A' : '#FEF2F2',
-    },
-    textArea: {
-      height: 100,
-      textAlignVertical: 'top',
-    },
-    button: {
-      backgroundColor: '#3B82F6',
-      padding: 16,
-      borderRadius: 12,
-      alignItems: 'center',
-      marginVertical: 8,
-      shadowColor: '#3B82F6',
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.3,
-      shadowRadius: 8,
-      elevation: 4,
-    },
-    buttonText: {
-      color: '#FFFFFF',
-      fontSize: 16,
-      fontWeight: '700',
-    },
-    secondaryButton: {
-      backgroundColor: 'transparent',
-      borderWidth: 2,
-      borderColor: '#3B82F6',
-    },
-    secondaryButtonText: {
-      color: '#3B82F6',
-    },
-    disabledButton: {
-      backgroundColor: '#9CA3AF',
-      shadowOpacity: 0,
-    },
-    card: {
-      backgroundColor: isDark ? '#1E293B' : '#FFFFFF',
-      borderRadius: 16,
-      padding: 20,
-      marginBottom: 16,
-      borderWidth: 1,
-      borderColor: isDark ? '#374151' : '#E2E8F0',
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.1,
-      shadowRadius: 8,
-      elevation: 4,
-    },
-    categoryCard: {
-      alignItems: 'center',
-      padding: 20,
-      margin: 8,
-      borderRadius: 12,
-      borderWidth: 2,
-      borderColor: 'transparent',
-      backgroundColor: isDark ? '#334155' : '#F1F5F9',
-      minWidth: 100,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.1,
-      shadowRadius: 4,
-      elevation: 2,
-    },
-    selectedCategory: {
-      borderColor: '#3B82F6',
-      backgroundColor: isDark
-        ? 'rgba(59, 130, 246, 0.2)'
-        : 'rgba(59, 130, 246, 0.1)',
-      transform: [{ scale: 1.05 }],
-    },
-    chip: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: isDark ? '#374151' : '#E2E8F0',
-      paddingHorizontal: 16,
-      paddingVertical: 8,
-      borderRadius: 20,
-      margin: 4,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.1,
-      shadowRadius: 2,
-      elevation: 1,
-    },
-    selectedChip: {
-      backgroundColor: '#3B82F6',
-    },
-    chipText: {
-      color: isDark ? '#E2E8F0' : '#374151',
-      fontSize: 14,
-      fontWeight: '500',
-      marginLeft: 4,
-    },
-    selectedChipText: {
-      color: '#FFFFFF',
-    },
-    uploadCard: {
-      borderWidth: 2,
-      borderStyle: 'dashed',
-      borderColor: isDark ? '#4B5563' : '#CBD5E1',
-      borderRadius: 16,
-      padding: 30,
-      alignItems: 'center',
-      marginVertical: 8,
-      backgroundColor: isDark ? '#1E293B' : '#F8FAFC',
-    },
-    activeUploadCard: {
-      borderColor: '#10B981',
-      backgroundColor: isDark
-        ? 'rgba(16, 185, 129, 0.1)'
-        : 'rgba(16, 185, 129, 0.05)',
-    },
-    errorText: {
-      color: '#EF4444',
-      fontSize: 14,
-      marginBottom: 16,
-      fontWeight: '500',
-    },
-    successText: {
-      color: '#10B981',
-      fontSize: 14,
-      marginBottom: 16,
-      fontWeight: '500',
-    },
-    stepIndicator: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      paddingHorizontal: isMobile ? 16 : 32,
-      paddingVertical: 20,
-      backgroundColor: isDark ? '#1E293B' : '#FFFFFF',
-      borderBottomWidth: 1,
-      borderBottomColor: isDark ? '#374151' : '#E2E8F0',
-    },
-    step: {
-      alignItems: 'center',
-      flex: 1,
-    },
-    stepIconContainer: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
-      backgroundColor: isDark ? '#374151' : '#E2E8F0',
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: 8,
-    },
-    activeStepIconContainer: {
-      backgroundColor: '#3B82F6',
-      transform: [{ scale: 1.1 }],
-    },
-    completedStepIconContainer: {
-      backgroundColor: '#10B981',
-    },
-    stepLabel: {
-      fontSize: 12,
-      color: isDark ? '#9CA3AF' : '#64748B',
-      textAlign: 'center',
-      fontWeight: '500',
-    },
-    activeStepLabel: {
-      color: '#3B82F6',
-      fontWeight: '700',
-    },
-    sectionTitle: {
-      fontSize: 20,
-      fontWeight: 'bold',
-      color: isDark ? '#E2E8F0' : '#1E293B',
-      marginBottom: 16,
-      marginTop: 8,
-    },
-    uploadText: {
-      color: isDark ? '#E2E8F0' : '#374151',
-      marginTop: 12,
-      fontSize: 16,
-      fontWeight: '500',
-      textAlign: 'center',
-    },
-    progressContainer: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginBottom: 20,
-      paddingHorizontal: isMobile ? 16 : 32,
-    },
-    progressBar: {
-      flex: 1,
-      height: 6,
-      backgroundColor: isDark ? '#374151' : '#E2E8F0',
-      borderRadius: 3,
-      marginHorizontal: 8,
-      overflow: 'hidden',
-    },
-    progressFill: {
-      height: '100%',
-      backgroundColor: '#3B82F6',
-      borderRadius: 3,
-    },
-    subcategoryContainer: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      marginVertical: 8,
-    },
-    loadingOverlay: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: 'rgba(0, 0, 0, 0.7)',
-      justifyContent: 'center',
-      alignItems: 'center',
-      zIndex: 999,
-    },
-    loadingText: {
-      color: '#FFFFFF',
-      marginTop: 16,
-      fontSize: 16,
-      fontWeight: '600',
-    },
-    cameraModal: {
-      flex: 1,
-      backgroundColor: 'black',
-    },
-    cameraContainer: {
-      flex: 1,
-      justifyContent: 'flex-end',
-      paddingBottom: 40,
-    },
-    camera: {
-      flex: 1,
-    },
-    cameraControls: {
-      flexDirection: 'row',
-      justifyContent: 'space-around',
-      alignItems: 'center',
-      paddingHorizontal: 20,
-      paddingVertical: 20,
-    },
-    cameraButton: {
-      width: 70,
-      height: 70,
-      borderRadius: 35,
-      backgroundColor: 'rgba(255, 255, 255, 0.3)',
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-    cameraActionButton: {
-      width: 60,
-      height: 60,
-      borderRadius: 30,
-      backgroundColor: '#3B82F6',
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-    flipButton: {
-      width: 50,
-      height: 50,
-      borderRadius: 25,
-      backgroundColor: 'rgba(255, 255, 255, 0.2)',
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-    closeButton: {
-      position: 'absolute',
-      top: 50,
-      right: 20,
-      width: 40,
-      height: 40,
-      borderRadius: 20,
-      backgroundColor: 'rgba(0, 0, 0, 0.5)',
-      justifyContent: 'center',
-      alignItems: 'center',
-      zIndex: 1000,
-    },
-    cameraPreview: {
-      width: 100,
-      height: 150,
-      borderRadius: 10,
-      position: 'absolute',
-      top: 100,
-      right: 20,
-      borderWidth: 2,
-      borderColor: '#FFFFFF',
-    },
-  });
+  // ============================================================
+  // CAMERA & GALLERY PERMISSIONS
+  // ============================================================
 
   const requestCameraPermission = async () => {
     if (Platform.OS === 'android') {
@@ -700,11 +389,10 @@ export const SellerApplicationScreen: React.FC<
   const requestGalleryPermission = async (): Promise<boolean> => {
     try {
       if (Platform.OS === 'android') {
-        // ✅ Android version check (VERY IMPORTANT)
         const permission =
           Platform.Version >= 33
-            ? PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES // Android 13+
-            : PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE; // Android <=12
+            ? PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES
+            : PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE;
 
         const granted = await PermissionsAndroid.request(permission, {
           title: 'Gallery Permission',
@@ -716,13 +404,10 @@ export const SellerApplicationScreen: React.FC<
 
         return granted === PermissionsAndroid.RESULTS.GRANTED;
       } else {
-        // ✅ iOS permission
         const status = await request(PERMISSIONS.IOS.PHOTO_LIBRARY);
-
         return status === RESULTS.GRANTED || status === RESULTS.LIMITED;
       }
-    } catch (error) {
-      console.error('Gallery permission error:', error);
+    } catch {
       return false;
     }
   };
@@ -755,13 +440,11 @@ export const SellerApplicationScreen: React.FC<
           },
         }));
       }
-    } catch (error) {
-      console.error('Image Picker Error:', error);
+    } catch {
       Alert.alert('Error', 'Failed to pick image. Please try again.');
     }
   };
 
-  // Camera Functions
   const openCamera = async () => {
     const hasPermission = await requestCameraPermission();
     if (!hasPermission) {
@@ -774,9 +457,7 @@ export const SellerApplicationScreen: React.FC<
     setCameraModalVisible(true);
   };
 
-  const closeCamera = () => {
-    setCameraModalVisible(false);
-  };
+  const closeCamera = () => setCameraModalVisible(false);
 
   const flipCamera = () => {
     setCameraType(current => (current === 'back' ? 'front' : 'back'));
@@ -785,7 +466,6 @@ export const SellerApplicationScreen: React.FC<
   const takeSelfie = async () => {
     if (cameraRef.current && device) {
       try {
-        // ✅ Simply call takePhoto without any options
         const photo = await cameraRef.current.takePhoto();
 
         if (photo && photo.path) {
@@ -793,21 +473,17 @@ export const SellerApplicationScreen: React.FC<
             uri: `file://${photo.path}`,
             name: `selfie_${Date.now()}.jpg`,
             type: 'image/jpeg',
-            size: photo.width ? photo.width * photo.height * 4 : 0,
+            size:
+              photo.width && photo.height ? photo.width * photo.height * 4 : 0,
           };
 
-          setFormData(prev => ({
-            ...prev,
-            selfieWithDoc: selfieFile,
-          }));
-
+          setFormData(prev => ({ ...prev, selfieWithDoc: selfieFile }));
           closeCamera();
           Alert.alert('Success', 'Selfie captured successfully!');
         } else {
           Alert.alert('Error', 'Failed to capture selfie. Photo is empty.');
         }
-      } catch (error) {
-        console.error('Camera error:', error);
+      } catch {
         Alert.alert('Error', 'Failed to capture selfie. Please try again.');
       }
     } else {
@@ -817,30 +493,27 @@ export const SellerApplicationScreen: React.FC<
 
   const handleSelfieUpload = () => {
     Alert.alert('Upload Selfie', 'Choose how you want to upload your selfie', [
-      {
-        text: 'Take Photo',
-        onPress: openCamera,
-      },
+      { text: 'Take Photo', onPress: openCamera },
       {
         text: 'Choose from Gallery',
         onPress: () => pickImage('selfieWithDoc'),
       },
-      {
-        text: 'Cancel',
-        style: 'cancel',
-      },
+      { text: 'Cancel', style: 'cancel' },
     ]);
   };
 
-  const handleInputFocus = (inputName: string) => {
+  // ============================================================
+  // INPUT HELPERS
+  // ============================================================
+
+  const handleInputFocus = (_inputName: string) => {
     setTimeout(() => {
-      scrollViewRef.current?.scrollToEnd({ animated: true });
+      scrollViewRef.current?.scrollToEnd?.({ animated: true });
     }, 300);
   };
 
   const shakeField = (fieldName: keyof typeof shakeAnimations) => {
     const shakeAnimation = shakeAnimations[fieldName];
-
     shakeAnimation.setValue(0);
     Animated.sequence([
       Animated.timing(shakeAnimation, {
@@ -869,6 +542,10 @@ export const SellerApplicationScreen: React.FC<
       }),
     ]).start();
   };
+
+  // ============================================================
+  // VALIDATION & NAVIGATION
+  // ============================================================
 
   const validateStep = (step: number): boolean => {
     let isValid = true;
@@ -980,19 +657,13 @@ export const SellerApplicationScreen: React.FC<
   };
 
   const handleInputChange = (field: string, value: string) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value,
-    }));
+    setFormData(prev => ({ ...prev, [field]: value }));
   };
 
   const handleAddressChange = (field: string, value: string) => {
     setFormData(prev => ({
       ...prev,
-      address: {
-        ...prev.address,
-        [field]: value,
-      },
+      address: { ...prev.address, [field]: value },
     }));
   };
 
@@ -1003,29 +674,25 @@ export const SellerApplicationScreen: React.FC<
       });
 
       if (result && result.length > 0) {
-        setFormData(prev => ({
-          ...prev,
-          [field]: result[0],
-        }));
+        setFormData(prev => ({ ...prev, [field]: result[0] }));
       }
     } catch (error) {
-      // ✅ FIXED: Check if error is a cancellation
-      // The new version doesn't have isCancel method, we need to check error code or message
       if (error && typeof error === 'object' && 'code' in error) {
         const err = error as { code?: string; message?: string };
         if (
           err.code === 'DOCUMENT_PICKER_CANCELED' ||
           err.message?.includes('cancel')
         ) {
-          // User cancelled - do nothing
-          console.log('User cancelled document picker');
           return;
         }
       }
-      // For other errors, show alert
       Alert.alert('Error', 'Failed to pick document. Please try again.');
     }
   };
+
+  // ============================================================
+  // CATEGORY HELPERS
+  // ============================================================
 
   const handleCategorySelect = (category: Category) => {
     setSelectedCategory(category);
@@ -1062,35 +729,9 @@ export const SellerApplicationScreen: React.FC<
     }
   };
 
-  const resetForm = () => {
-    setFormData({
-      fullName: '',
-      email: '',
-      phone: '',
-      address: {
-        full: '',
-        pincode: '',
-        city: '',
-        state: '',
-        country: '',
-      },
-      aadhaarFront: null,
-      aadhaarBack: null,
-      panFront: null,
-      panBack: null,
-      selfieWithDoc: null,
-      shopName: '',
-      gstNumber: '',
-      category: {
-        mainCategory: '',
-        subcategories: [],
-      },
-      gstCertificate: null,
-    });
-    setActiveStep(0);
-    setSelectedCategory(null);
-    setSelectedSubcategories([]);
-  };
+  // ============================================================
+  // SUBMIT
+  // ============================================================
 
   const handleSubmit = async () => {
     setLoading(true);
@@ -1118,9 +759,7 @@ export const SellerApplicationScreen: React.FC<
         gstCertificate: formData.gstCertificate,
       };
 
-      const result = await sellerApplicationAPI.submitApplication(
-        applicationData,
-      );
+      const result = await submitSellerApplication(applicationData);
 
       if (result.success) {
         setSuccess(true);
@@ -1151,7 +790,7 @@ export const SellerApplicationScreen: React.FC<
           result.message || 'Failed to submit application. Please try again.',
         );
       }
-    } catch (err: any) {
+    } catch {
       setError(
         'Failed to submit application. Please check your connection and try again.',
       );
@@ -1160,9 +799,12 @@ export const SellerApplicationScreen: React.FC<
     }
   };
 
+  // ============================================================
+  // RENDER HELPERS
+  // ============================================================
+
   const renderLoadingOverlay = () => {
     if (!checkingExistingApplication) return null;
-
     return (
       <View style={styles.loadingOverlay}>
         <ActivityIndicator size="large" color="#3B82F6" />
@@ -1191,7 +833,6 @@ export const SellerApplicationScreen: React.FC<
               device={device}
               isActive={cameraModalVisible}
               ref={cameraRef}
-              photo={true}
             />
 
             <View style={styles.cameraControls}>
@@ -1224,6 +865,10 @@ export const SellerApplicationScreen: React.FC<
       </View>
     </Modal>
   );
+
+  // ============================================================
+  // STEP CONTENT
+  // ============================================================
 
   const renderStepContent = () => {
     if (checkingExistingApplication) {
@@ -1472,8 +1117,8 @@ export const SellerApplicationScreen: React.FC<
                     formData.aadhaarFront
                       ? '#10B981'
                       : isDark
-                      ? '#94A3B8'
-                      : '#64748B'
+                        ? '#94A3B8'
+                        : '#64748B'
                   }
                 />
                 <Text style={styles.uploadText}>
@@ -1514,8 +1159,8 @@ export const SellerApplicationScreen: React.FC<
                     formData.aadhaarBack
                       ? '#10B981'
                       : isDark
-                      ? '#94A3B8'
-                      : '#64748B'
+                        ? '#94A3B8'
+                        : '#64748B'
                   }
                 />
                 <Text style={styles.uploadText}>
@@ -1554,8 +1199,8 @@ export const SellerApplicationScreen: React.FC<
                     formData.panFront
                       ? '#10B981'
                       : isDark
-                      ? '#94A3B8'
-                      : '#64748B'
+                        ? '#94A3B8'
+                        : '#64748B'
                   }
                 />
                 <Text style={styles.uploadText}>
@@ -1590,8 +1235,8 @@ export const SellerApplicationScreen: React.FC<
                     formData.panBack
                       ? '#10B981'
                       : isDark
-                      ? '#94A3B8'
-                      : '#64748B'
+                        ? '#94A3B8'
+                        : '#64748B'
                   }
                 />
                 <Text style={styles.uploadText}>
@@ -1632,8 +1277,8 @@ export const SellerApplicationScreen: React.FC<
                     formData.selfieWithDoc
                       ? '#10B981'
                       : isDark
-                      ? '#94A3B8'
-                      : '#64748B'
+                        ? '#94A3B8'
+                        : '#64748B'
                   }
                 />
                 <Text style={styles.uploadText}>
@@ -1728,8 +1373,8 @@ export const SellerApplicationScreen: React.FC<
                         selectedCategory?.name === category.name
                           ? '#3B82F6'
                           : isDark
-                          ? '#94A3B8'
-                          : '#64748B'
+                            ? '#94A3B8'
+                            : '#64748B'
                       }
                     />
                     <Text
@@ -1738,8 +1383,8 @@ export const SellerApplicationScreen: React.FC<
                           selectedCategory?.name === category.name
                             ? '#3B82F6'
                             : isDark
-                            ? '#E2E8F0'
-                            : '#374151',
+                              ? '#E2E8F0'
+                              : '#374151',
                         marginTop: 8,
                         textAlign: 'center',
                         fontWeight: '600',
@@ -1891,8 +1536,8 @@ export const SellerApplicationScreen: React.FC<
                     formData.gstCertificate
                       ? '#10B981'
                       : isDark
-                      ? '#94A3B8'
-                      : '#64748B'
+                        ? '#94A3B8'
+                        : '#64748B'
                   }
                 />
                 <Text style={styles.uploadText}>
@@ -2199,18 +1844,18 @@ export const SellerApplicationScreen: React.FC<
     }
   };
 
+  // ============================================================
+  // MAIN RENDER
+  // ============================================================
+
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[styles.container, { backgroundColor: isDark ? '#0F172A' : '#F8FAFC', paddingTop: insets.top }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      {/* Camera Modal */}
       {renderCameraModal()}
-
-      {/* Loading Overlay */}
       {renderLoadingOverlay()}
 
-      {/* Horizontal Stepper */}
       <View style={styles.stepIndicator}>
         {steps.map((step, index) => (
           <View key={step.title} style={styles.step}>
@@ -2232,8 +1877,8 @@ export const SellerApplicationScreen: React.FC<
                     index === activeStep
                       ? '#FFFFFF'
                       : isDark
-                      ? '#94A3B8'
-                      : '#64748B'
+                        ? '#94A3B8'
+                        : '#64748B'
                   }
                 />
               )}
@@ -2250,7 +1895,6 @@ export const SellerApplicationScreen: React.FC<
         ))}
       </View>
 
-      {/* Progress Bar */}
       <View style={styles.progressContainer}>
         <Text
           style={{
@@ -2323,7 +1967,6 @@ export const SellerApplicationScreen: React.FC<
 
         {renderStepContent()}
 
-        {/* Navigation Buttons */}
         {!hasExistingApplication && !checkingExistingApplication && (
           <View
             style={{
@@ -2386,5 +2029,267 @@ export const SellerApplicationScreen: React.FC<
     </KeyboardAvoidingView>
   );
 };
+
+// ============================================================
+// STYLES (Neeche hi rakha hai)
+// ============================================================
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  contentContainer: { flex: 1, padding: isMobile ? 16 : 32 },
+  stepContainer: { marginBottom: 20 },
+  stepText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 20,
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    fontSize: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  inputError: {
+    borderColor: '#EF4444',
+    backgroundColor: '#FEF2F2',
+  },
+  textArea: { height: 100, textAlignVertical: 'top' },
+  button: {
+    backgroundColor: '#3B82F6',
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginVertical: 8,
+    shadowColor: '#3B82F6',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  buttonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  secondaryButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 2,
+    borderColor: '#3B82F6',
+  },
+  secondaryButtonText: { color: '#3B82F6' },
+  disabledButton: { backgroundColor: '#9CA3AF', shadowOpacity: 0 },
+  card: {
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  categoryCard: {
+    alignItems: 'center',
+    padding: 20,
+    margin: 8,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    minWidth: 100,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  selectedCategory: {
+    borderColor: '#3B82F6',
+    transform: [{ scale: 1.05 }],
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    margin: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  selectedChip: { backgroundColor: '#3B82F6' },
+  chipText: {
+    fontSize: 14,
+    fontWeight: '500',
+    marginLeft: 4,
+  },
+  selectedChipText: { color: '#FFFFFF' },
+  uploadCard: {
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderRadius: 16,
+    padding: 30,
+    alignItems: 'center',
+    marginVertical: 8,
+  },
+  activeUploadCard: {
+    borderColor: '#10B981',
+  },
+  errorText: {
+    color: '#EF4444',
+    fontSize: 14,
+    marginBottom: 16,
+    fontWeight: '500',
+  },
+  successText: {
+    color: '#10B981',
+    fontSize: 14,
+    marginBottom: 16,
+    fontWeight: '500',
+  },
+  stepIndicator: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: isMobile ? 16 : 32,
+    paddingVertical: 20,
+    borderBottomWidth: 1,
+  },
+  step: { alignItems: 'center', flex: 1 },
+  stepIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  activeStepIconContainer: {
+    backgroundColor: '#3B82F6',
+    transform: [{ scale: 1.1 }],
+  },
+  completedStepIconContainer: { backgroundColor: '#10B981' },
+  stepLabel: {
+    fontSize: 12,
+    textAlign: 'center',
+    fontWeight: '500',
+  },
+  activeStepLabel: { color: '#3B82F6', fontWeight: '700' },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 16,
+    marginTop: 8,
+  },
+  uploadText: {
+    marginTop: 12,
+    fontSize: 16,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  progressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+    paddingHorizontal: isMobile ? 16 : 32,
+  },
+  progressBar: {
+    flex: 1,
+    height: 6,
+    borderRadius: 3,
+    marginHorizontal: 8,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#3B82F6',
+    borderRadius: 3,
+  },
+  subcategoryContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginVertical: 8,
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 999,
+  },
+  loadingText: {
+    color: '#FFFFFF',
+    marginTop: 16,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  cameraModal: { flex: 1, backgroundColor: 'black' },
+  cameraContainer: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    paddingBottom: 40,
+  },
+  camera: { flex: 1 },
+  cameraControls: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+  },
+  cameraButton: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cameraActionButton: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#3B82F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  flipButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeButton: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  cameraPreview: {
+    width: 100,
+    height: 150,
+    borderRadius: 10,
+    position: 'absolute',
+    top: 100,
+    right: 20,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+});
 
 export default SellerApplicationScreen;

@@ -1,3 +1,5 @@
+// SellerProductsGrid.tsx
+
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -14,41 +16,24 @@ import {
   Platform,
 } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getToken } from '../../../../api/connections/token/tokenSlice';
+
+// ✅ NEW — API slice
+import {
+  getSellerProducts,
+  deleteSellerProduct,
+  Product,
+  ProductVariant,
+} from '../../../../api/features/private/sellerProductsPrivateSlice';
+import { ApiError } from '../../../../core/utils/handler/apiClient';
 
 const { width: screenWidth } = Dimensions.get('window');
 
-// Define TypeScript interfaces
-interface ProductVariant {
-  images: string[];
-  video?: string;
-  fields?: {
-    images?: string[];
-    video?: string;
-    [key: string]: any;
-  };
-}
+// ============================================================
+// TYPES
+// ============================================================
 
-interface Product {
-  id?: string;
-  _id?: string;
-  title: string;
-  price: number;
-  category?: string;
-  variants: ProductVariant[];
-  [key: string]: any;
-}
-
-interface ApiResponse {
-  products?: Product[];
-  data?: Product[];
-  [key: string]: any;
-}
-
-// Define navigation param list
 export type RootStackParamList = {
   EditProduct: { productId: string; product: Product };
   ProductDetails: { productId: string; product: Product };
@@ -56,6 +41,10 @@ export type RootStackParamList = {
 };
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
+// ============================================================
+// COMPONENT
+// ============================================================
 
 export default function SellerProductsGrid() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -71,111 +60,70 @@ export default function SellerProductsGrid() {
 
   const navigation = useNavigation<NavigationProp>();
 
-  // Calculate columns based on screen width
+  // ============================================================
+  // GRID CALCULATIONS
+  // ============================================================
+
   const numColumns = (): number => {
     if (screenWidth >= 1024) return 4;
     if (screenWidth >= 768) return 3;
     return 3;
   };
 
-  // Calculate grid item width
   const getGridItemWidth = (): number => {
     const columns = numColumns();
     const totalSpacing = (columns + 1) * 4;
     return (screenWidth - totalSpacing) / columns;
   };
 
-  // Fetch user products from API
+  // ============================================================
+  // ✅ FETCH PRODUCTS — via slice
+  // ============================================================
+
   const fetchUserProducts = async (): Promise<void> => {
     try {
       setLoading(true);
       setError(null);
 
-      const token = await getToken();
-
-      if (!token) {
-        setError('Please login first');
-        setLoading(false);
-        return;
-      }
-
-      const url =
-        'http://10.172.218.121:2000/api/v0/seller/forms/categories/user';
-      console.log('🔵 Fetching:', url);
-
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      console.log('🔵 Response status:', response.status);
-
-      if (!response.ok) {
-        // 🔥 Read the error body from backend
-        let errBody: any = null;
-        try {
-          errBody = await response.json();
-        } catch (_) {
-          // body not JSON
-        }
-
-        console.error('🔴 Backend error body:', errBody);
-
-        if (response.status === 401) {
-          setError('Session expired. Please login again.');
-          return;
-        }
-
-        if (response.status === 500) {
-          setError(
-            `Server error: ${errBody?.message || errBody?.error || 'Unknown'}`,
-          );
-          return;
-        }
-
-        throw new Error(
-          errBody?.message || errBody?.error || `HTTP ${response.status}`,
-        );
-      }
-
-      const data: ApiResponse = await response.json();
-      console.log('🟢 Response data:', data);
-
-      let productsData: Product[] = [];
-      if (data.products && Array.isArray(data.products)) {
-        productsData = data.products;
-      } else if (data.data && Array.isArray(data.data)) {
-        productsData = data.data;
-      } else if (Array.isArray(data)) {
-        productsData = data;
-      }
-
+      const productsData = await getSellerProducts();
       setProducts(productsData);
-    } catch (err: any) {
-      console.error('🔴 Error fetching products:', err);
-      setError(err?.message || 'Failed to load products. Please try again.');
+    } catch (err) {
+      if (__DEV__) {
+        console.error('🔴 Error fetching products:', err);
+      }
+
+      const message =
+        err instanceof ApiError
+          ? err.status === 401
+            ? 'Session expired. Please login again.'
+            : err.status === 500
+              ? `Server error: ${err.message}`
+              : err.message
+          : err instanceof Error
+            ? err.message
+            : 'Failed to load products. Please try again.';
+
+      setError(message);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
-  
-  // Handle pull to refresh
+
+  // ============================================================
+  // HANDLERS
+  // ============================================================
+
   const handleRefresh = (): void => {
     setRefreshing(true);
     fetchUserProducts();
   };
 
-  // Handle product long press (show options)
   const handleProductLongPress = (product: Product): void => {
     setSelectedProduct(product);
     setShowActionSheet(true);
   };
 
-  // Handle action sheet actions
   const handleView = (): void => {
     if (selectedProduct) {
       handleProductPress(selectedProduct);
@@ -205,7 +153,6 @@ export default function SellerProductsGrid() {
     setSelectedProduct(null);
   };
 
-  // Edit product - navigate to edit screen
   const handleEditProduct = (product: Product): void => {
     navigation.navigate('EditProduct', {
       productId: product.id || product._id || '',
@@ -213,13 +160,22 @@ export default function SellerProductsGrid() {
     });
   };
 
-  // Show delete confirmation modal
   const handleDeleteConfirmation = (product: Product): void => {
     setProductToDelete(product);
     setShowDeleteModal(true);
   };
 
-  // Delete product API call
+  const handleProductPress = (product: Product): void => {
+    navigation.navigate('ProductDetails', {
+      productId: product.id || product._id || '',
+      product,
+    });
+  };
+
+  // ============================================================
+  // ✅ DELETE PRODUCT — via slice
+  // ============================================================
+
   const deleteProduct = async (): Promise<void> => {
     if (!productToDelete) return;
 
@@ -229,7 +185,6 @@ export default function SellerProductsGrid() {
       return;
     }
 
-    // Validate confirmation text
     if (confirmationText.toLowerCase() !== 'delete') {
       Alert.alert('Error', 'Please type "delete" to confirm');
       return;
@@ -238,57 +193,40 @@ export default function SellerProductsGrid() {
     try {
       setDeleteLoading(productId);
 
-      const token = await AsyncStorage.getItem('authToken');
-      if (!token) {
-        Alert.alert('Error', 'Please login first');
-        return;
-      }
-
-      const response = await fetch(
-        `http://10.172.218.121:2000/api/v0/delete/product`,
-        {
-          method: 'DELETE',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ id: productId }),
-        },
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to delete product');
-      }
+      await deleteSellerProduct(productId);
 
       // Remove from local state
       setProducts(prev =>
         prev.filter(p => p.id !== productId && p._id !== productId),
       );
 
-      // Close modal and reset
       setShowDeleteModal(false);
       setProductToDelete(null);
       setConfirmationText('');
 
       Alert.alert('Success', 'Product deleted successfully');
     } catch (err: any) {
-      console.error('Delete product error:', err);
-      Alert.alert('Error', err.message || 'Failed to delete product');
+      if (__DEV__) {
+        console.error('Delete product error:', err);
+      }
+
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Failed to delete product';
+
+      Alert.alert('Error', message);
     } finally {
       setDeleteLoading(null);
     }
   };
 
-  // Navigate to product details
-  const handleProductPress = (product: Product): void => {
-    navigation.navigate('ProductDetails', {
-      productId: product.id || product._id || '',
-      product,
-    });
-  };
+  // ============================================================
+  // HELPERS
+  // ============================================================
 
-  // Get product image
   const FALLBACK = 'https://placehold.co/500x500/000/fff?text=No+Image';
 
   const getProductImage = (product: any) => {
@@ -316,7 +254,10 @@ export default function SellerProductsGrid() {
     fetchUserProducts();
   }, []);
 
-  // Render custom action sheet modal
+  // ============================================================
+  // RENDER: ACTION SHEET
+  // ============================================================
+
   const renderActionSheet = () => (
     <Modal
       visible={showActionSheet}
@@ -366,7 +307,10 @@ export default function SellerProductsGrid() {
     </Modal>
   );
 
-  // Render each product item with long press
+  // ============================================================
+  // RENDER: PRODUCT ITEM
+  // ============================================================
+
   const renderProductItem = ({
     item,
     index,
@@ -403,7 +347,6 @@ export default function SellerProductsGrid() {
             onError={e => console.log('Image load error:', e.nativeEvent.error)}
           />
 
-          {/* Variant Count Badge */}
           {item.variants && item.variants.length > 1 && (
             <View style={styles.variantBadge}>
               <Text style={styles.variantText}>
@@ -412,7 +355,6 @@ export default function SellerProductsGrid() {
             </View>
           )}
 
-          {/* Loading indicator for delete */}
           {deleteLoading === productId && (
             <View style={styles.loadingOverlay}>
               <ActivityIndicator size="small" color="#ffffff" />
@@ -423,7 +365,10 @@ export default function SellerProductsGrid() {
     );
   };
 
-  // Delete Confirmation Modal
+  // ============================================================
+  // RENDER: DELETE MODAL
+  // ============================================================
+
   const renderDeleteModal = () => (
     <Modal
       visible={showDeleteModal}
@@ -505,7 +450,10 @@ export default function SellerProductsGrid() {
     </Modal>
   );
 
-  // Render loading state
+  // ============================================================
+  // LOADING
+  // ============================================================
+
   if (loading && !refreshing) {
     return (
       <SafeAreaView style={styles.safeArea}>
@@ -519,7 +467,10 @@ export default function SellerProductsGrid() {
     );
   }
 
-  // Render error state
+  // ============================================================
+  // ERROR
+  // ============================================================
+
   if (error) {
     return (
       <SafeAreaView style={styles.safeArea}>
@@ -538,6 +489,10 @@ export default function SellerProductsGrid() {
       </SafeAreaView>
     );
   }
+
+  // ============================================================
+  // MAIN RENDER
+  // ============================================================
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -575,6 +530,10 @@ export default function SellerProductsGrid() {
   );
 }
 
+// ============================================================
+// STYLES
+// ============================================================
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -597,12 +556,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#6c757d',
     ...Platform.select({
-      ios: {
-        fontFamily: 'System',
-      },
-      android: {
-        fontFamily: 'Roboto',
-      },
+      ios: { fontFamily: 'System' },
+      android: { fontFamily: 'Roboto' },
     }),
   },
 
@@ -622,12 +577,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 24,
     ...Platform.select({
-      ios: {
-        fontFamily: 'System',
-      },
-      android: {
-        fontFamily: 'Roboto',
-      },
+      ios: { fontFamily: 'System' },
+      android: { fontFamily: 'Roboto' },
     }),
   },
 
@@ -648,12 +599,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     ...Platform.select({
-      ios: {
-        fontFamily: 'System',
-      },
-      android: {
-        fontFamily: 'Roboto',
-      },
+      ios: { fontFamily: 'System' },
+      android: { fontFamily: 'Roboto' },
     }),
   },
 
@@ -703,12 +650,8 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     ...Platform.select({
-      ios: {
-        fontFamily: 'System',
-      },
-      android: {
-        fontFamily: 'Roboto',
-      },
+      ios: { fontFamily: 'System' },
+      android: { fontFamily: 'Roboto' },
     }),
   },
 
@@ -742,12 +685,8 @@ const styles = StyleSheet.create({
     color: '#343a40',
     marginBottom: 8,
     ...Platform.select({
-      ios: {
-        fontFamily: 'System',
-      },
-      android: {
-        fontFamily: 'Roboto',
-      },
+      ios: { fontFamily: 'System' },
+      android: { fontFamily: 'Roboto' },
     }),
     textAlign: 'center',
   },
@@ -758,12 +697,8 @@ const styles = StyleSheet.create({
     marginBottom: 32,
     textAlign: 'center',
     ...Platform.select({
-      ios: {
-        fontFamily: 'System',
-      },
-      android: {
-        fontFamily: 'Roboto',
-      },
+      ios: { fontFamily: 'System' },
+      android: { fontFamily: 'Roboto' },
     }),
   },
 
@@ -784,21 +719,17 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     ...Platform.select({
-      ios: {
-        fontFamily: 'System',
-      },
-      android: {
-        fontFamily: 'Roboto',
-      },
+      ios: { fontFamily: 'System' },
+      android: { fontFamily: 'Roboto' },
     }),
   },
 
-  // Action Sheet Styles
   actionSheetOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
   },
+
   actionSheetContainer: {
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 12,
@@ -807,36 +738,36 @@ const styles = StyleSheet.create({
     marginHorizontal: 8,
     marginBottom: 8,
   },
+
   actionSheetItem: {
     paddingVertical: 16,
     alignItems: 'center',
   },
+
   actionSheetText: {
     fontSize: 18,
     color: '#007AFF',
     fontWeight: '500',
     ...Platform.select({
-      ios: {
-        fontFamily: 'System',
-      },
-      android: {
-        fontFamily: 'Roboto',
-      },
+      ios: { fontFamily: 'System' },
+      android: { fontFamily: 'Roboto' },
     }),
   },
+
   actionSheetDelete: {
     borderTopWidth: 0,
   },
+
   actionSheetDeleteText: {
     color: '#FF3B30',
   },
+
   actionSheetDivider: {
     height: 1,
     backgroundColor: '#E5E5EA',
     marginHorizontal: 8,
   },
 
-  // Modal Styles
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -865,12 +796,8 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     textAlign: 'center',
     ...Platform.select({
-      ios: {
-        fontFamily: 'System',
-      },
-      android: {
-        fontFamily: 'Roboto',
-      },
+      ios: { fontFamily: 'System' },
+      android: { fontFamily: 'Roboto' },
     }),
   },
 
@@ -879,12 +806,8 @@ const styles = StyleSheet.create({
     color: '#333',
     marginBottom: 12,
     ...Platform.select({
-      ios: {
-        fontFamily: 'System',
-      },
-      android: {
-        fontFamily: 'Roboto',
-      },
+      ios: { fontFamily: 'System' },
+      android: { fontFamily: 'Roboto' },
     }),
   },
 
@@ -894,12 +817,8 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     fontStyle: 'italic',
     ...Platform.select({
-      ios: {
-        fontFamily: 'System',
-      },
-      android: {
-        fontFamily: 'Roboto',
-      },
+      ios: { fontFamily: 'System' },
+      android: { fontFamily: 'Roboto' },
     }),
   },
 
@@ -908,12 +827,8 @@ const styles = StyleSheet.create({
     color: '#666',
     marginBottom: 8,
     ...Platform.select({
-      ios: {
-        fontFamily: 'System',
-      },
-      android: {
-        fontFamily: 'Roboto',
-      },
+      ios: { fontFamily: 'System' },
+      android: { fontFamily: 'Roboto' },
     }),
   },
 
@@ -925,12 +840,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginBottom: 24,
     ...Platform.select({
-      ios: {
-        fontFamily: 'System',
-      },
-      android: {
-        fontFamily: 'Roboto',
-      },
+      ios: { fontFamily: 'System' },
+      android: { fontFamily: 'Roboto' },
     }),
     backgroundColor: '#f9f9f9',
   },
@@ -960,12 +871,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     ...Platform.select({
-      ios: {
-        fontFamily: 'System',
-      },
-      android: {
-        fontFamily: 'Roboto',
-      },
+      ios: { fontFamily: 'System' },
+      android: { fontFamily: 'Roboto' },
     }),
   },
 
@@ -978,12 +885,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     ...Platform.select({
-      ios: {
-        fontFamily: 'System',
-      },
-      android: {
-        fontFamily: 'Roboto',
-      },
+      ios: { fontFamily: 'System' },
+      android: { fontFamily: 'Roboto' },
     }),
   },
 

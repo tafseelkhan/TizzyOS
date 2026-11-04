@@ -27,44 +27,27 @@ import {
   OrderDetailsResponse,
 } from '../../../../api/features/private/scanFwsOrderPrivateSlice';
 import { fwsAssignShipping } from '../../../../api/features/private/fwsDispatchPrivateSlice';
+
+// ✅ NEW SLICES (integrated)
+import {
+  getAvailableShippingPartners,
+  ShippingPartner,
+} from '../../../../api/features/private/shippingPartnersPrivateSlice';
+import {
+  getTrackingHistory,
+  extractExcludedPartnerIds,
+} from '../../../../api/features/private/trackingHistoryPrivateSlice';
+
 import { FWSOrderWithTracking } from '../../../types/orderTypes';
 import { format } from 'date-fns';
 import Icon from 'react-native-vector-icons/Ionicons';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import FontAwesome5 from 'react-native-vector-icons/FontAwesome5';
 import Feather from 'react-native-vector-icons/Feather';
-import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width, height } = Dimensions.get('window');
 
-const TIZZYOS_API_BASE_URL = 'http://10.172.218.121:2000';
-
 type TabType = 'current' | 'previous';
-
-// ============================================================
-// INTERFACES
-// ============================================================
-
-interface ShippingPartner {
-  id: string;
-  userId: string;
-  name: string;
-  rating: number;
-  vehicleType: string;
-  vehicleBrand?: string;
-  vehicleModel?: string;
-  vehicleNumber?: string;
-  isAvailable: boolean;
-  phoneNumber?: string;
-  maxOrdersPerDay: number;
-  currentOrders: number;
-  shippingType?: string;
-  city?: string;
-  state?: string;
-  distance?: number;
-  alreadyHandled?: boolean;
-}
 
 // ============================================================
 // MAIN COMPONENT
@@ -114,85 +97,29 @@ const ScannedOrdersScreen: React.FC = () => {
   const [selectedPartner, setSelectedPartner] =
     useState<ShippingPartner | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [authToken, setAuthToken] = useState<string | null>(null);
   const [excludedPartnerIds, setExcludedPartnerIds] = useState<string[]>([]);
 
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
   // ============================================================
-  // Get Auth Token
-  // ============================================================
-  const getAuthToken = async (): Promise<string | null> => {
-    try {
-      const token = await AsyncStorage.getItem('authToken');
-      if (token) setAuthToken(token);
-      return token;
-    } catch (error) {
-      console.error('Error getting auth token:', error);
-      return null;
-    }
-  };
-
-  // ============================================================
-  // Fetch Shipping Partners
+  // Fetch Shipping Partners (via slice)
   // ============================================================
   const fetchShippingPartners = async (shippingType?: 'RIDER' | 'TRUCK') => {
     try {
       setLoadingPartners(true);
-      const token = await getAuthToken();
-      if (!token) {
-        Alert.alert('Error', 'Authentication required');
-        return;
-      }
 
-      const response = await axios.get(
-        `${TIZZYOS_API_BASE_URL}/api/v0/shipping/available-shipping`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: 10000,
-        },
+      const partners = await getAvailableShippingPartners(
+        shippingType,
+        excludedPartnerIds,
       );
-
-      let partners: ShippingPartner[] = [];
-
-      if (response.data && response.data.success) {
-        const data = response.data.shippingPartners || response.data.data || [];
-        partners = data
-          .filter((item: any) => {
-            if (shippingType) {
-              const type = item.shippingType || item.vehicleCategory;
-              return type === shippingType;
-            }
-            return true;
-          })
-          .map((item: any) => ({
-            id: item._id || item.id,
-            userId: item.userId,
-            name: item.name || 'Unknown',
-            rating: item.rating || 4.0,
-            vehicleType: item.vehicleCategory || item.shippingType || 'RIDER',
-            vehicleBrand: item.vehicleBrand,
-            vehicleModel: item.vehicleModel,
-            vehicleNumber: item.vehicleNumber,
-            isAvailable: item.isOnline && item.isAvailable,
-            phoneNumber: item.phoneNumber,
-            maxOrdersPerDay: item.maxOrdersPerDay || 10,
-            currentOrders: item.orderStats?.assigned || 0,
-            shippingType: item.shippingType,
-            city: item.city,
-            state: item.state,
-            distance: item.distance || 0,
-            alreadyHandled: excludedPartnerIds.includes(item.userId),
-          }));
-      }
 
       setShippingPartners(partners);
     } catch (error: any) {
       console.error('Error fetching shipping partners:', error);
-      Alert.alert('Error', 'Failed to fetch shipping partners');
+      Alert.alert(
+        'Error',
+        error?.message || 'Failed to fetch shipping partners',
+      );
       setShippingPartners([]);
     } finally {
       setLoadingPartners(false);
@@ -205,7 +132,6 @@ const ScannedOrdersScreen: React.FC = () => {
   const loadOrders = async () => {
     try {
       setLoading(true);
-      await getAuthToken();
       const response = await getFWSOrders();
 
       if (response.success) {
@@ -277,7 +203,7 @@ const ScannedOrdersScreen: React.FC = () => {
   };
 
   // ============================================================
-  // Open Assignment Modal
+  // Open Assignment Modal (via slice)
   // ============================================================
   const openAssignmentModal = async (order: FWSOrderWithTracking) => {
     setSelectedOrder(order);
@@ -288,53 +214,11 @@ const ScannedOrdersScreen: React.FC = () => {
     setExcludedPartnerIds([]);
 
     try {
-      const token = await getAuthToken();
-      if (token && order.order) {
-        const trackingResponse = await axios.get(
-          `${TIZZYOS_API_BASE_URL}/api/v0/tracking/history/status`,
-          {
-            params: { orderId: order.order.orderId },
-            headers: { Authorization: `Bearer ${token}` },
-            timeout: 10000,
-          },
-        );
+      if (order.order) {
+        const tracking = await getTrackingHistory(order.order.orderId);
 
-        if (trackingResponse.data?.success) {
-          const tracking = trackingResponse.data;
-          const excluded: string[] = [];
-
-          if (tracking.routeHistory) {
-            tracking.routeHistory.forEach((r: any) => {
-              if (
-                r.fromHolderType === 'RIDER' ||
-                r.fromHolderType === 'TRUCK'
-              ) {
-                excluded.push(r.fromHolderId);
-              }
-              if (r.toHolderType === 'RIDER' || r.toHolderType === 'TRUCK') {
-                excluded.push(r.toHolderId);
-              }
-            });
-          }
-
-          if (tracking.assignmentHistory) {
-            tracking.assignmentHistory.forEach((a: any) => {
-              if (a.assigneeType === 'RIDER' || a.assigneeType === 'TRUCK') {
-                excluded.push(a.assigneeId);
-              }
-            });
-          }
-
-          if (tracking.pendingAssignment) {
-            if (
-              tracking.pendingAssignment.assigneeType === 'RIDER' ||
-              tracking.pendingAssignment.assigneeType === 'TRUCK'
-            ) {
-              excluded.push(tracking.pendingAssignment.assigneeId);
-            }
-          }
-
-          setExcludedPartnerIds([...new Set(excluded)]);
+        if (tracking.success) {
+          setExcludedPartnerIds(extractExcludedPartnerIds(tracking));
         }
       }
     } catch (error) {
@@ -387,12 +271,14 @@ const ScannedOrdersScreen: React.FC = () => {
     } catch (error: any) {
       console.error('❌ Assignment Error:', error);
 
+      const errorData = error?.data ?? error?.response?.data ?? {};
+      const errorMessage = error?.message ?? '';
+
       if (
-        error.message?.includes('already handled') ||
-        error.message?.includes('already assigned') ||
-        error.response?.data?.alreadyHandled === true
+        errorMessage.includes('already handled') ||
+        errorMessage.includes('already assigned') ||
+        errorData.alreadyHandled === true
       ) {
-        const errorData = error.response?.data || {};
         Alert.alert(
           '⚠️ Already Handled',
           errorData.message || 'This partner has already handled this order.',
@@ -431,7 +317,7 @@ const ScannedOrdersScreen: React.FC = () => {
 
       Alert.alert(
         '❌ Assignment Failed',
-        error.message || 'Failed to assign dispatch',
+        errorMessage || 'Failed to assign dispatch',
       );
     } finally {
       setIsAssigning(false);
@@ -1526,7 +1412,7 @@ const ScannedOrdersScreen: React.FC = () => {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+      <StatusBar barStyle="dark-content" />
 
       <View style={styles.header}>
         <View style={styles.headerLeft}>

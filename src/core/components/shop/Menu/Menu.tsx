@@ -1,3 +1,5 @@
+// SidebarWithSeller.tsx
+
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -8,7 +10,6 @@ import {
   LayoutAnimation,
   Dimensions,
   Image,
-  ActivityIndicator,
   SafeAreaView,
   Platform,
   UIManager,
@@ -16,9 +17,12 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useNavigation, NavigationProp } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomNavigation from '../../home/BottomNavigation';
 import LottieView from 'lottie-react-native';
+
+// ✅ me() API
+import { me } from '../../../../api/features/public/authPublicSlice';
+import { ApiError } from '../../../../core/utils/handler/apiClient';
 
 // Enable LayoutAnimation for Android
 if (
@@ -29,9 +33,11 @@ if (
 }
 
 const { width } = Dimensions.get('window');
-const BASE_URL = 'http://10.172.218.121:1000';
 
-// Define navigation param list
+// ============================================================
+// TYPES
+// ============================================================
+
 type RootStackParamList = {
   ApplySeller: undefined;
   ProductListing: { shouldRequestLocation: boolean };
@@ -44,22 +50,6 @@ type RootStackParamList = {
   Login: undefined;
   [key: string]: undefined | object;
 };
-
-// Types
-interface SellerStats {
-  revenue: number;
-  likes: number;
-  comments: number;
-  orders: number;
-}
-
-interface SellerProfile {
-  id: string;
-  name: string;
-  image: string;
-  isActive: boolean;
-  stats: SellerStats;
-}
 
 interface MenuItem {
   segment: string;
@@ -76,125 +66,76 @@ interface MenuSection {
   children: MenuItem[];
 }
 
-// Helper function to get image URL
+// ============================================================
+// HELPERS
+// ============================================================
+
 const getImageUrl = (image?: string): string => {
-  if (!image) return 'https://via.placeholder.com/150';
-  if (image.startsWith('http')) return image;
-  return 'https://via.placeholder.com/150';
+  if (!image) return '';
+  if (image.startsWith('http://') || image.startsWith('https://')) {
+    return image;
+  }
+  return '';
 };
 
-// Seller API Service
-const sellerApi = {
-  getSellerProfile: async (token: string): Promise<SellerProfile> => {
-    try {
-      const response = await fetch(`${BASE_URL}/api/v0/profile/me`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        return {
-          id: data._id || 'seller_123',
-          name: data.name || 'John Electronics',
-          image: getImageUrl(data.image),
-          isActive: data.isActive || true,
-          stats: {
-            revenue: data.stats?.revenue || 42500,
-            likes: data.stats?.likes || 1250,
-            comments: data.stats?.comments || 320,
-            orders: data.stats?.orders || 48,
-          },
-        };
-      }
-    } catch (error) {
-      console.error('Error fetching seller profile:', error);
-    }
-
-    // Return mock data if API fails
-    return {
-      id: 'seller_123',
-      name: 'John Electronics',
-      image: 'https://via.placeholder.com/150',
-      isActive: true,
-      stats: {
-        revenue: 42500,
-        likes: 1250,
-        comments: 320,
-        orders: 48,
-      },
-    };
-  },
-
-  getSellerMenu: async (): Promise<MenuSection[]> => {
-    return [
+// ✅ Static seller menu — no API
+const getSellerMenu = (): MenuSection[] => [
+  {
+    segment: 'seller',
+    title: 'Seller Dashboard',
+    iconName: 'storefront-outline',
+    iconColor: '#8B5CF6',
+    children: [
       {
-        segment: 'seller',
-        title: 'Seller Dashboard',
-        iconName: 'storefront-outline',
+        segment: 'apply-seller',
+        title: 'Apply for Seller ID',
+        iconName: 'person-add-outline',
         iconColor: '#8B5CF6',
-        children: [
-          {
-            segment: 'apply-seller',
-            title: 'Apply for Seller ID',
-            iconName: 'person-add-outline',
-            iconColor: '#8B5CF6',
-          },
-          {
-            segment: 'add-product',
-            title: 'Add Products',
-            iconName: 'add-circle-outline',
-            iconColor: '#10B981',
-          },
-          {
-            segment: 'products',
-            title: 'My Products',
-            iconName: 'cube-outline',
-            iconColor: '#F59E0B',
-          },
-          {
-            segment: 'payout-portal',
-            title: 'Payout Portal',
-            iconName: 'wallet-outline',
-            iconColor: '#10B981',
-          },
-          {
-            segment: 'seller-orders',
-            title: 'Orders & Sales',
-            iconName: 'cart-outline',
-            iconColor: '#EF4444',
-          },
-          // {
-          //   segment: 'protection-plans',
-          //   title: 'Protection Plans',
-          //   iconName: 'shield-checkmark-outline',
-          //   iconColor: '#3B82F6',
-          // },
-          // {
-          //   segment: 'seller-reviews',
-          //   title: 'Customer Reviews',
-          //   iconName: 'star-outline',
-          //   iconColor: '#F59E0B',
-          // },
-        ],
       },
-    ];
+      {
+        segment: 'add-product',
+        title: 'Add Products',
+        iconName: 'add-circle-outline',
+        iconColor: '#10B981',
+      },
+      {
+        segment: 'products',
+        title: 'My Products',
+        iconName: 'cube-outline',
+        iconColor: '#F59E0B',
+      },
+      {
+        segment: 'payout-portal',
+        title: 'Payout Portal',
+        iconName: 'wallet-outline',
+        iconColor: '#10B981',
+      },
+      {
+        segment: 'seller-orders',
+        title: 'Orders & Sales',
+        iconName: 'cart-outline',
+        iconColor: '#EF4444',
+      },
+    ],
   },
-};
+];
 
-// Custom hook for theme
+// ============================================================
+// THEME HOOK
+// ============================================================
+
 const useTheme = () => {
-  const [isDark, setIsDark] = useState(false);
+  const [isDark] = useState(false);
   const resolvedTheme = isDark ? 'dark' : 'light';
-
   return { isDark, resolvedTheme };
 };
 
+// ============================================================
+// COMPONENT
+// ============================================================
+
 const SidebarWithSeller: React.FC = () => {
-  const { isDark, resolvedTheme } = useTheme();
+  const { isDark } = useTheme();
   const navigation = useNavigation<NavigationProp<RootStackParamList>>();
   const [activeTab, setActiveTab] = useState('menu');
   const [expandedSections, setExpandedSections] = useState<
@@ -203,9 +144,6 @@ const SidebarWithSeller: React.FC = () => {
     seller: true,
   });
   const [activeItem, setActiveItem] = useState<string>('');
-  const [sellerProfile, setSellerProfile] = useState<SellerProfile | null>(
-    null,
-  );
   const [menuData, setMenuData] = useState<MenuSection[]>([]);
   const [loading, setLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
@@ -214,10 +152,13 @@ const SidebarWithSeller: React.FC = () => {
     name: 'User',
     email: '',
     phone: '',
-    image: 'https://via.placeholder.com/150',
+    image: '',
   });
 
-  // Colors - Premium Modern Minimalist Theme (same as shipping)
+  // ============================================================
+  // COLORS
+  // ============================================================
+
   const colors = {
     background: isDark ? '#0F0F12' : '#F8F9FC',
     card: isDark ? '#16161D' : '#FFFFFF',
@@ -235,69 +176,87 @@ const SidebarWithSeller: React.FC = () => {
     info: '#3B82F6',
   };
 
-  // Fetch profile data
+  // ============================================================
+  // ✅ FETCH PROFILE — me() API (only 1 API call)
+  // ============================================================
+
   useEffect(() => {
+    let cancelled = false;
+
     const fetchProfile = async () => {
+      setLoading(true);
+
       try {
-        const token = await AsyncStorage.getItem('authToken');
-        if (!token) return;
+        const response = await me();
 
-        const response = await fetch(`${BASE_URL}/api/v0/profile/me`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        if (cancelled) return;
 
-        const data = await response.json();
+        if (response?.success && response?.user) {
+          const user = response.user as {
+            id?: string;
+            displayName?: string;
+            firstName?: string;
+            lastName?: string;
+            username?: string;
+            email?: string;
+            phone?: string;
+            profilePhoto?: string;
+          };
 
-        if (response.ok) {
-          const normalized = getImageUrl(data?.image);
+          const displayName =
+            user.displayName ||
+            [user.firstName, user.lastName]
+              .filter(Boolean)
+              .join(' ')
+              .trim() ||
+            user.username ||
+            'User';
+
           setProfileData({
-            _id: data?._id ?? '',
-            name: data?.name ?? 'User',
-            email: data?.email ?? 'user@example.com',
-            phone: data?.phone ?? '+91 9876543210',
-            image: normalized,
+            _id: user.id ?? '',
+            name: displayName,
+            email: user.email ?? '',
+            phone: user.phone ?? '',
+            image: getImageUrl(user.profilePhoto),
           });
-        } else {
-          console.error(
-            'Error fetching profile:',
-            data?.message ?? 'Unknown error',
-          );
         }
       } catch (error) {
-        console.error('Error fetching profile:', error);
+        if (cancelled) return;
+
+        if (__DEV__) {
+          console.warn('[SidebarWithSeller.fetchProfile]', error);
+        }
+
+        if (error instanceof ApiError && error.status === 401) {
+          // apiClient ne already tokens clear kar diye
+          // Optional: navigation.reset('Login')
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     };
 
     fetchProfile();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Load data from API
+  // ============================================================
+  // ✅ LOAD MENU — static (no API)
+  // ============================================================
+
   useEffect(() => {
-    loadSellerData();
+    setMenuData(getSellerMenu());
   }, []);
 
-  const loadSellerData = async () => {
-    try {
-      setLoading(true);
-      const token = await AsyncStorage.getItem('authToken');
-      const [profile, menu] = await Promise.all([
-        sellerApi.getSellerProfile(token || ''),
-        sellerApi.getSellerMenu(),
-      ]);
-      setSellerProfile(profile);
-      setMenuData(menu);
-    } catch (error) {
-      console.error('Error loading seller data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // ============================================================
+  // NAVIGATION HANDLER
+  // ============================================================
 
-  // Navigation handler
   const handleItemPress = (segment: string) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setActiveItem(segment);
@@ -307,7 +266,9 @@ const SidebarWithSeller: React.FC = () => {
         navigation.navigate('ApplySeller');
         break;
       case 'add-product':
-        navigation.navigate('ProductListing', { shouldRequestLocation: true });
+        navigation.navigate('ProductListing', {
+          shouldRequestLocation: true,
+        });
         break;
       case 'products':
         navigation.navigate('MyProducts');
@@ -337,13 +298,15 @@ const SidebarWithSeller: React.FC = () => {
     }));
   };
 
+  // ============================================================
+  // LOADING
+  // ============================================================
+
   if (loading) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
         <StatusBar
           barStyle={isDark ? 'light-content' : 'dark-content'}
-          backgroundColor={colors.background}
-          translucent={false}
         />
         <View
           style={[
@@ -365,12 +328,14 @@ const SidebarWithSeller: React.FC = () => {
     );
   }
 
+  // ============================================================
+  // MAIN RENDER
+  // ============================================================
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <StatusBar
         barStyle={isDark ? 'light-content' : 'dark-content'}
-        backgroundColor={colors.background}
-        translucent={false}
       />
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
         <ScrollView
@@ -378,15 +343,14 @@ const SidebarWithSeller: React.FC = () => {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
         >
-          {/* Simple User Profile Section - Same as shipping */}
+          {/* User Profile Card */}
           <View
             style={[
               styles.userProfileContainer,
               { backgroundColor: colors.card },
             ]}
           >
-            {/* Profile Image with Lottie fallback */}
-            {imageError ? (
+            {imageError || !profileData.image ? (
               <View
                 style={[
                   styles.userLottieContainer,
@@ -415,87 +379,46 @@ const SidebarWithSeller: React.FC = () => {
               <Text style={[styles.userName, { color: colors.textPrimary }]}>
                 {profileData.name}
               </Text>
-              {/* Email */}
-              <View style={styles.userDetailRow}>
-                <Icon
-                  name="mail-outline"
-                  size={14}
-                  color={colors.textSecondary}
-                />
-                <Text
-                  style={[
-                    styles.userDetailText,
-                    { color: colors.textSecondary },
-                  ]}
-                >
-                  {profileData.email}
-                </Text>
-              </View>
-              {/* Phone */}
-              <View style={styles.userDetailRow}>
-                <Icon
-                  name="call-outline"
-                  size={14}
-                  color={colors.textSecondary}
-                />
-                <Text
-                  style={[
-                    styles.userDetailText,
-                    { color: colors.textSecondary },
-                  ]}
-                >
-                  {profileData.phone}
-                </Text>
-              </View>
+
+              {profileData.email ? (
+                <View style={styles.userDetailRow}>
+                  <Icon
+                    name="mail-outline"
+                    size={14}
+                    color={colors.textSecondary}
+                  />
+                  <Text
+                    style={[
+                      styles.userDetailText,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
+                    {profileData.email}
+                  </Text>
+                </View>
+              ) : null}
+
+              {profileData.phone ? (
+                <View style={styles.userDetailRow}>
+                  <Icon
+                    name="call-outline"
+                    size={14}
+                    color={colors.textSecondary}
+                  />
+                  <Text
+                    style={[
+                      styles.userDetailText,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
+                    {profileData.phone}
+                  </Text>
+                </View>
+              ) : null}
             </View>
           </View>
 
-          {/* Stats Cards - COMMENTED OUT */}
-          {/*
-          <View style={styles.statsContainer}>
-            <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-              <View style={[styles.statIconBg, { backgroundColor: '#FEF3C7' }]}>
-                <Icon name="cart-outline" size={18} color={colors.warning} />
-              </View>
-              <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
-                {sellerProfile?.stats.orders || 0}
-              </Text>
-              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-                Orders
-              </Text>
-            </View>
-
-            <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-              <View style={[styles.statIconBg, { backgroundColor: '#DBEAFE' }]}>
-                <Icon name="heart-outline" size={18} color={colors.info} />
-              </View>
-              <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
-                {sellerProfile?.stats.likes.toLocaleString() || 0}
-              </Text>
-              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-                Likes
-              </Text>
-            </View>
-
-            <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-              <View style={[styles.statIconBg, { backgroundColor: '#D1FAE5' }]}>
-                <Icon
-                  name="chatbubble-outline"
-                  size={18}
-                  color={colors.success}
-                />
-              </View>
-              <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
-                {sellerProfile?.stats.comments.toLocaleString() || 0}
-              </Text>
-              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-                Comments
-              </Text>
-            </View>
-          </View>
-          */}
-
-          {/* Seller Menu Sections - Same style as shipping */}
+          {/* Menu Sections */}
           {menuData.map(section => (
             <View key={section.segment} style={styles.section}>
               <TouchableOpacity
@@ -552,12 +475,13 @@ const SidebarWithSeller: React.FC = () => {
                     },
                   ]}
                 >
-                  {section.children.map((item, index) => (
+                  {section.children.map(item => (
                     <TouchableOpacity
                       key={item.segment}
                       style={[
                         styles.subMenuItem,
-                        activeItem === item.segment && styles.subMenuItemActive,
+                        activeItem === item.segment &&
+                          styles.subMenuItemActive,
                       ]}
                       onPress={() => handleItemPress(item.segment)}
                       activeOpacity={0.6}
@@ -609,16 +533,18 @@ const SidebarWithSeller: React.FC = () => {
             </View>
           ))}
 
-          {/* Extra space for bottom navigation */}
           <View style={styles.bottomSpacer} />
         </ScrollView>
 
-        {/* Bottom Navigation */}
         <BottomNavigation activeTab={activeTab} setActiveTab={setActiveTab} />
       </SafeAreaView>
     </View>
   );
 };
+
+// ============================================================
+// STYLES
+// ============================================================
 
 const styles = StyleSheet.create({
   container: {
@@ -643,7 +569,6 @@ const styles = StyleSheet.create({
     width: 120,
     height: 120,
   },
-  // Premium Modern Header Structure (same as shipping)
   userProfileContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -696,40 +621,6 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     fontWeight: '500',
     fontFamily: Platform.OS === 'ios' ? 'System' : 'Roboto',
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    marginBottom: 16,
-    gap: 12,
-  },
-  statCard: {
-    borderRadius: 16,
-    padding: 14,
-    alignItems: 'center',
-    flex: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  statIconBg: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  statNumber: {
-    fontSize: 20,
-    fontWeight: '700',
-    marginBottom: 2,
-  },
-  statLabel: {
-    fontSize: 11,
   },
   section: {
     marginBottom: 16,

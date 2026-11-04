@@ -1,5 +1,4 @@
 // api/features/private/driverCabRegisterPrivateSlice.ts
-import { Platform } from 'react-native';
 import {
   RegisterDriverRequest,
   RegisterDriverResponse,
@@ -12,40 +11,21 @@ import {
 } from '../../../core/types/CabTypes';
 import { TIZZYOS_API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
 import { API_ENDPOINTS } from '../../connections/snippet/apiEndpoints';
-import { getToken } from '../../connections/token/tokenSlice';
+import { apiRequest, ApiError } from '../../../core/utils/handler/apiClient';
 
 // ============================================
 // 🚗 RIDE TYPES API
 // ============================================
 
 export const getRideTypes = async (): Promise<RideTypesResponse> => {
-  console.log('🔄 getRideTypes: Making API call...');
   try {
-    const token = await getToken();
-    console.log(`🔑 Token: ${token ? '✅ Present' : '❌ Missing'}`);
-
-    const response = await fetch(
-      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_RIDE_TYPES}`,
-      {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      },
-    );
-
-    const data = await response.json();
-    console.log(`📊 getRideTypes Response Status: ${response.status}`);
-    console.log(`📊 getRideTypes Data:`, JSON.stringify(data, null, 2));
-
-    if (!response.ok) {
-      return {
-        success: false,
-        message: data.message || 'Failed to fetch ride types',
-        data: [],
-      };
-    }
+    const data = await apiRequest<{
+      success?: boolean;
+      message?: string;
+      data?: RideType[];
+    }>(`${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_RIDE_TYPES}`, {
+      method: 'GET',
+    });
 
     return {
       success: true,
@@ -53,10 +33,14 @@ export const getRideTypes = async (): Promise<RideTypesResponse> => {
       data: data.data || [],
     };
   } catch (error) {
-    console.error('Get ride types error:', error);
     return {
       success: false,
-      message: error instanceof Error ? error.message : 'Network error',
+      message:
+        error instanceof ApiError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : 'Network error',
       data: [],
     };
   }
@@ -66,52 +50,25 @@ export const getRideTypes = async (): Promise<RideTypesResponse> => {
 // 🚗 VEHICLE CATEGORY API (All + Filtered)
 // ============================================
 
-// ✅ Updated: Accept optional rideTypeCode parameter
 export const getRideVehicleCategories = async (
-  rideTypeCode?: string, // ✅ Optional parameter
+  rideTypeCode?: string,
 ): Promise<VehicleCategoryResponse> => {
   try {
-    const token = await getToken();
-
-    // ✅ Build URL with query param if rideTypeCode provided
     let url = `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_VEHICLE_CATEGORIES}`;
     if (rideTypeCode) {
-      url += `?rideTypeCode=${rideTypeCode}`;
+      url += `?rideTypeCode=${encodeURIComponent(rideTypeCode)}`;
     }
 
-    console.log(`🔄 getRideVehicleCategories: Fetching categories`);
-    console.log(`📋 URL: ${url}`);
-    console.log(`📋 rideTypeCode: ${rideTypeCode || 'ALL'}`);
-
-    const response = await fetch(url, {
+    const data = await apiRequest<{
+      success?: boolean;
+      message?: string;
+      data?: any;
+    }>(url, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
     });
 
-    const data = await response.json();
-    console.log(
-      `📊 getRideVehicleCategories Response Status: ${response.status}`,
-    );
-    console.log(
-      `📊 getRideVehicleCategories Data:`,
-      JSON.stringify(data, null, 2),
-    );
-
-    if (!response.ok) {
-      return {
-        success: false,
-        message: data.message || 'Failed to fetch vehicle categories',
-        data: [],
-      };
-    }
-
-    // ✅ Handle both formats: with rideType or without
+    // Handle both formats: with rideType wrapper or plain array
     let categoriesData = data.data || [];
-
-    // If response has rideType wrapper, extract categories
     if (data.data && data.data.categories) {
       categoriesData = data.data.categories;
     }
@@ -122,31 +79,28 @@ export const getRideVehicleCategories = async (
       data: categoriesData,
     };
   } catch (error) {
-    console.error('Get vehicle categories error:', error);
     return {
       success: false,
-      message: error instanceof Error ? error.message : 'Network error',
+      message:
+        error instanceof ApiError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : 'Network error',
       data: [],
     };
   }
 };
 
 // ============================================
-// 🚗 FILTERED VEHICLE CATEGORIES API (DEPRECATED - Use above)
+// 🚗 FILTERED VEHICLE CATEGORIES API (DEPRECATED)
 // ============================================
 
-// This is now merged with getRideVehicleCategories
 export const getFilteredVehicleCategories = async (
   rideTypeCode: string,
 ): Promise<FilteredVehicleCategoriesResponse> => {
-  console.log(
-    `🔄 getFilteredVehicleCategories: ${rideTypeCode} (DEPRECATED - use getRideVehicleCategories)`,
-  );
-
-  // Use the same function with rideTypeCode
   const result = await getRideVehicleCategories(rideTypeCode);
 
-  // Convert to FilteredVehicleCategoriesResponse format
   return {
     success: result.success,
     message: result.message,
@@ -164,72 +118,60 @@ export const getFilteredVehicleCategories = async (
 export const registerRideDriver = async (
   data: RegisterDriverRequest,
 ): Promise<RegisterDriverResponse> => {
-  console.log('🔄 registerRideDriver: Registering driver...');
   try {
-    const token = await getToken();
-    const response = await fetch(
-      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.REGISTER_DRIVER}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(data),
-      },
-    );
-
-    const result = await response.json();
-    console.log(`📊 registerRideDriver Response Status: ${response.status}`);
-    console.log(`📊 registerRideDriver Data:`, JSON.stringify(result, null, 2));
-
-    if (!response.ok) {
-      return {
-        success: false,
-        message: result.message || 'Registration failed',
-        errors: result.errors,
-      };
-    }
+    const result = await apiRequest<{
+      success?: boolean;
+      message?: string;
+      data?: unknown;
+      errors?: unknown;
+    }>(`${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.REGISTER_DRIVER}`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
 
     return {
       success: true,
       message: result.message || 'Driver registered successfully',
       data: result.data,
-    };
+    } as RegisterDriverResponse;
   } catch (error) {
-    console.error('Register driver error:', error);
+    if (error instanceof ApiError) {
+      const errorData = error.data as
+        { errors?: unknown; message?: string } | undefined;
+
+      return {
+        success: false,
+        message: error.message || 'Registration failed',
+        errors: errorData?.errors,
+      } as RegisterDriverResponse;
+    }
+
     return {
       success: false,
       message: error instanceof Error ? error.message : 'Registration failed',
-    };
+    } as RegisterDriverResponse;
   }
 };
 
 export const getRideDriver = async (): Promise<RideDriver | null> => {
-  console.log('🔄 getRideDriver: Fetching driver...');
   try {
-    const token = await getToken();
-    const response = await fetch(
+    const result = await apiRequest<GetDriverResponse>(
       `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.GET_DRIVER_STATUS}`,
       {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
       },
     );
 
-    console.log(`📊 getRideDriver Response Status: ${response.status}`);
-
-    if (!response.ok) {
+    return result.data || null;
+  } catch (error) {
+    // 404 = driver not registered — expected
+    if (error instanceof ApiError && error.status === 404) {
       return null;
     }
 
-    const result: GetDriverResponse = await response.json();
-    return result.data || null;
-  } catch (error) {
-    console.error('Get driver error:', error);
+    if (__DEV__) {
+      console.warn('[getRideDriver]', error);
+    }
     return null;
   }
 };
@@ -238,20 +180,13 @@ export const checkDriverStatus = async (): Promise<{
   isRegistered: boolean;
   driver?: RideDriver;
 }> => {
-  console.log('🔄 checkDriverStatus: Checking driver status...');
   try {
     const driver = await getRideDriver();
     if (driver) {
-      console.log(`✅ Driver found: ${driver.driverCode}`);
-      return {
-        isRegistered: true,
-        driver,
-      };
+      return { isRegistered: true, driver };
     }
-    console.log('ℹ️ No driver found');
     return { isRegistered: false };
-  } catch (error) {
-    console.error('Check driver status error:', error);
+  } catch {
     return { isRegistered: false };
   }
 };

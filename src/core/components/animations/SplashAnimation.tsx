@@ -9,13 +9,18 @@ import {
   Platform,
   TouchableWithoutFeedback,
   Animated,
-  Easing,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import LottieView from 'lottie-react-native';
 import { useTheme } from '../../contexts/theme/ThemeContext';
-import { SplashService } from '../../services/animations/SplashService';
+
+// ✅ Splash auth — direct API + token check
+import { me } from '../../../api/features/public/authPublicSlice';
+import {
+  getToken,
+  getSessionToken,
+} from '../../../api/connections/token/tokenSlice';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -32,7 +37,6 @@ export default function TizzyOS() {
   const navigation = useNavigation<NavigationProp>();
   const [isPressed, setIsPressed] = useState(false);
   const [minTimeElapsed, setMinTimeElapsed] = useState(false);
-  const [userRole, setUserRole] = useState<string | null>(null);
 
   // Animation values
   const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -47,11 +51,6 @@ export default function TizzyOS() {
   const subtitleColor = isDark ? '#94A3B8' : '#6b7280';
   // ✅ Added blue text color for TizzyOS
   const textColor = isDark ? '#60A5FA' : '#1D4ED8';
-
-  console.log('=========================================');
-  console.log('TizzyOS Component Mounted');
-  console.log('Platform:', Platform.OS);
-  console.log('=========================================');
 
   // Start animations on mount
   useEffect(() => {
@@ -93,36 +92,84 @@ export default function TizzyOS() {
     Animated.spring(scaleAnim, pressScale).start();
   }, [isPressed]);
 
-  // Auth check and navigation with role
+  // ============================================================
+  // MINIMUM SPLASH TIME — 3 seconds
+  // ============================================================
   useEffect(() => {
-    const checkAuthAndNavigate = async () => {
+    const minTimer = setTimeout(() => {
+      setMinTimeElapsed(true);
+    }, 3000);
+
+    return () => clearTimeout(minTimer);
+  }, []);
+
+  // ============================================================
+  // AUTH CHECK & NAVIGATION — direct Connect API calls
+  //
+  // 1. Local token check (fast fail) → Signup
+  // 2. me() API call → user available? → Home
+  // 3. Fail / 401 / network error → Login
+  // ============================================================
+  useEffect(() => {
+    if (!minTimeElapsed) return;
+
+    let cancelled = false;
+
+    const checkAndNavigate = async () => {
       try {
-        console.log('Step 1');
+        // Step 1: do we have any auth token?
+        const [accessToken, sessionToken] = await Promise.all([
+          getToken(),
+          getSessionToken(),
+        ]);
 
-        await SplashService.waitMinimumTime(3000);
-        setMinTimeElapsed(true);
+        if (cancelled) return;
 
-        console.log('Step 2');
-
-        const result = await SplashService.checkAuthAndGetDestination();
-
-        if (result.success && result.userRole) {
-          setUserRole(result.userRole);
-          console.log('✅ User Role from Splash:', result.userRole);
+        if (!accessToken && !sessionToken) {
+          navigation.reset({
+            index: 0,
+            routes: [{ name: 'Signup' }],
+          });
+          return;
         }
 
-        console.log('Step 3', result);
+        // Step 2: validate session with `me()`
+        // If the access token is expired, apiClient auto-refreshes
+        // using the stored session token. If refresh fails,
+        // apiClient clears tokens and throws.
+        const response = await me();
 
-        navigation.navigate(result.shouldNavigateTo);
+        if (cancelled) return;
 
-        console.log('Step 4');
-      } catch (e) {
-        console.error('Splash Error =>', e);
+        if (response?.success && response?.user) {
+          navigation.reset({
+            index: 0,
+            routes: [{ name: 'Home' }],
+          });
+        } else {
+          navigation.reset({
+            index: 0,
+            routes: [{ name: 'Login' }],
+          });
+        }
+      } catch {
+        // Network error, expired refresh token, etc.
+        // apiClient already cleared tokens on refresh failure.
+        if (!cancelled) {
+          navigation.reset({
+            index: 0,
+            routes: [{ name: 'Login' }],
+          });
+        }
       }
     };
 
-    checkAuthAndNavigate();
-  }, [navigation]);
+    checkAndNavigate();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [minTimeElapsed, navigation]);
 
   // Handle press - just animation, no sound
   const handlePress = () => {
@@ -144,7 +191,7 @@ export default function TizzyOS() {
             },
           ]}
         >
-          <Animated.View style={[styles.logoContainer]}>
+          <Animated.View style={styles.logoContainer}>
             <Image
               source={require('../../../assets/images/tizzy-logo.jpg')}
               style={styles.logoImage}
@@ -167,9 +214,7 @@ export default function TizzyOS() {
           <Animated.View
             style={[
               styles.lottieContainer,
-              {
-                opacity: lottieAnim,
-              },
+              { opacity: lottieAnim },
             ]}
           >
             <LottieView

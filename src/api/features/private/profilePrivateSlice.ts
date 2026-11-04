@@ -1,76 +1,199 @@
-import Config from 'react-native-config';
+// src/api/features/private/authProfileSlice.ts
 
-import { API_ENDPOINTS } from '../../connections/snippet/apiEndpoints';
-
-import { getToken } from '../../connections/token/tokenSlice';
-
-import { fetchHandler } from '../../../core/utils/handler/fetchHandler';
 import { TIZZYGO_API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
+import { API_ENDPOINTS } from '../../connections/snippet/apiEndpoints';
+import { apiRequest } from '../../../core/utils/handler/apiClient';
 
-export const profileApi = {
-  /**
-    @param {Object} formData - The data to update the profile with.
-    @returns {Promise} - A promise that resolves to the response of the update profile request.
-   */
-  // ================================
-  // GET PROFILE
-  // ================================
+// ============================================================
+// TYPES
+// ============================================================
 
-  async getProfile() {
-    const token = await getToken();
+export interface UpdatedProfileUser {
+  id: string;
+  firstName?: string;
+  lastName?: string;
+  displayName?: string;
+  profilePhoto?: string;
+  dateOfBirth?: string;
+  theme?: string;
+  color?: string;
+  phone?: string;
+  phoneVerified?: boolean;
+  username?: string;
+  connectAddress?: string;
+  role?: string;
+  status?: string;
+  apps?: Array<{ app: string; roles: string[] }>;
+  createdAt?: string;
+  updatedAt?: string;
+}
 
-    return await fetchHandler(`${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.GET_PROFILE}`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-  },
+export interface UpdateProfileResponse {
+  success: boolean;
+  message?: string;
+  user: UpdatedProfileUser;
+}
 
-  /**
-    @param {Object} formData - The data to update the profile with.
-    @returns {Promise} - A promise that resolves to the response of the update profile request.
-   */
-  // ================================
-  // UPDATE PROFILE
-  // ================================
+export interface UpdateProfilePayload {
+  firstName?: string;
+  lastName?: string;
+  displayName?: string;
+  profilePhoto?: string;
+  dateOfBirth?: string;
+  theme?: string;
+  color?: string;
+}
 
-  async updateProfile(formData: any) {
-    const token = await getToken();
+export interface UpdateAppRolePayload {
+  app: 'TIZZYGO' | 'TIZZYOS' | 'LINKEDROP';
+  role: string;
+}
 
-    return await fetchHandler(
-      `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.UPDATE_PROFILE}`,
-      {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json', // ✅ YEH BOHT IMPORTANT HAI!
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(formData),
-      },
-    );
-  },
+export interface UpdateAppRoleResponse {
+  success: boolean;
+  message?: string;
+  apps: Array<{ app: string; roles: string[] }>;
+  activeApp: string;
+  activeRole: string;
+}
 
-  // ================================
-  // PROFILE IMAGE DELETE API
-  // ================================
+export interface RecoveryConnectRequestResponse {
+  success: boolean;
+  verificationRequired: boolean;
+  verificationId: string;
+  recoveryConnect: string;
+  expiresInSeconds: number;
+  message: string;
+}
 
-  async deleteProfileImage() {
-    const token = await getToken();
+export interface RecoveryConnectVerifyPayload {
+  verificationId: string;
+  code: string;
+}
 
-    if (!token) {
-      return { success: false, message: 'No authentication token found' };
-    }
+export interface RecoveryConnectVerifyResponse {
+  success: boolean;
+  recoveryConnect: string;
+  recoveryConnectVerified: boolean;
+  recoveryConnectVerifiedAt: string;
+  message: string;
+}
 
-    return await fetchHandler(
-      `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.DELETE_PROFILE_IMAGE}`,
-      {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      },
-    );
-  },
+export interface PhoneChangeRequestResponse {
+  success: boolean;
+  verificationRequired: boolean;
+  verificationId: string;
+  phone: string;
+  expiresInSeconds: number;
+  message: string;
+}
+
+export interface PhoneChangeVerifyPayload {
+  phone: string;
+  verificationId: string;
+  code: string;
+}
+
+export interface PhoneChangeVerifyResponse {
+  success: boolean;
+  phone: string;
+  phoneVerified: boolean;
+  phoneVerifiedAt: string;
+  message: string;
+}
+
+// ============================================================
+// 1. UPDATE BASIC PROFILE
+// ============================================================
+
+export const updateBasicProfile = async (
+  payload: UpdateProfilePayload,
+): Promise<UpdateProfileResponse> => {
+  return apiRequest<UpdateProfileResponse>(
+    `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.UPDATE_BASIC_PROFILE}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    },
+  );
+};
+
+// ============================================================
+// 2. UPDATE APP-SPECIFIC ROLE
+// ============================================================
+
+export const updateAppRole = async (
+  payload: UpdateAppRolePayload,
+): Promise<UpdateAppRoleResponse> => {
+  return apiRequest<UpdateAppRoleResponse>(
+    `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.UPDATE_APP_ROLE}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    },
+  );
+};
+
+// ============================================================
+// 3. REQUEST RECOVERY CONNECT UPDATE
+// ============================================================
+
+export const requestRecoveryConnectUpdate = async (
+  recoveryConnect: string,
+): Promise<RecoveryConnectRequestResponse> => {
+  return apiRequest<RecoveryConnectRequestResponse>(
+    `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.REQUEST_RECOVERY_CONNECT_UPDATE}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ recoveryConnect }),
+    },
+  );
+};
+
+// ============================================================
+// 3b. VERIFY RECOVERY CONNECT OTP
+// ============================================================
+
+export const verifyRecoveryConnectUpdate = async (
+  payload: RecoveryConnectVerifyPayload,
+): Promise<RecoveryConnectVerifyResponse> => {
+  return apiRequest<RecoveryConnectVerifyResponse>(
+    `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.VERIFY_RECOVERY_CONNECT_UPDATE}`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  );
+};
+
+// ============================================================
+// 4. REQUEST PHONE CHANGE OTP
+// ============================================================
+
+export const requestPhoneChangeOTP = async (
+  phone: string,
+): Promise<PhoneChangeRequestResponse> => {
+  return apiRequest<PhoneChangeRequestResponse>(
+    `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.REQUEST_PHONE_CHANGE_OTP}`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ phone }),
+    },
+  );
+};
+
+// ============================================================
+// 5. VERIFY PHONE CHANGE OTP
+// ============================================================
+
+export const verifyPhoneChangeOTP = async (
+  payload: PhoneChangeVerifyPayload,
+): Promise<PhoneChangeVerifyResponse> => {
+  return apiRequest<PhoneChangeVerifyResponse>(
+    `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.VERIFY_PHONE_CHANGE_OTP}`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  );
 };

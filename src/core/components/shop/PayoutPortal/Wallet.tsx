@@ -1,4 +1,5 @@
 // screens/Seller/CreateAirXPayAccountScreen.tsx
+
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -19,16 +20,27 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
+// ✅ NEW — API slice
+import {
+  createAirXSellerAccount,
+  getAirXOnboardingLink,
+  checkAirXAccountStatus,
+  SellerAccount,
+} from '../../../../api/features/private/airxPayoutPrivateSlice';
+import { ApiError } from '../../../../core/utils/handler/apiClient';
+
 const { width } = Dimensions.get('window');
 
-// Define navigation param types
+// ============================================================
+// TYPES
+// ============================================================
+
 type RootStackParamList = {
   CreateAirXPayAccountScreen: undefined;
   Login: undefined;
   SellerDashboard: undefined;
 };
 
-// Define props type
 type CreateAirXPayAccountScreenProps = {
   navigation: NativeStackNavigationProp<
     RootStackParamList,
@@ -37,32 +49,18 @@ type CreateAirXPayAccountScreenProps = {
   route?: any;
 };
 
-// Define API response types
-interface ApiResponse<T = any> {
-  success: boolean;
-  data?: T;
-  error?: string;
-  [key: string]: any;
-}
-
-interface SellerAccount {
-  _id: string;
-  name: string;
-  email: string;
-  stripeAccountId: string;
-  payoutMode: 'automatic' | 'manual';
-  payoutVerified: boolean;
-}
-
 interface FormData {
   name: string;
   email: string;
   payoutMode: 'automatic' | 'manual';
 }
 
+// ============================================================
+// COMPONENT
+// ============================================================
+
 const CreateAirXPayAccountScreen: React.FC<CreateAirXPayAccountScreenProps> = ({
   navigation,
-  route,
 }) => {
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState<1 | 2>(1);
@@ -72,7 +70,6 @@ const CreateAirXPayAccountScreen: React.FC<CreateAirXPayAccountScreenProps> = ({
   );
   const insets = useSafeAreaInsets();
 
-  const BASE_URL = 'http://10.172.218.121:2000/api';
   const [formData, setFormData] = useState<FormData>({
     name: '',
     email: '',
@@ -84,6 +81,10 @@ const CreateAirXPayAccountScreen: React.FC<CreateAirXPayAccountScreenProps> = ({
   useEffect(() => {
     loadUserData();
   }, []);
+
+  // ============================================================
+  // LOAD USER DATA (local only)
+  // ============================================================
 
   const loadUserData = async () => {
     try {
@@ -100,6 +101,10 @@ const CreateAirXPayAccountScreen: React.FC<CreateAirXPayAccountScreenProps> = ({
       console.log('Error loading user data:', error);
     }
   };
+
+  // ============================================================
+  // VALIDATION
+  // ============================================================
 
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -118,70 +123,9 @@ const CreateAirXPayAccountScreen: React.FC<CreateAirXPayAccountScreenProps> = ({
     return Object.keys(newErrors).length === 0;
   };
 
-  const getAuthToken = async (): Promise<string | null> => {
-    try {
-      return await AsyncStorage.getItem('authToken');
-    } catch (error) {
-      console.error('Error getting auth token:', error);
-      return null;
-    }
-  };
-
-  const createSellerAccount = async (payload: FormData): Promise<any> => {
-    const token = await getAuthToken();
-    const response = await fetch(
-      `${BASE_URL}/payout-portal/wallet/seller/create`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-      },
-    );
-
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || 'Failed to create account');
-    }
-    return data;
-  };
-
-  const getOnboardingLink = async (sellerId: string): Promise<any> => {
-    const token = await getAuthToken();
-    const response = await fetch(
-      `${BASE_URL}/seller/${sellerId}/onboarding-link`,
-      {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      },
-    );
-
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || 'Failed to get onboarding link');
-    }
-    return data;
-  };
-
-  const checkAccountStatus = async (sellerId: string): Promise<any> => {
-    const token = await getAuthToken();
-    const response = await fetch(`${BASE_URL}/seller/${sellerId}/status`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || 'Failed to check status');
-    }
-    return data;
-  };
+  // ============================================================
+  // ✅ CREATE SELLER ACCOUNT (via slice)
+  // ============================================================
 
   const handleCreateAccount = async () => {
     if (!validateForm()) {
@@ -194,7 +138,7 @@ const CreateAirXPayAccountScreen: React.FC<CreateAirXPayAccountScreenProps> = ({
 
     setLoading(true);
     try {
-      const response = await createSellerAccount(formData);
+      const response = await createAirXSellerAccount(formData);
 
       if (response.success && response.seller && response.accountLink) {
         setSellerAccount(response.seller);
@@ -216,19 +160,33 @@ const CreateAirXPayAccountScreen: React.FC<CreateAirXPayAccountScreenProps> = ({
         Alert.alert('Error', response.error || 'Failed to create account');
       }
     } catch (error: any) {
-      console.error('Create account error:', error);
-      Alert.alert('Error', error.message || 'Something went wrong');
+      if (__DEV__) {
+        console.error('Create account error:', error);
+      }
+
+      const message =
+        error instanceof ApiError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : 'Something went wrong';
+
+      Alert.alert('Error', message);
     } finally {
       setLoading(false);
     }
   };
+
+  // ============================================================
+  // ✅ OPEN STRIPE ONBOARDING (via slice)
+  // ============================================================
 
   const handleOpenStripeOnboarding = async () => {
     if (!sellerAccount?._id) return;
 
     setLoading(true);
     try {
-      const response = await getOnboardingLink(sellerAccount._id);
+      const response = await getAirXOnboardingLink(sellerAccount._id);
 
       if (response.success && response.onboardingUrl) {
         await Linking.openURL(response.onboardingUrl);
@@ -237,10 +195,16 @@ const CreateAirXPayAccountScreen: React.FC<CreateAirXPayAccountScreenProps> = ({
           handleCheckStatus();
         }, 5000);
       } else {
-        Alert.alert('Error', response.error || 'Failed to get onboarding link');
+        Alert.alert(
+          'Error',
+          response.error || 'Failed to get onboarding link',
+        );
       }
     } catch (error: any) {
-      console.error('Get onboarding link error:', error);
+      if (__DEV__) {
+        console.error('Get onboarding link error:', error);
+      }
+
       Alert.alert('Error', 'Failed to open Stripe onboarding');
 
       if (onboardingUrl) {
@@ -251,12 +215,16 @@ const CreateAirXPayAccountScreen: React.FC<CreateAirXPayAccountScreenProps> = ({
     }
   };
 
+  // ============================================================
+  // ✅ CHECK ACCOUNT STATUS (via slice)
+  // ============================================================
+
   const handleCheckStatus = async () => {
     if (!sellerAccount?._id) return;
 
     setLoading(true);
     try {
-      const response = await checkAccountStatus(sellerAccount._id);
+      const response = await checkAirXAccountStatus(sellerAccount._id);
 
       if (response.success) {
         if (response.payoutVerified) {
@@ -281,12 +249,19 @@ const CreateAirXPayAccountScreen: React.FC<CreateAirXPayAccountScreenProps> = ({
         Alert.alert('Error', response.error || 'Failed to check status');
       }
     } catch (error: any) {
-      console.error('Status check error:', error);
+      if (__DEV__) {
+        console.error('Status check error:', error);
+      }
+
       Alert.alert('Error', 'Failed to check account status');
     } finally {
       setLoading(false);
     }
   };
+
+  // ============================================================
+  // INPUT HANDLERS
+  // ============================================================
 
   const handleInputChange = (field: keyof FormData, value: string) => {
     setFormData({ ...formData, [field]: value });
@@ -300,6 +275,10 @@ const CreateAirXPayAccountScreen: React.FC<CreateAirXPayAccountScreenProps> = ({
   const handlePayoutModeChange = (mode: 'automatic' | 'manual') => {
     setFormData({ ...formData, payoutMode: mode });
   };
+
+  // ============================================================
+  // RENDER: FORM (Step 1)
+  // ============================================================
 
   const renderForm = () => (
     <ScrollView
@@ -430,9 +409,7 @@ const CreateAirXPayAccountScreen: React.FC<CreateAirXPayAccountScreenProps> = ({
           {loading ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <>
-              <Text style={styles.createButtonText}>Create Seller Account</Text>
-            </>
+            <Text style={styles.createButtonText}>Create Seller Account</Text>
           )}
         </TouchableOpacity>
 
@@ -443,6 +420,10 @@ const CreateAirXPayAccountScreen: React.FC<CreateAirXPayAccountScreenProps> = ({
       </View>
     </ScrollView>
   );
+
+  // ============================================================
+  // RENDER: SUCCESS SCREEN (Step 2)
+  // ============================================================
 
   const renderSuccessScreen = () => (
     <SafeAreaView style={[styles.container, { paddingTop: insets.top }]}>
@@ -634,11 +615,9 @@ const CreateAirXPayAccountScreen: React.FC<CreateAirXPayAccountScreenProps> = ({
             {loading ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <>
-                <Text style={styles.primaryButtonText}>
-                  Open Stripe Verification
-                </Text>
-              </>
+              <Text style={styles.primaryButtonText}>
+                Open Stripe Verification
+              </Text>
             )}
           </TouchableOpacity>
 
@@ -650,11 +629,9 @@ const CreateAirXPayAccountScreen: React.FC<CreateAirXPayAccountScreenProps> = ({
             {loading ? (
               <ActivityIndicator size="small" color="#007AFF" />
             ) : (
-              <>
-                <Text style={styles.secondaryButtonText}>
-                  Check Verification Status
-                </Text>
-              </>
+              <Text style={styles.secondaryButtonText}>
+                Check Verification Status
+              </Text>
             )}
           </TouchableOpacity>
 
@@ -673,6 +650,10 @@ const CreateAirXPayAccountScreen: React.FC<CreateAirXPayAccountScreenProps> = ({
     </SafeAreaView>
   );
 
+  // ============================================================
+  // MAIN RENDER
+  // ============================================================
+
   return (
     <KeyboardAvoidingView
       style={styles.flexContainer}
@@ -683,6 +664,10 @@ const CreateAirXPayAccountScreen: React.FC<CreateAirXPayAccountScreenProps> = ({
     </KeyboardAvoidingView>
   );
 };
+
+// ============================================================
+// STYLES (same as before)
+// ============================================================
 
 const styles = StyleSheet.create({
   flexContainer: {

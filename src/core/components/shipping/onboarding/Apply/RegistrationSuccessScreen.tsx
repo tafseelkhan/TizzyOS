@@ -1,3 +1,5 @@
+// RegistrationSuccessScreen.tsx
+
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -18,7 +20,18 @@ import {
 } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Types - Define the navigation param list
+// ✅ API slice
+import {
+  getShippingRegistrationById,
+  ShippingData,
+  ShippingStatusApiResponse,
+} from '../../../../../api/features/private/riderRegistrationStatusPrivateSlice';
+import { ApiError } from '../../../../../core/utils/handler/apiClient';
+
+// ============================================================
+// TYPES
+// ============================================================
+
 type RootStackParamList = {
   RiderRegistration: undefined;
   RegistrationSuccess: { shippingId: string };
@@ -26,53 +39,12 @@ type RootStackParamList = {
   Login: undefined;
 };
 
-// Type for navigation
 type NavigationType = NavigationProp<RootStackParamList>;
 
-// Type for route
 type RegistrationSuccessRouteProp = RouteProp<
   RootStackParamList,
   'RegistrationSuccess'
 >;
-
-interface ShippingData {
-  _id: string;
-  name: string;
-  vehicleBrand: string;
-  vehicleModel: string;
-  vehicleNumber: string;
-  vehicleCategory: string;
-  status: 'pending' | 'approved' | 'rejected' | 'in_review';
-  maxOrdersPerDay?: number;
-  drivingLicenseNumber?: string;
-  identityType?: string;
-  identityNumber?: string;
-  vehicleImage?: string;
-  drivingLicenseImage?: string;
-  identityImage?: string;
-  createdAt: string;
-  updatedAt: string;
-  userId?: string;
-  reviewedBy?: string;
-  reviewNotes?: string;
-  approvedAt?: string;
-  rejectedAt?: string;
-  kyc?: {
-    status?: string;
-  };
-}
-
-interface ApiResponse {
-  success: boolean;
-  message: string;
-  status: {
-    formStatus: string;
-    kycStatus: string;
-    isApproved: boolean;
-    isKycVerified: boolean;
-  };
-  shipping: ShippingData;
-}
 
 interface DetailRowProps {
   label: string;
@@ -85,72 +57,32 @@ interface StepItemProps {
   description: string;
 }
 
-// API Configuration
-const TIZZYOS_API_BASE_URL = 'http://10.172.218.121:2000';
+// ============================================================
+// COMPONENT
+// ============================================================
 
 const RegistrationSuccessScreen: React.FC = () => {
   const navigation = useNavigation<NavigationType>();
   const route = useRoute<RegistrationSuccessRouteProp>();
 
   const [shippingData, setShippingData] = useState<ShippingData | null>(null);
-  const [apiResponse, setApiResponse] = useState<ApiResponse | null>(null);
+  const [apiResponse, setApiResponse] =
+    useState<ShippingStatusApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shippingId, setShippingId] = useState<string | null>(null);
 
-  // Fetch auth token
-  const getAuthToken = async (): Promise<string | null> => {
-    try {
-      const token = await AsyncStorage.getItem('authToken');
-      return token;
-    } catch (error) {
-      console.error('Error fetching auth token:', error);
-      return null;
-    }
-  };
+  // ============================================================
+  // ✅ FETCH SHIPPING DATA (via slice)
+  // ============================================================
 
-  // Fetch shipping data by ID
   const fetchShippingData = async (id: string) => {
     try {
       setLoading(true);
       setError(null);
 
-      const token = await getAuthToken();
-      if (!token) {
-        throw new Error('Authentication token not found');
-      }
-
-      console.log(`Fetching shipping data for ID: ${id}`);
-
-      const response = await fetch(`${TIZZYOS_API_BASE_URL}/api/v0/shipping/${id}`, {
-        method: 'GET',
-        headers: {
-          Accept: 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('API Error Response:', errorText);
-
-        if (response.status === 401) {
-          await AsyncStorage.removeItem('authToken');
-          throw new Error('Session expired. Please login again.');
-        }
-
-        if (response.status === 404) {
-          throw new Error(
-            'Registration data not found. It may have been deleted.',
-          );
-        }
-
-        throw new Error(`Failed to fetch data: ${response.status}`);
-      }
-
-      const data: ApiResponse = await response.json();
-      console.log('API Response:', data);
+      const data = await getShippingRegistrationById(id);
 
       if (data.success && data.shipping) {
         setApiResponse(data);
@@ -159,15 +91,37 @@ const RegistrationSuccessScreen: React.FC = () => {
         throw new Error(data.message || 'Invalid response from server');
       }
     } catch (err: any) {
-      console.error('Error fetching shipping data:', err);
-      setError(err.message || 'Failed to load registration details');
+      if (__DEV__) {
+        console.error('Error fetching shipping data:', err);
+      }
+
+      let errorMessage = 'Failed to load registration details';
+
+      if (err instanceof ApiError) {
+        if (err.status === 401) {
+          errorMessage = 'Session expired. Please login again.';
+          // apiClient ne already tokens clear kar diye
+        } else if (err.status === 404) {
+          errorMessage =
+            'Registration data not found. It may have been deleted.';
+        } else if (err.message) {
+          errorMessage = err.message;
+        }
+      } else if (err?.message) {
+        errorMessage = err.message;
+      }
+
+      setError(errorMessage);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
-  // Handle refresh
+  // ============================================================
+  // REFRESH HANDLER
+  // ============================================================
+
   const onRefresh = async () => {
     if (shippingId) {
       setRefreshing(true);
@@ -175,24 +129,19 @@ const RegistrationSuccessScreen: React.FC = () => {
     }
   };
 
+  // ============================================================
+  // INITIALIZATION
+  // ============================================================
+
   useEffect(() => {
     const initializeScreen = async () => {
       try {
-        console.log('=== REGISTRATION SUCCESS SCREEN INITIALIZATION ===');
-
-        // Get params from route - using proper type
         const id = route.params?.shippingId;
-        console.log('ShippingId from params:', id);
 
         if (!id) {
-          console.error('No shippingId received in params');
           // Try to get shippingId from AsyncStorage as fallback
           const storedId = await AsyncStorage.getItem('lastShippingId');
           if (storedId) {
-            console.log(
-              'Using stored shipping ID from AsyncStorage:',
-              storedId,
-            );
             setShippingId(storedId);
             await fetchShippingData(storedId);
             return;
@@ -203,17 +152,17 @@ const RegistrationSuccessScreen: React.FC = () => {
           return;
         }
 
-        console.log('✅ Shipping ID received via params:', id);
         setShippingId(id);
 
         // Store shippingId for future reference
         await AsyncStorage.setItem('lastShippingId', id);
 
-        // Fetch data from API
         await fetchShippingData(id);
       } catch (err: any) {
-        console.error('Initialization error:', err);
-        setError(err.message || 'Failed to initialize screen');
+        if (__DEV__) {
+          console.error('Initialization error:', err);
+        }
+        setError(err?.message || 'Failed to initialize screen');
         setLoading(false);
       }
     };
@@ -221,7 +170,10 @@ const RegistrationSuccessScreen: React.FC = () => {
     initializeScreen();
   }, [route.params]);
 
-  // Auto-refresh every 30 seconds to check status updates
+  // ============================================================
+  // AUTO-REFRESH EVERY 30s
+  // ============================================================
+
   useEffect(() => {
     if (!shippingId) return;
 
@@ -232,7 +184,10 @@ const RegistrationSuccessScreen: React.FC = () => {
     return () => clearInterval(intervalId);
   }, [shippingId]);
 
-  // Handle navigation - FIXED: Using proper navigation methods
+  // ============================================================
+  // NAVIGATION HANDLERS
+  // ============================================================
+
   const handleBackToHome = () => {
     navigation.reset({
       index: 0,
@@ -250,7 +205,19 @@ const RegistrationSuccessScreen: React.FC = () => {
     }
   };
 
-  // Format status for display
+  const handleLogout = async () => {
+    await AsyncStorage.removeItem('authToken');
+    await AsyncStorage.removeItem('lastShippingId');
+    navigation.reset({
+      index: 0,
+      routes: [{ name: 'Login' }],
+    });
+  };
+
+  // ============================================================
+  // STATUS HELPERS
+  // ============================================================
+
   const formatStatus = (status: string | undefined) => {
     if (!status) return 'Unknown';
 
@@ -264,7 +231,6 @@ const RegistrationSuccessScreen: React.FC = () => {
     return statusMap[status] || status;
   };
 
-  // Get status color
   const getStatusColor = (status: string | undefined) => {
     if (!status) return '#6b7280';
 
@@ -278,7 +244,6 @@ const RegistrationSuccessScreen: React.FC = () => {
     return colorMap[status] || '#6b7280';
   };
 
-  // Get status icon
   const getStatusIcon = (status: string | undefined): string => {
     if (!status) return 'help';
 
@@ -292,17 +257,10 @@ const RegistrationSuccessScreen: React.FC = () => {
     return iconMap[status] || 'help';
   };
 
-  // Handle logout if token is invalid
-  const handleLogout = async () => {
-    await AsyncStorage.removeItem('authToken');
-    await AsyncStorage.removeItem('lastShippingId');
-    navigation.reset({
-      index: 0,
-      routes: [{ name: 'Login' }],
-    });
-  };
+  // ============================================================
+  // LOADING STATE
+  // ============================================================
 
-  // Loading state
   if (loading) {
     return (
       <SafeAreaView style={[styles.safeArea, styles.centerContent]}>
@@ -319,7 +277,10 @@ const RegistrationSuccessScreen: React.FC = () => {
     );
   }
 
-  // Error state
+  // ============================================================
+  // ERROR STATE
+  // ============================================================
+
   if (error && !shippingData) {
     return (
       <SafeAreaView style={styles.safeArea}>
@@ -364,7 +325,10 @@ const RegistrationSuccessScreen: React.FC = () => {
     );
   }
 
-  // Use status from API response or shippingData
+  // ============================================================
+  // MAIN RENDER
+  // ============================================================
+
   const currentStatus = apiResponse?.status?.formStatus || shippingData?.status;
   const kycStatus = apiResponse?.status?.kycStatus || shippingData?.kyc?.status;
 
@@ -381,7 +345,6 @@ const RegistrationSuccessScreen: React.FC = () => {
           />
         }
       >
-        {/* Error Alert */}
         {error && (
           <View style={styles.errorAlert}>
             <Icon name="error-outline" size={20} color="#ef4444" />
@@ -392,7 +355,6 @@ const RegistrationSuccessScreen: React.FC = () => {
           </View>
         )}
 
-        {/* Success Icon */}
         <View style={styles.iconContainer}>
           <Icon name="check-circle" size={100} color="#10b981" />
           <TouchableOpacity
@@ -403,7 +365,6 @@ const RegistrationSuccessScreen: React.FC = () => {
           </TouchableOpacity>
         </View>
 
-        {/* Success Message */}
         <Text style={styles.title}>Registration Successful! 🎉</Text>
         <Text style={styles.subtitle}>
           {apiResponse?.message ||
@@ -415,7 +376,6 @@ const RegistrationSuccessScreen: React.FC = () => {
             : 'N/A'}
         </Text>
 
-        {/* Real-time Status Card */}
         <View style={styles.statusCard}>
           <View style={styles.statusHeader}>
             <Icon name="timeline" size={24} color="#3b82f6" />
@@ -451,8 +411,8 @@ const RegistrationSuccessScreen: React.FC = () => {
                   kycStatus === 'verified'
                     ? '#10b981'
                     : kycStatus === 'rejected'
-                    ? '#ef4444'
-                    : '#f59e0b'
+                      ? '#ef4444'
+                      : '#f59e0b'
                 }
               />
               <Text
@@ -463,8 +423,8 @@ const RegistrationSuccessScreen: React.FC = () => {
                       kycStatus === 'verified'
                         ? '#10b981'
                         : kycStatus === 'rejected'
-                        ? '#ef4444'
-                        : '#f59e0b',
+                          ? '#ef4444'
+                          : '#f59e0b',
                   },
                 ]}
               >
@@ -472,8 +432,8 @@ const RegistrationSuccessScreen: React.FC = () => {
                 {kycStatus === 'verified'
                   ? 'Verified'
                   : kycStatus === 'rejected'
-                  ? 'Rejected'
-                  : 'Pending'}
+                    ? 'Rejected'
+                    : 'Pending'}
               </Text>
             </View>
           )}
@@ -494,7 +454,6 @@ const RegistrationSuccessScreen: React.FC = () => {
           </TouchableOpacity>
         </View>
 
-        {/* Application Details */}
         {shippingData && (
           <View style={styles.detailsCard}>
             <View style={styles.detailsHeader}>
@@ -553,7 +512,6 @@ const RegistrationSuccessScreen: React.FC = () => {
               )}
             />
 
-            {/* Status with icon */}
             <View style={styles.statusRow}>
               <Text style={styles.detailLabel}>Current Status:</Text>
               <View style={styles.statusDisplay}>
@@ -575,7 +533,6 @@ const RegistrationSuccessScreen: React.FC = () => {
           </View>
         )}
 
-        {/* What's Next - Based on status */}
         <View style={styles.nextStepsCard}>
           <View style={styles.nextStepsHeader}>
             <Icon name="next-plan" size={24} color="#3b82f6" />
@@ -670,7 +627,6 @@ const RegistrationSuccessScreen: React.FC = () => {
           />
         </View>
 
-        {/* Footer Info */}
         <View style={styles.footerCard}>
           <Icon name="info" size={20} color="#3b82f6" />
           <View style={styles.footerContent}>
@@ -683,7 +639,6 @@ const RegistrationSuccessScreen: React.FC = () => {
           </View>
         </View>
 
-        {/* Action Buttons */}
         <View style={styles.buttonContainer}>
           <TouchableOpacity
             style={styles.primaryButton}
@@ -708,7 +663,10 @@ const RegistrationSuccessScreen: React.FC = () => {
   );
 };
 
-// DetailRow Component
+// ============================================================
+// HELPER COMPONENTS
+// ============================================================
+
 const DetailRow: React.FC<DetailRowProps> = ({ label, value }) => (
   <View style={styles.detailRow}>
     <Text style={styles.detailLabel}>{label}</Text>
@@ -718,7 +676,6 @@ const DetailRow: React.FC<DetailRowProps> = ({ label, value }) => (
   </View>
 );
 
-// StepItem Component
 const StepItem: React.FC<StepItemProps> = ({ number, title, description }) => (
   <View style={styles.stepItem}>
     <View style={styles.stepNumber}>
@@ -730,6 +687,10 @@ const StepItem: React.FC<StepItemProps> = ({ number, title, description }) => (
     </View>
   </View>
 );
+
+// ============================================================
+// STYLES
+// ============================================================
 
 const styles = StyleSheet.create({
   safeArea: {

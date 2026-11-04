@@ -1,13 +1,8 @@
-// SellerOrdersScreen.tsx - COMPLETE REFACTOR WITH ALL-IN-ONE SELLER ORDERS API
-// Removed: /api/v0/tracking/history/status (N+1 problem eliminated)
-// Now using: /api/v0/seller/orders with full DeliveryTracking data
+// SellerOrdersScreen.tsx - COMPLETE REFACTOR WITH SLICE
 
 import React, {
   useState,
-  useRef,
-  useMemo,
   useCallback,
-  useEffect,
 } from 'react';
 import {
   View,
@@ -27,18 +22,29 @@ import {
   Modal,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { useTheme } from '../../../contexts/theme/ThemeContext';
 
-// Import vector icons
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import FontAwesome from 'react-native-vector-icons/FontAwesome';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
-// Import Haptics
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
+
+// ✅ NEW — API slice
+import {
+  getSellerOrders,
+  getOrderQRCode,
+  sellerAcceptOrder as acceptOrderApi,
+  sellerAssignShipping as assignShippingApi,
+  sellerDeliverToFWS as deliverToFWSApi,
+  getAvailableShippingPartners,
+  QRCodeData,
+  SellerOrderRaw,
+  ShippingPartnerRaw,
+} from '../../../../api/features/private/sellerOrdersPrivateSlice';
+import { ApiError } from '../../../../core/utils/handler/apiClient';
 
 const { width, height } = Dimensions.get('window');
 
@@ -46,6 +52,10 @@ const hapticOptions = {
   enableVibrateFallback: true,
   ignoreAndroidSystemSettings: false,
 };
+
+// ============================================================
+// TYPES
+// ============================================================
 
 type RootStackParamList = {
   SellerOrders: undefined;
@@ -114,17 +124,6 @@ type QROwnershipEntry = {
   releasedAt?: string;
 };
 
-type QRCodeData = {
-  showQR: boolean;
-  completed?: boolean;
-  message?: string;
-  qrCodeUrl?: string;
-  qrData?: string;
-  holderType?: string;
-  status?: string;
-};
-
-// Extended Order type with full DeliveryTracking data from backend
 type Order = {
   _id?: string;
   orderId?: string;
@@ -159,7 +158,6 @@ type Order = {
     cartId?: string;
     createdAt?: string;
   };
-  // Complete DeliveryTracking data from backend
   deliveryTracking?: any | null;
   trackingHistory?: TrackingHistoryEntry[] | null;
   qrOwnershipHistory?: QROwnershipEntry[] | null;
@@ -209,9 +207,10 @@ type ShippingPartner = {
   kyc?: any;
 };
 
-const TIZZYOS_API_BASE_URL = 'http://10.172.218.121:2000';
+// ============================================================
+// THEME COLORS
+// ============================================================
 
-// Theme colors
 const getThemeColors = (isDark: boolean) => {
   return {
     background: isDark ? '#0F172A' : '#F8FAFC',
@@ -238,9 +237,10 @@ const getThemeColors = (isDark: boolean) => {
   };
 };
 
-// ==================================================
-// QR CODE MODAL COMPONENT
-// ==================================================
+// ============================================================
+// QR CODE MODAL
+// ============================================================
+
 const QRCodeModal: React.FC<{
   visible: boolean;
   onClose: () => void;
@@ -303,9 +303,9 @@ const QRCodeModal: React.FC<{
   );
 };
 
-// ==================================================
-// ✅ FIXED: TRACKING HISTORY HELPER FUNCTIONS
-// ==================================================
+// ============================================================
+// TRACKING HELPERS
+// ============================================================
 
 const hasSellerAccepted = (
   trackingHistory?: TrackingHistoryEntry[] | null,
@@ -367,11 +367,9 @@ const isOrderDelivered = (
   return trackingHistory.some(entry => entry.status === 'delivered');
 };
 
-// ✅ FIXED: Get Delivery Status Text - DELIVERED FIRST PRIORITY
 const getDeliveryStatusText = (order: Order): string => {
   const trackingHistory = order.trackingHistory;
 
-  // 🔴 HIGHEST PRIORITY: Check delivered first
   if (isOrderDelivered(trackingHistory)) return 'Delivered';
   if (hasInTransit(trackingHistory)) return 'In Transit';
   if (hasReadyForDispatch(trackingHistory)) return 'Ready for Dispatch';
@@ -384,11 +382,9 @@ const getDeliveryStatusText = (order: Order): string => {
   return 'Pending';
 };
 
-// ✅ FIXED: Get Delivery Status Color - DELIVERED FIRST PRIORITY
 const getDeliveryStatusColor = (order: Order): string => {
   const trackingHistory = order.trackingHistory;
 
-  // 🔴 HIGHEST PRIORITY: Delivered = Green
   if (isOrderDelivered(trackingHistory)) return '#10B981';
   if (hasInTransit(trackingHistory)) return '#3B82F6';
   if (hasReadyForDispatch(trackingHistory)) return '#8B5CF6';
@@ -401,41 +397,28 @@ const getDeliveryStatusColor = (order: Order): string => {
   return '#F59E0B';
 };
 
-// ==================================================
-// QR CODE BUTTON LOGIC - FIXED FOR FWS
-// ==================================================
 const shouldShowQRCodeButton = (order: Order): boolean => {
   const trackingHistory = order.trackingHistory;
   const qrOwnershipHistory = order.qrOwnershipHistory;
   const currentHolderType = order.currentHolderType;
 
   if (!trackingHistory) return false;
-
-  // Don't show if delivered
   if (isOrderDelivered(trackingHistory)) return false;
 
-  // ✅ CRITICAL: Only show QR if current holder is SELLER
   if (currentHolderType && currentHolderType !== 'SELLER') {
     return false;
   }
 
-  // ✅ Check QR ownership history - last holder must be SELLER with no release
   if (qrOwnershipHistory && qrOwnershipHistory.length > 0) {
     const lastHolder = qrOwnershipHistory[qrOwnershipHistory.length - 1];
-    if (lastHolder.holderType !== 'SELLER') {
-      return false;
-    }
-    if (lastHolder.releasedAt) {
-      return false;
-    }
+    if (lastHolder.holderType !== 'SELLER') return false;
+    if (lastHolder.releasedAt) return false;
   }
 
-  // For FWS fulfillment: Show QR when in_transit_to_fws
   if (order.fulfillmentType === 'FWS') {
     return hasIntransitToFWS(trackingHistory);
   }
 
-  // For SELLER fulfillment: Show QR when assignment_sent
   if (order.fulfillmentType === 'SELLER') {
     return hasAssignmentSent(trackingHistory);
   }
@@ -443,25 +426,19 @@ const shouldShowQRCodeButton = (order: Order): boolean => {
   return false;
 };
 
-// ==================================================
-// COMPLETION MESSAGE - FIXED FOR FWS
-// ==================================================
 const getCompletionMessage = (order: Order): string | null => {
   const trackingHistory = order.trackingHistory;
 
-  // If delivered, show completion for both FWS and SELLER
   if (isOrderDelivered(trackingHistory)) {
     return 'Order delivered successfully!';
   }
 
-  // For FWS fulfillment: Show completion when FWS received
   if (order.fulfillmentType === 'FWS') {
     if (hasReceivedAtFWS(trackingHistory) || hasScannedAtFWS(trackingHistory)) {
       return 'Parcel received at FWS warehouse! Your work is done.';
     }
   }
 
-  // For SELLER fulfillment: Show completion when handed to rider/truck
   if (order.fulfillmentType === 'SELLER') {
     if (hasInTransit(trackingHistory)) {
       return 'Your work is done! Parcel handed over to delivery partner.';
@@ -471,9 +448,10 @@ const getCompletionMessage = (order: Order): string | null => {
   return null;
 };
 
-// ==================================================
-// Manual Shipping Selection Modal Component
-// ==================================================
+// ============================================================
+// MANUAL SHIPPING MODAL
+// ============================================================
+
 const ManualShippingModal: React.FC<{
   visible: boolean;
   onClose: () => void;
@@ -481,54 +459,32 @@ const ManualShippingModal: React.FC<{
   order: Order | null;
   colors: any;
   isDark: boolean;
-  authToken: string | null;
-}> = ({ visible, onClose, onSelectPartner, order, colors, authToken }) => {
+}> = ({ visible, onClose, onSelectPartner, order, colors }) => {
   const [shippingPartners, setShippingPartners] = useState<ShippingPartner[]>(
     [],
   );
   const [loadingPartners, setLoadingPartners] = useState<boolean>(true);
   const [selectedPartner, setSelectedPartner] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (visible && order && authToken) {
+  React.useEffect(() => {
+    if (visible && order) {
       fetchShippingPartners();
     } else {
       setShippingPartners([]);
       setSelectedPartner(null);
       setLoadingPartners(true);
     }
-  }, [visible, order, authToken]);
+  }, [visible, order]);
 
   const fetchShippingPartners = async () => {
     try {
       setLoadingPartners(true);
-      const apiUrl = `${TIZZYOS_API_BASE_URL}/api/v0/shipping/available-shipping`;
-      const headers = {
-        Authorization: `Bearer ${authToken}`,
-        'Content-Type': 'application/json',
-      };
-      const response = await axios.get(apiUrl, { headers, timeout: 10000 });
 
-      let ridersArray: any[] = [];
-      if (response.data) {
-        if (
-          response.data.success &&
-          Array.isArray(response.data.shippingPartners)
-        ) {
-          ridersArray = response.data.shippingPartners;
-        } else if (Array.isArray(response.data)) {
-          ridersArray = response.data;
-        } else if (
-          response.data.partners &&
-          Array.isArray(response.data.partners)
-        ) {
-          ridersArray = response.data.partners;
-        }
-      }
+      const partnersRaw = await getAvailableShippingPartners();
 
       const mappedPartners: ShippingPartner[] = [];
-      if (Array.isArray(ridersArray)) {
-        ridersArray.forEach((rider: any, index: number) => {
+      if (Array.isArray(partnersRaw)) {
+        partnersRaw.forEach((rider: any, index: number) => {
           try {
             mappedPartners.push({
               id: rider._id || rider.id || `shipping-${index}`,
@@ -542,7 +498,7 @@ const ManualShippingModal: React.FC<{
               vehicleModel: rider.vehicleModel,
               vehicleNumber: rider.vehicleNumber,
               vehicleImage: rider.vehicleImage,
-              isAvailable: rider.isOnline && rider.isAvailable,
+              isAvailable: !!(rider.isOnline && rider.isAvailable),
               phoneNumber: rider.phoneNumber,
               maxOrdersPerDay: rider.maxOrdersPerDay || 10,
               currentOrders: rider.orderStats?.assigned || 0,
@@ -553,13 +509,17 @@ const ManualShippingModal: React.FC<{
               kyc: rider.kyc,
             });
           } catch (error) {
-            console.error(`Error mapping partner ${index}:`, error);
+            if (__DEV__) {
+              console.error(`Error mapping partner ${index}:`, error);
+            }
           }
         });
       }
       setShippingPartners(mappedPartners);
     } catch (error: any) {
-      console.error('Error fetching shipping partners:', error);
+      if (__DEV__) {
+        console.error('Error fetching shipping partners:', error);
+      }
       setShippingPartners([]);
     } finally {
       setLoadingPartners(false);
@@ -577,7 +537,10 @@ const ManualShippingModal: React.FC<{
     if (selectedPartner) {
       const partner = shippingPartners.find(p => p.id === selectedPartner);
       if (partner) {
-        ReactNativeHapticFeedback.trigger('notificationSuccess', hapticOptions);
+        ReactNativeHapticFeedback.trigger(
+          'notificationSuccess',
+          hapticOptions,
+        );
         onSelectPartner(partner);
         onClose();
       }
@@ -775,10 +738,7 @@ const ManualShippingModal: React.FC<{
                 color={colors.textTertiary}
               />
               <Text
-                style={[
-                  styles.emptyPartnersText,
-                  { color: colors.textPrimary },
-                ]}
+                style={[styles.emptyPartnersText, { color: colors.textPrimary }]}
               >
                 No partners available
               </Text>
@@ -841,9 +801,10 @@ const ManualShippingModal: React.FC<{
   );
 };
 
-// ==================================================
-// MAIN SELLER ORDERS SCREEN
-// ==================================================
+// ============================================================
+// MAIN SCREEN
+// ============================================================
+
 const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
   const { isDark } = useTheme();
   const colors = getThemeColors(isDark);
@@ -859,7 +820,6 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
   const [selectedTab, setSelectedTab] = useState<
     'all' | 'pending' | 'assigned'
   >('all');
-  const [authToken, setAuthToken] = useState<string | null>(null);
   const [showShippingModal, setShowShippingModal] = useState<boolean>(false);
   const [selectedOrderForShipping, setSelectedOrderForShipping] =
     useState<Order | null>(null);
@@ -869,36 +829,16 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     orderId: string;
   } | null>(null);
 
-  // ==================================================
-  // QR CODE API (PRESERVED - NOT REMOVED)
-  // ==================================================
-  const fetchQRCode = async (orderId: string): Promise<QRCodeData | null> => {
-    try {
-      const tokenToUse = authToken || (await AsyncStorage.getItem('authToken'));
-      if (!tokenToUse) return null;
-
-      const response = await axios.get(
-        `${TIZZYOS_API_BASE_URL}/api/v0/delivery/tracking/${orderId}/qr`,
-        {
-          headers: { Authorization: `Bearer ${tokenToUse}` },
-          timeout: 10000,
-        },
-      );
-
-      if (response.data && response.data.success && response.data.data) {
-        return response.data.data;
-      }
-      return null;
-    } catch (error: any) {
-      console.error(`QR Code fetch error for ${orderId}:`, error.message);
-      return null;
-    }
-  };
+  // ============================================================
+  // QR CODE HANDLER
+  // ============================================================
 
   const handleShowQRCode = async (order: Order) => {
     ReactNativeHapticFeedback.trigger('impactMedium', hapticOptions);
 
-    const qrData = await fetchQRCode(order.orderId!);
+    if (!order.orderId) return;
+
+    const qrData = await getOrderQRCode(order.orderId);
 
     if (!qrData) {
       Alert.alert('Error', 'Unable to fetch QR code. Please try again.');
@@ -914,21 +854,17 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     }
 
     if (qrData.qrCodeUrl) {
-      setSelectedQRCode({ url: qrData.qrCodeUrl, orderId: order.orderId! });
+      setSelectedQRCode({ url: qrData.qrCodeUrl, orderId: order.orderId });
       setQrModalVisible(true);
     } else {
       Alert.alert('Error', 'QR code URL not found.');
     }
   };
 
-  // ==================================================
-  // 🚫 REMOVED: fetchTrackingStatus() - COMPLETELY REMOVED
-  // /api/v0/tracking/history/status is NO LONGER CALLED
-  // ==================================================
+  // ============================================================
+  // SELLER LOGIC HELPERS
+  // ============================================================
 
-  // ==================================================
-  // SELLER LOGIC HELPERS - FIXED
-  // ==================================================
   const shouldShowAcceptButton = (order: Order): boolean =>
     !hasSellerAccepted(order.trackingHistory) &&
     !isOrderDelivered(order.trackingHistory);
@@ -955,7 +891,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     try {
       const storedToken = await AsyncStorage.getItem('authToken');
       if (!storedToken) return null;
-      setAuthToken(storedToken);
+
       try {
         const tokenData = JSON.parse(storedToken);
         const userId =
@@ -967,7 +903,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
           setSellerId(userId);
           return userId;
         }
-      } catch (jsonError) {
+      } catch {
         try {
           const tokenParts = storedToken.split('.');
           if (tokenParts.length === 3) {
@@ -1002,12 +938,16 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
             }
           }
         } catch (jwtError) {
-          console.error('Error decoding JWT:', jwtError);
+          if (__DEV__) {
+            console.error('Error decoding JWT:', jwtError);
+          }
         }
       }
       return null;
     } catch (error) {
-      console.error('Error extracting sellerId:', error);
+      if (__DEV__) {
+        console.error('Error extracting sellerId:', error);
+      }
       return null;
     }
   };
@@ -1025,16 +965,12 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
         minute: '2-digit',
         hour12: true,
       });
-    } catch (error) {
+    } catch {
       return 'Date format error';
     }
   };
 
-  // ==================================================
-  // ✅ UPDATED: mapApiOrderToUI - Now uses full DeliveryTracking from backend
-  // ==================================================
-  const mapApiOrderToUI = (apiOrder: any): Order => {
-    // Safely extract tracking data with fallbacks
+  const mapApiOrderToUI = (apiOrder: SellerOrderRaw): Order => {
     const hasTracking = apiOrder.hasTracking === true;
 
     return {
@@ -1063,8 +999,6 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
       fulfillmentType: apiOrder.fulfillmentType,
       metadata: apiOrder.metadata,
       qrCodeData: null,
-
-      // ✅ Complete DeliveryTracking data preserved from backend
       deliveryTracking: apiOrder.deliveryTracking ?? null,
       trackingHistory: apiOrder.trackingHistory ?? [],
       qrOwnershipHistory: apiOrder.qrOwnershipHistory ?? [],
@@ -1084,72 +1018,47 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     };
   };
 
-  // ==================================================
-  // ✅ UPDATED: fetchOrders - ONLY ONE API CALL
-  // ==================================================
+  // ============================================================
+  // FETCH ORDERS
+  // ============================================================
+
   const fetchOrders = async (currentSellerId: string): Promise<void> => {
     try {
       if (!currentSellerId) {
-        console.error('No sellerId provided');
         Alert.alert('Error', 'Unable to get seller information');
         setLoading(false);
         setRefreshing(false);
         return;
       }
 
-      let tokenToUse = authToken;
-      if (!tokenToUse) {
-        tokenToUse = await AsyncStorage.getItem('authToken');
-        if (tokenToUse) {
-          setAuthToken(tokenToUse);
-        } else {
-          console.error('No auth token available');
-          Alert.alert('Error', 'Authentication required. Please login again.');
-          setLoading(false);
-          setRefreshing(false);
-          return;
-        }
-      }
+      const ordersArray = await getSellerOrders(currentSellerId);
 
-      // 🚀 SINGLE API CALL - NO N+1 PROBLEM
-      const apiUrl = `${TIZZYOS_API_BASE_URL}/api/v0/seller/orders?sellerId=${currentSellerId}`;
-      const headers = {
-        Authorization: `Bearer ${tokenToUse}`,
-        'Content-Type': 'application/json',
-      };
-      const response = await axios.get(apiUrl, { headers, timeout: 10000 });
-
-      let ordersArray: any[] = [];
-      if (response.data) {
-        if (response.data.success && Array.isArray(response.data.orders))
-          ordersArray = response.data.orders;
-        else if (Array.isArray(response.data)) ordersArray = response.data;
-        else if (response.data.orders && Array.isArray(response.data.orders))
-          ordersArray = response.data.orders;
-      }
-
-      // ✅ Map orders directly - NO per-order tracking API calls
       const mappedOrders: Order[] = ordersArray.map((order: any) =>
         mapApiOrderToUI(order),
       );
 
       setOrders(mappedOrders);
     } catch (error: any) {
-      console.error('Error fetching orders:', error);
+      if (__DEV__) {
+        console.error('Error fetching orders:', error);
+      }
+
       let errorMessage = 'Failed to fetch orders. Please try again.';
-      if (error.response) {
-        if (error.response.status === 401) {
+      if (error instanceof ApiError) {
+        if (error.status === 401) {
           errorMessage = 'Session expired. Please login again.';
           await AsyncStorage.removeItem('authToken');
-          setAuthToken(null);
-        } else if (error.response.status === 404)
+        } else if (error.status === 404) {
           errorMessage = 'Seller not found.';
-        else if (error.response.status === 500)
+        } else if (error.status === 500) {
           errorMessage = 'Server error. Please try again later.';
-        else errorMessage = error.response.data?.message || errorMessage;
-      } else if (error.request) {
-        errorMessage = 'Network error. Please check your internet connection.';
+        } else if (error.message) {
+          errorMessage = error.message;
+        }
+      } else if (error?.message) {
+        errorMessage = error.message;
       }
+
       Alert.alert('Error', errorMessage);
       setOrders([]);
     } finally {
@@ -1158,133 +1067,162 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     }
   };
 
-  // ==================================================
-  // ✅ UPDATED: sellerAcceptOrder - NO tracking API call
-  // ==================================================
+  // ============================================================
+  // SELLER ACTIONS
+  // ============================================================
+
   const sellerAcceptOrder = async (order: Order): Promise<void> => {
     try {
-      let tokenToUse = authToken;
-      if (!tokenToUse) {
-        tokenToUse = await AsyncStorage.getItem('authToken');
-        if (!tokenToUse) {
-          Alert.alert('Error', 'Authentication token not found');
-          return;
-        }
-        setAuthToken(tokenToUse);
+      setProcessingOrder(order._id || order.orderId || '');
+
+      if (!order.orderId) {
+        throw new Error('Invalid order ID');
       }
 
-      setProcessingOrder(order._id || order.orderId || '');
-      const response = await axios.post(
-        `${TIZZYOS_API_BASE_URL}/api/v0/delivery/tracking/shipping/seller/accept-order`,
-        { orderId: order.orderId },
-        {
-          headers: {
-            Authorization: `Bearer ${tokenToUse}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: 15000,
-        },
+      await acceptOrderApi(order.orderId);
+
+      ReactNativeHapticFeedback.trigger('notificationSuccess', hapticOptions);
+      Alert.alert(
+        'Success',
+        'Order accepted successfully! Now you can assign a shipping partner.',
       );
 
-      if (response.data && response.data.success) {
-        ReactNativeHapticFeedback.trigger('notificationSuccess', hapticOptions);
-        Alert.alert(
-          'Success',
-          'Order accepted successfully! Now you can assign a shipping partner.',
-        );
-
-        // ✅ Refresh orders to get updated tracking data
-        // No individual tracking API call
-        await fetchOrders(sellerId!);
-      } else {
-        throw new Error(response.data?.message || 'Failed to accept order');
-      }
+      await fetchOrders(sellerId!);
     } catch (error: any) {
-      console.error('Error accepting order:', error);
-      let errorMessage = 'Failed to accept order. Please try again.';
-      if (error.response)
-        errorMessage =
-          error.response.data?.error ||
-          error.response.data?.message ||
-          errorMessage;
-      else if (error.request)
-        errorMessage = 'Network error. Please check your connection.';
+      if (__DEV__) {
+        console.error('Error accepting order:', error);
+      }
+
+      const errorMessage =
+        error instanceof ApiError
+          ? error.message
+          : error?.message || 'Failed to accept order. Please try again.';
+
       Alert.alert('Error', errorMessage);
     } finally {
       setProcessingOrder(null);
     }
   };
 
-  // ==================================================
-  // ✅ UPDATED: sellerAssignShipping - NO tracking API call
-  // ==================================================
   const sellerAssignShipping = async (
     order: Order,
     shippingPartner: ShippingPartner,
   ): Promise<void> => {
     try {
-      let tokenToUse = authToken;
-      if (!tokenToUse) {
-        tokenToUse = await AsyncStorage.getItem('authToken');
-        if (!tokenToUse) {
-          Alert.alert('Error', 'Authentication token not found');
-          return;
-        }
-        setAuthToken(tokenToUse);
+      setProcessingOrder(order._id || order.orderId || '');
+
+      if (!order.orderId) {
+        throw new Error('Invalid order ID');
       }
 
-      setProcessingOrder(order._id || order.orderId || '');
-      let shippingTypeValue =
-        shippingPartner.shippingType ||
-        (shippingPartner.vehicleType?.toLowerCase() === 'bike'
-          ? 'RIDER'
-          : 'TRUCK');
+      const shippingTypeValue: 'RIDER' | 'TRUCK' =
+        shippingPartner.shippingType === 'RIDER' ||
+        shippingPartner.shippingType === 'TRUCK'
+          ? shippingPartner.shippingType
+          : shippingPartner.vehicleType?.toLowerCase() === 'bike'
+            ? 'RIDER'
+            : 'TRUCK';
 
-      const response = await axios.post(
-        `${TIZZYOS_API_BASE_URL}/api/v0/delivery/tracking/shipping/seller/assign/auto-manual`,
-        {
-          orderId: order.orderId,
-          assignmentType: 'MANUAL',
-          shippingType: shippingTypeValue,
-          shippingId: shippingPartner.userId,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${tokenToUse}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: 15000,
-        },
+      await assignShippingApi({
+        orderId: order.orderId,
+        assignmentType: 'MANUAL',
+        shippingType: shippingTypeValue,
+        shippingId: shippingPartner.userId,
+      });
+
+      ReactNativeHapticFeedback.trigger('notificationSuccess', hapticOptions);
+      Alert.alert(
+        'Success',
+        `${shippingPartner.vehicleType} assigned successfully!`,
       );
 
-      if (response.data && response.data.success) {
-        ReactNativeHapticFeedback.trigger('notificationSuccess', hapticOptions);
-        Alert.alert(
-          'Success',
-          `${shippingPartner.vehicleType} assigned successfully!`,
-        );
+      await fetchOrders(sellerId!);
 
-        // ✅ Refresh orders to get updated tracking data
-        // No individual tracking API call
-        await fetchOrders(sellerId!);
-
-        setShowShippingModal(false);
-        setSelectedOrderForShipping(null);
-      } else {
-        throw new Error(
-          response.data?.message || 'Failed to assign shipping partner',
-        );
-      }
+      setShowShippingModal(false);
+      setSelectedOrderForShipping(null);
     } catch (error: any) {
-      console.error('Error assigning shipping partner:', error);
+      if (__DEV__) {
+        console.error('Error assigning shipping partner:', error);
+      }
+
       Alert.alert(
         'Error',
-        error.response?.data?.error ||
-          error.response?.data?.message ||
-          'Failed to assign shipping partner.',
+        error instanceof ApiError
+          ? error.message
+          : 'Failed to assign shipping partner.',
       );
     } finally {
       setProcessingOrder(null);
+    }
+  };
+
+  const sellerAutoAssignWithType = async (
+    order: Order,
+    shippingType: 'RIDER' | 'TRUCK',
+  ): Promise<void> => {
+    try {
+      setProcessingOrder(order._id || order.orderId || '');
+
+      if (!order.orderId) {
+        throw new Error('Invalid order ID');
+      }
+
+      await assignShippingApi({
+        orderId: order.orderId,
+        assignmentType: 'AUTO',
+        shippingType,
+      });
+
+      ReactNativeHapticFeedback.trigger('notificationSuccess', hapticOptions);
+      Alert.alert(
+        'Auto-Assign Success',
+        `${shippingType} automatically assigned.`,
+      );
+
+      await fetchOrders(sellerId!);
+    } catch (error: any) {
+      if (__DEV__) {
+        console.error('Error auto-assigning:', error);
+      }
+
+      Alert.alert(
+        'Auto-Assign Failed',
+        error instanceof ApiError
+          ? error.message
+          : 'Auto-assignment failed. Please use manual mode.',
+      );
+    } finally {
+      setProcessingOrder(null);
+    }
+  };
+
+  const sellerDeliverToFWS = async (order: Order): Promise<void> => {
+    try {
+      setProcessingFWSOrder(order._id || order.orderId || '');
+
+      if (!order.orderId) {
+        throw new Error('Invalid order ID');
+      }
+
+      await deliverToFWSApi(order.orderId);
+
+      ReactNativeHapticFeedback.trigger('notificationSuccess', hapticOptions);
+      Alert.alert('Success', 'Order marked as Intransit To FWS successfully!');
+
+      await fetchOrders(sellerId!);
+    } catch (error: any) {
+      if (__DEV__) {
+        console.error('Error intransit to FWS:', error);
+      }
+
+      Alert.alert(
+        'Error',
+        error instanceof ApiError
+          ? error.message
+          : 'Failed to intransit to FWS. Please try again.',
+      );
+    } finally {
+      setProcessingFWSOrder(null);
     }
   };
 
@@ -1315,119 +1253,6 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
         },
       ],
     );
-  };
-
-  // ==================================================
-  // ✅ UPDATED: sellerAutoAssignWithType - NO tracking API call
-  // ==================================================
-  const sellerAutoAssignWithType = async (
-    order: Order,
-    shippingType: 'RIDER' | 'TRUCK',
-  ): Promise<void> => {
-    try {
-      let tokenToUse = authToken;
-      if (!tokenToUse) {
-        tokenToUse = await AsyncStorage.getItem('authToken');
-        if (!tokenToUse) {
-          Alert.alert('Error', 'Authentication token not found');
-          return;
-        }
-        setAuthToken(tokenToUse);
-      }
-
-      setProcessingOrder(order._id || order.orderId || '');
-      const response = await axios.post(
-        `${TIZZYOS_API_BASE_URL}/api/v0/delivery/tracking/shipping/seller/assign/auto-manual`,
-        { orderId: order.orderId, assignmentType: 'AUTO', shippingType },
-        {
-          headers: {
-            Authorization: `Bearer ${tokenToUse}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: 15000,
-        },
-      );
-
-      if (response.data && response.data.success) {
-        ReactNativeHapticFeedback.trigger('notificationSuccess', hapticOptions);
-        Alert.alert(
-          'Auto-Assign Success',
-          `${shippingType} automatically assigned.`,
-        );
-
-        // ✅ Refresh orders to get updated tracking data
-        // No individual tracking API call
-        await fetchOrders(sellerId!);
-      } else {
-        throw new Error(
-          response.data?.message || 'Failed to auto-assign shipping partner',
-        );
-      }
-    } catch (error: any) {
-      console.error('Error auto-assigning:', error);
-      Alert.alert(
-        'Auto-Assign Failed',
-        error.response?.data?.error ||
-          error.response?.data?.message ||
-          'Auto-assignment failed. Please use manual mode.',
-      );
-    } finally {
-      setProcessingOrder(null);
-    }
-  };
-
-  // ==================================================
-  // ✅ UPDATED: sellerDeliverToFWS - NO tracking API call
-  // ==================================================
-  const sellerDeliverToFWS = async (order: Order): Promise<void> => {
-    try {
-      let tokenToUse = authToken;
-      if (!tokenToUse) {
-        tokenToUse = await AsyncStorage.getItem('authToken');
-        if (!tokenToUse) {
-          Alert.alert('Error', 'Authentication token not found');
-          return;
-        }
-        setAuthToken(tokenToUse);
-      }
-
-      setProcessingFWSOrder(order._id || order.orderId || '');
-      const response = await axios.post(
-        `${TIZZYOS_API_BASE_URL}/api/v0/delivery/tracking/shipping/seller/deliver-to-fws`,
-        { orderId: order.orderId },
-        {
-          headers: {
-            Authorization: `Bearer ${tokenToUse}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: 15000,
-        },
-      );
-
-      if (response.data && response.data.success) {
-        ReactNativeHapticFeedback.trigger('notificationSuccess', hapticOptions);
-        Alert.alert(
-          'Success',
-          'Order marked as Intransit To FWS successfully!',
-        );
-
-        // ✅ Refresh orders to get updated tracking data
-        // No individual tracking API call
-        await fetchOrders(sellerId!);
-      } else {
-        throw new Error(response.data?.message || 'Failed to intransit to FWS');
-      }
-    } catch (error: any) {
-      console.error('Error intransit to FWS:', error);
-      Alert.alert(
-        'Error',
-        error.response?.data?.error ||
-          error.response?.data?.message ||
-          'Failed to intransit to FWS. Please try again.',
-      );
-    } finally {
-      setProcessingFWSOrder(null);
-    }
   };
 
   const handleAcceptOrder = (order: Order) => {
@@ -1478,9 +1303,14 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   const handleSelectShippingPartner = (shippingPartner: ShippingPartner) => {
-    if (selectedOrderForShipping)
+    if (selectedOrderForShipping) {
       sellerAssignShipping(selectedOrderForShipping, shippingPartner);
+    }
   };
+
+  // ============================================================
+  // LOAD DATA
+  // ============================================================
 
   useFocusEffect(
     React.useCallback(() => {
@@ -1492,8 +1322,9 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
   const loadData = async (): Promise<void> => {
     setLoading(true);
     const id = await extractSellerIdFromToken();
-    if (id) await fetchOrders(id);
-    else {
+    if (id) {
+      await fetchOrders(id);
+    } else {
       Alert.alert('Error', 'Unable to get seller information');
       setLoading(false);
     }
@@ -1503,12 +1334,17 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     ReactNativeHapticFeedback.trigger('impactLight', hapticOptions);
     setRefreshing(true);
     const id = sellerId || (await extractSellerIdFromToken());
-    if (id) await fetchOrders(id);
-    else {
+    if (id) {
+      await fetchOrders(id);
+    } else {
       setRefreshing(false);
       Alert.alert('Error', 'Unable to get seller information');
     }
   };
+
+  // ============================================================
+  // FILTER HELPERS
+  // ============================================================
 
   const isOrderPending = (order: Order): boolean =>
     !hasSellerAccepted(order.trackingHistory) &&
@@ -1522,6 +1358,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     const paymentStatus =
       order.paymentStatus?.toLowerCase() || order.status?.toLowerCase() || '';
     const paymentIntentId = order.paymentIntentId;
+
     if (
       !paymentIntentId ||
       paymentIntentId === 'cod' ||
@@ -1533,6 +1370,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
         icon: <FontAwesome name="money" size={10} color="#FFFFFF" />,
       };
     }
+
     switch (paymentStatus) {
       case 'succeeded':
       case 'paid':
@@ -1597,6 +1435,10 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     return 1;
   };
 
+  // ============================================================
+  // RENDER: STATS CARD
+  // ============================================================
+
   const renderStatsCard = () => {
     const pendingOrdersCount = orders.filter(order =>
       isOrderPending(order),
@@ -1604,6 +1446,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     const assignedOrdersCount = orders.filter(order =>
       isOrderAssigned(order),
     ).length;
+
     return (
       <View style={styles.statsContainer}>
         <View
@@ -1676,6 +1519,10 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     );
   };
 
+  // ============================================================
+  // RENDER: ORDER ITEM
+  // ============================================================
+
   const renderOrderItem = (order: Order, index: number) => {
     const productTitle = getProductTitle(order);
     const itemCount = getItemCount(order);
@@ -1686,7 +1533,6 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     const deliveryCharge = order.deliveryCharge || 0;
     const formattedDate = formatDate(order.createdAt);
 
-    // ✅ FIXED: Use the new functions
     const statusText = getDeliveryStatusText(order);
     const statusColor = getDeliveryStatusColor(order);
 
@@ -1929,7 +1775,6 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
             </View>
           </View>
 
-          {/* QR Code Button */}
           {showQRCodeButton && (
             <TouchableOpacity
               style={[styles.qrCodeButton, { backgroundColor: colors.success }]}
@@ -1945,7 +1790,6 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
             </TouchableOpacity>
           )}
 
-          {/* Completion Message */}
           {completionMessage && (
             <View
               style={[
@@ -1969,7 +1813,6 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
             </View>
           )}
 
-          {/* Deliver to FWS Button */}
           {!completionMessage &&
             !showQRCodeButton &&
             showDeliverToFWSButton && (
@@ -1998,7 +1841,6 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
               </TouchableOpacity>
             )}
 
-          {/* Assign Button */}
           {!completionMessage &&
             !showQRCodeButton &&
             showAssignButton &&
@@ -2030,7 +1872,6 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
               </TouchableOpacity>
             )}
 
-          {/* Accept Button */}
           {!completionMessage &&
             !showQRCodeButton &&
             !showAssignButton &&
@@ -2112,9 +1953,7 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
       style={[styles.container, { backgroundColor: colors.background }]}
     >
       <StatusBar
-        backgroundColor="transparent"
         barStyle={isDark ? 'light-content' : 'dark-content'}
-        translucent
       />
 
       <View
@@ -2393,7 +2232,6 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
           order={selectedOrderForShipping}
           colors={colors}
           isDark={isDark}
-          authToken={authToken}
         />
       )}
 
@@ -2407,6 +2245,10 @@ const SellerOrdersScreen: React.FC<Props> = ({ navigation }) => {
     </SafeAreaView>
   );
 };
+
+// ============================================================
+// STYLES
+// ============================================================
 
 const styles = StyleSheet.create({
   container: { flex: 1 },

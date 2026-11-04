@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useTheme } from '../../../../contexts/theme/ThemeContext';
 import { useNavigation } from '@react-navigation/native';
-import { getMySellerApplication } from '../../../../services/SellerStatusService';
+import { getMySellerApplication } from '../../../../../api/features/private/sellerPrivateSlice';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Import vector icons from react-native-vector-icons

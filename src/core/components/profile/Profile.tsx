@@ -1,4 +1,4 @@
-// ProfileScreen.tsx (Fixed - Animation will show when no image)
+// ProfileScreen.tsx (me() API ke saath)
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -11,7 +11,6 @@ import {
   Alert,
   Dimensions,
   StatusBar,
-  Platform,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import LinearGradient from 'react-native-linear-gradient';
@@ -22,7 +21,10 @@ import FAIcon from 'react-native-vector-icons/FontAwesome';
 import IIcon from 'react-native-vector-icons/Ionicons';
 import BottomNavigation from '../home/BottomNavigation';
 import { useTheme } from '../../contexts/theme/ThemeContext';
-import { profileService } from '../../services/profile/profileService';
+
+// ✅ me() API + ApiError
+import { me } from '../../../api/features/public/authPublicSlice';
+import { ApiError } from '../../utils/handler/apiClient';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -36,6 +38,41 @@ interface ProfileData {
   verified: boolean;
   hasImage?: boolean;
 }
+
+// ============================================================
+// 🔧 ConnectUser → ProfileData mapping
+// ============================================================
+
+const mapUserToProfileData = (user: {
+  id?: string;
+  firstName?: string;
+  lastName?: string;
+  username?: string;
+  displayName?: string;
+  profilePhoto?: string;
+  email?: string;
+  phone?: string;
+  phoneVerified?: boolean;
+  connectVerified?: boolean;
+  createdAt?: string;
+}): ProfileData => {
+  const displayName =
+    user.displayName ||
+    [user.firstName, user.lastName].filter(Boolean).join(' ').trim() ||
+    user.username ||
+    'User';
+
+  return {
+    _id: user.id || '',
+    name: displayName,
+    image: user.profilePhoto || '',
+    email: user.email || 'Not provided',
+    phone: user.phone || 'Not provided',
+    joinDate: user.createdAt || '',
+    verified: !!(user.phoneVerified || user.connectVerified),
+    hasImage: !!user.profilePhoto,
+  };
+};
 
 export default function ProfileScreen() {
   const { isDark } = useTheme();
@@ -61,8 +98,6 @@ export default function ProfileScreen() {
   const cardBorder = isDark ? '#374151' : '#e5e7eb';
   const contactBackground = isDark ? '#374151' : '#f3f4f6';
   const statusBackground = isDark ? '#374151' : '#f3f4f6';
-  const statCardBackground = isDark ? '#374151' : '#ffffff';
-  const statCardBorder = isDark ? '#475569' : '#e5e7eb';
 
   const gradientColors: string[] = isDark
     ? ['#1E293B', '#1E293B', '#1E293B']
@@ -72,31 +107,49 @@ export default function ProfileScreen() {
     ? ['#7C3AED', '#6D28D9']
     : ['#8b5cf6', '#3b82f6'];
 
-  const secondaryButtonGradient: string[] = isDark
-    ? ['#475569', '#374151']
-    : ['#6b7280', '#374151'];
-
+  // ============================================================
+  // ✅ me() se profile fetch
+  // ============================================================
   const fetchProfile = async () => {
     setLoading(true);
-    const result = await profileService.fetchProfile();
 
-    if (result.success && result.data) {
-      setProfileData({
-        ...result.data,
-        hasImage: result.data.hasImage || false,
-      });
-    } else {
-      Alert.alert('Error', result.message || 'Failed to load profile data');
+    try {
+      const response = await me();
+
+      if (response.success && response.user) {
+        setProfileData(mapUserToProfileData(response.user));
+      } else {
+        Alert.alert('Error', response.message || 'Failed to load profile data');
+      }
+    } catch (error) {
+      // 401 → session expired → login pe bhejo
+      if (error instanceof ApiError && error.status === 401) {
+        Alert.alert('Session Expired', 'Please sign in again.', [
+          {
+            text: 'OK',
+            onPress: () => navigation.navigate('Login' as never),
+          },
+        ]);
+        return;
+      }
+
+      const message =
+        error instanceof ApiError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : 'Failed to load profile data';
+
+      Alert.alert('Error', message);
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
   useEffect(() => {
     fetchProfile();
   }, []);
 
-  // Refresh profile when screen comes into focus (after edit/delete)
   useFocusEffect(
     React.useCallback(() => {
       fetchProfile();
@@ -108,7 +161,6 @@ export default function ProfileScreen() {
     navigation.navigate('Settings' as never);
   };
 
-  // Function to check if image exists properly
   const hasValidImage = (): boolean => {
     return !!(
       profileData.hasImage &&
@@ -146,10 +198,7 @@ export default function ProfileScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor }]}>
-      <StatusBar
-        backgroundColor={isDark ? '#1E293B' : '#f9fafb'}
-        barStyle={isDark ? 'light-content' : 'dark-content'}
-      />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
       <LinearGradient colors={gradientColors} style={StyleSheet.absoluteFill} />
 
@@ -191,7 +240,7 @@ export default function ProfileScreen() {
               { backgroundColor: cardBackground, borderColor: cardBorder },
             ]}
           >
-            {/* Profile Image - FIXED: Animation shows when NO image */}
+            {/* Profile Image */}
             <View style={styles.imageSection}>
               <View style={styles.imageContainer}>
                 <View
@@ -206,7 +255,6 @@ export default function ProfileScreen() {
                       style={styles.profileImage}
                       resizeMode="cover"
                       onError={() => {
-                        // Agar image load nahi hoti to bhi animation dikhao
                         setProfileData(prev => ({ ...prev, hasImage: false }));
                       }}
                     />
@@ -352,20 +400,6 @@ export default function ProfileScreen() {
               <Icon name="edit" size={18} color="white" />
               <Text style={styles.buttonText}>Edit Profile</Text>
             </TouchableOpacity>
-
-            {/* <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => navigation.navigate('Security' as never)}
-            >
-              <LinearGradient
-                colors={secondaryButtonGradient}
-                style={StyleSheet.absoluteFill}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              />
-              <Icon name="security" size={18} color="white" />
-              <Text style={styles.buttonText}>Security</Text>
-            </TouchableOpacity> */}
           </View>
           <View style={styles.bottomSpacer} />
         </ScrollView>
@@ -379,13 +413,8 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  mainContent: {
-    flex: 1,
-    marginBottom: 60,
-  },
+  container: { flex: 1 },
+  mainContent: { flex: 1, marginBottom: 60 },
   bottomNavContainer: {
     position: 'absolute',
     bottom: 0,
@@ -406,26 +435,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
   },
-  scrollView: {
-    flex: 1,
-  },
+  scrollView: { flex: 1 },
   scrollContent: {
     paddingHorizontal: 16,
     paddingTop: screenHeight * 0.06,
     paddingBottom: 20,
   },
-  header: {
-    marginBottom: 24,
-    marginTop: 10,
-  },
+  header: { marginBottom: 24, marginTop: 10 },
   headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -445,10 +466,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 3,
     elevation: 3,
@@ -463,10 +481,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1,
     shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
@@ -489,18 +504,12 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     overflow: 'hidden',
     shadowColor: '#00000000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
   },
-  profileImage: {
-    width: '100%',
-    height: '100%',
-  },
+  profileImage: { width: '100%', height: '100%' },
   verifiedBadge: {
     position: 'absolute',
     bottom: 4,
@@ -514,18 +523,12 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'white',
     shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.2,
     shadowRadius: 2,
     elevation: 2,
   },
-  contactSection: {
-    gap: 12,
-    marginBottom: 20,
-  },
+  contactSection: { gap: 12, marginBottom: 20 },
   contactItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -540,9 +543,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginRight: 10,
   },
-  contactContent: {
-    flex: 1,
-  },
+  contactContent: { flex: 1 },
   contactLabel: {
     fontSize: screenWidth * 0.032,
     fontWeight: '600',
@@ -571,9 +572,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginRight: 12,
   },
-  statusContent: {
-    flex: 1,
-  },
+  statusContent: { flex: 1 },
   statusLabel: {
     fontSize: screenWidth * 0.035,
     fontWeight: '600',
@@ -593,12 +592,8 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 8,
   },
-  verifiedStatus: {
-    backgroundColor: '#dcfce7',
-  },
-  pendingStatus: {
-    backgroundColor: '#fef3c7',
-  },
+  verifiedStatus: { backgroundColor: '#dcfce7' },
+  pendingStatus: { backgroundColor: '#fef3c7' },
   statusText: {
     fontSize: screenWidth * 0.028,
     fontWeight: '600',
@@ -617,27 +612,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  secondaryButton: {
-    flex: 1,
-    height: 48,
-    borderRadius: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
@@ -653,7 +628,5 @@ const styles = StyleSheet.create({
     fontSize: screenWidth * 0.04,
     fontWeight: '600',
   },
-  bottomSpacer: {
-    height: 20,
-  },
+  bottomSpacer: { height: 20 },
 });

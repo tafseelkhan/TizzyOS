@@ -11,7 +11,10 @@ import {
 import Geolocation from 'react-native-get-location';
 import BackgroundActions from 'react-native-background-actions';
 import DeviceInfo from 'react-native-device-info';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// ✅ NEW — API slice (auto refresh + retry)
+import { updateRiderLocation } from '../../../api/features/private/riderLocationPrivateSlice';
+import { ApiError } from '../../../core/utils/handler/apiClient';
 
 // ============================================================
 // 📋 TYPES
@@ -66,7 +69,7 @@ const TRACKING_CONFIG = {
   errorBackoffMs: 5000,
 };
 
-const TIZZYOS_API_BASE_URL = 'http://10.172.218.121:2000';
+// ✅ Removed hardcoded TIZZYOS_API_BASE_URL — now inside slice
 
 const backgroundOptions = {
   taskName: 'DriverLocationTracking',
@@ -102,26 +105,26 @@ let gpsCheckInProgress: boolean = false;
 
 // ✅ TRACKING STATE
 let activeShippingId: string | null = null;
-let activeAuthToken: string | null = null;
 let isTrackingActive = false;
 
-// ✅ State Machine - Using string union type instead of enum
+// ✅ State Machine
 type TrackingState = 'STOPPED' | 'STARTING' | 'RUNNING' | 'STOPPING';
 let currentState: TrackingState = 'STOPPED';
 
 // ============================================================
-// 🔄 BACKGROUND TASK - Module Level
+// 🔄 BACKGROUND TASK — Module Level
+//
+// ✅ Uses `updateRiderLocation` slice (apiClient).
+// Safe because apiClient is React-independent.
 // ============================================================
 
 export function locationTask(taskData: any) {
   console.log('==================================================');
-  console.log('🔵 [BACKGROUND] ════════════════════════════════════');
   console.log('🔵 [BACKGROUND] 🚀 TASK STARTED');
   console.log(`🔵 [BACKGROUND] 📅 Time: ${new Date().toISOString()}`);
   console.log(
     `🔵 [BACKGROUND] ⏱️ Delay: ${taskData?.delay || TRACKING_CONFIG.intervalMs}ms`,
   );
-  console.log('🔵 [BACKGROUND] ════════════════════════════════════');
   console.log('==================================================');
 
   return new Promise<void>(resolve => {
@@ -133,7 +136,6 @@ export function locationTask(taskData: any) {
       try {
         while (await BackgroundActions.isRunning()) {
           try {
-            // Check if GPS provider is available
             if (!isGpsProviderAvailable) {
               console.log(
                 '🔵 [BACKGROUND] 📡 GPS provider unavailable, checking...',
@@ -143,7 +145,6 @@ export function locationTask(taskData: any) {
               continue;
             }
 
-            // Check if a request is already in progress
             if (locationRequestPromise) {
               console.log(
                 '🔵 [BACKGROUND] ⏳ Location request in progress, waiting...',
@@ -152,11 +153,7 @@ export function locationTask(taskData: any) {
               if (location) {
                 consecutiveErrors = 0;
                 console.log(
-                  `🔵 [BACKGROUND] ✅ Location #${++locationCount} obtained from in-flight request:`,
-                  {
-                    lat: location.latitude,
-                    lng: location.longitude,
-                  },
+                  `🔵 [BACKGROUND] ✅ Location #${++locationCount} obtained from in-flight request`,
                 );
                 await handleLocationAcquired(location);
               }
@@ -174,12 +171,7 @@ export function locationTask(taskData: any) {
             if (result) {
               consecutiveErrors = 0;
               console.log(
-                `🔵 [BACKGROUND] ✅ Location #${locationCount} obtained:`,
-                {
-                  lat: result.latitude,
-                  lng: result.longitude,
-                  acc: result.accuracy,
-                },
+                `🔵 [BACKGROUND] ✅ Location #${locationCount} obtained`,
               );
               await handleLocationAcquired(result);
             } else {
@@ -190,7 +182,7 @@ export function locationTask(taskData: any) {
 
               if (consecutiveErrors >= TRACKING_CONFIG.maxConsecutiveErrors) {
                 console.log(
-                  '🔵 [BACKGROUND] 🔄 Too many errors, marking GPS provider unavailable',
+                  '🔵 [BACKGROUND] 🔄 Too many errors, marking GPS unavailable',
                 );
                 isGpsProviderAvailable = false;
                 consecutiveErrors = 0;
@@ -218,7 +210,6 @@ export function locationTask(taskData: any) {
         console.log(
           `🔵 [BACKGROUND] 📊 Total locations sent: ${locationCount}`,
         );
-        console.log('🔵 [BACKGROUND] ════════════════════════════════════');
         console.log('==================================================');
         resolve();
       }
@@ -292,8 +283,7 @@ const getFreshLocationWithRetry = async (): Promise<LocationData | null> => {
   locationRequestPromise = getFreshLocationWithBackoff();
 
   try {
-    const result = await locationRequestPromise;
-    return result;
+    return await locationRequestPromise;
   } finally {
     locationRequestPromise = null;
     console.log('📍 [LOCATION] 🔓 In-flight promise cleared');
@@ -311,9 +301,6 @@ const getFreshLocationWithBackoff = async (): Promise<LocationData | null> => {
     );
 
     try {
-      console.log(
-        '📍 [LOCATION] 📡 Calling Geolocation.getCurrentPosition()...',
-      );
       const location = await Geolocation.getCurrentPosition(LOCATION_CONFIG);
 
       if (!isGpsProviderAvailable) {
@@ -325,7 +312,6 @@ const getFreshLocationWithBackoff = async (): Promise<LocationData | null> => {
         lat: location.latitude,
         lng: location.longitude,
         acc: location.accuracy,
-        speed: location.speed,
       });
 
       const locationData: LocationData = {
@@ -343,7 +329,6 @@ const getFreshLocationWithBackoff = async (): Promise<LocationData | null> => {
 
       lastLocationData = locationData;
       lastLocationTime = Date.now();
-      console.log('📍 [LOCATION] 💾 Location cached (fresh)');
 
       return locationData;
     } catch (error: any) {
@@ -353,12 +338,9 @@ const getFreshLocationWithBackoff = async (): Promise<LocationData | null> => {
       );
 
       if (error.message?.includes('timeout') || error.code === 'TIMEOUT') {
-        console.log(
-          '📍 [LOCATION] ⏰ Location timeout - GPS may be unavailable',
-        );
         if (attempt >= RETRY_CONFIG.maxAttempts) {
           isGpsProviderAvailable = false;
-          console.log('📍 [LOCATION] 📡 Marking GPS provider unavailable');
+          console.log('📍 [LOCATION] 📡 Marking GPS unavailable');
         }
       }
 
@@ -404,17 +386,6 @@ const getLastKnownLocation = (): LocationData | null => {
 // 🌐 API HELPERS
 // ============================================================
 
-const getAuthToken = async (): Promise<string | null> => {
-  try {
-    const token = await AsyncStorage.getItem('authToken');
-    console.log(`🔑 [AUTH] Token present: ${!!token}`);
-    return token;
-  } catch (error) {
-    console.error('🔑 [AUTH] Error getting token:', error);
-    return null;
-  }
-};
-
 const handleLocationAcquired = async (
   location: LocationData,
 ): Promise<void> => {
@@ -422,30 +393,22 @@ const handleLocationAcquired = async (
   const metadata = await getLocationMetadata(location);
   notifySubscribers(metadata);
 
-  // 2. Upload to backend (LocationService owns this)
+  // 2. Upload to backend via slice
   await uploadLocationToBackend(location);
 };
 
+/**
+ * ✅ Upload via riderLocationPrivateSlice
+ * - apiClient handles token retrieval + auto refresh
+ * - No manual AsyncStorage, no manual fetch
+ */
 const uploadLocationToBackend = async (
   location: LocationData,
 ): Promise<void> => {
   const shippingId = activeShippingId;
-  const authToken = activeAuthToken;
 
   if (!shippingId) {
     console.error('📍 [LOCATION_API] ❌ No shipping ID available for upload');
-    return;
-  }
-
-  if (!authToken) {
-    console.error('📍 [LOCATION_API] ❌ No auth token available for upload');
-    return;
-  }
-
-  // Get fresh token if needed
-  const token = await getAuthToken();
-  if (!token) {
-    console.error('📍 [LOCATION_API] ❌ Failed to get auth token');
     return;
   }
 
@@ -458,44 +421,38 @@ const uploadLocationToBackend = async (
   console.log(`📍 [LOCATION_API] shippingId: ${shippingId}`);
   console.log(`📍 [LOCATION_API] lat: ${location.latitude}`);
   console.log(`📍 [LOCATION_API] lng: ${location.longitude}`);
-  console.log(`📍 [LOCATION_API] accuracy: ${location.accuracy}`);
-  console.log(`📍 [LOCATION_API] battery: ${batteryLevel}%`);
 
   try {
-    const response = await fetch(
-      `${TIZZYOS_API_BASE_URL}/api/v0/track/rider/location`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          shippingId: shippingId,
-          action: 'update',
-          latitude: location.latitude,
-          longitude: location.longitude,
-          accuracy: location.accuracy,
-          speed: location.speed,
-          heading: location.heading || 0,
-          altitude: location.altitude || 0,
-          provider: location.provider || 'gps',
-          batteryLevel,
-          networkType,
-          timestamp: location.timestamp,
-        }),
-      },
-    );
+    const response = await updateRiderLocation({
+      shippingId,
+      action: 'update',
+      latitude: location.latitude,
+      longitude: location.longitude,
+      accuracy: location.accuracy,
+      speed: location.speed,
+      heading: location.heading || 0,
+      altitude: location.altitude || 0,
+      provider: location.provider || 'gps',
+      batteryLevel,
+      networkType,
+      timestamp: location.timestamp,
+    });
 
-    if (response.ok) {
-      console.log('📍 [LOCATION_API] ✅ Location uploaded successfully');
+    if (response.success) {
+      console.log('📍 [LOCATION_API] ✅ Location uploaded');
     } else {
-      console.log(`📍 [LOCATION_API] ❌ Upload failed: ${response.status}`);
-      const text = await response.text();
-      console.log(`📍 [LOCATION_API] Error: ${text}`);
+      console.log(
+        `📍 [LOCATION_API] ⚠️ Upload returned success:false — ${response.message}`,
+      );
     }
-  } catch (error) {
-    console.error('📍 [LOCATION_API] ❌ Upload error:', error);
+  } catch (err) {
+    if (err instanceof ApiError) {
+      console.error(
+        `📍 [LOCATION_API] ❌ API error [${err.status}]: ${err.message}`,
+      );
+    } else {
+      console.error('📍 [LOCATION_API] ❌ Upload error:', err);
+    }
   }
 };
 
@@ -563,21 +520,14 @@ const requestNotificationPermission = async (): Promise<boolean> => {
 
 class LocationService {
   private intervalId: ReturnType<typeof setInterval> | null = null;
-  private appState: AppStateStatus = AppState.currentState || 'active';
+  private appState: AppStateStatus = (AppState.currentState ||
+    'active') as AppStateStatus;
   private isBackgroundRunning = false;
   private isForeground = false;
   private isTransitioning = false;
 
   constructor() {
-    console.log('==================================================');
-    console.log('🟢 [SERVICE] ════════════════════════════════════');
     console.log('🟢 [SERVICE] 🏗️ CONSTRUCTOR');
-    console.log(`🟢 [SERVICE] 📱 Platform: ${Platform.OS}`);
-    console.log(`🟢 [SERVICE] 📱 App State: ${this.appState}`);
-    console.log(`🟢 [SERVICE] 📱 Version: ${Platform.Version}`);
-    console.log('🟢 [SERVICE] ════════════════════════════════════');
-    console.log('==================================================');
-
     AppState.addEventListener('change', this.handleAppStateChange);
   }
 
@@ -589,12 +539,12 @@ class LocationService {
     const id = `sub_${++subscriberIdCounter}`;
     subscribers.set(id, callback);
     console.log(
-      `📢 [SUBSCRIBER] ✅ Registered subscriber: ${id} (total: ${subscribers.size})`,
+      `📢 [SUBSCRIBER] ✅ Registered ${id} (total: ${subscribers.size})`,
     );
 
     const cached = getLastKnownLocation();
     if (cached) {
-      console.log(`📢 [SUBSCRIBER] 📤 Sending last known location to ${id}`);
+      console.log(`📢 [SUBSCRIBER] 📤 Sending last known to ${id}`);
       this.getBatteryAndNetwork().then(({ batteryLevel, networkType }) => {
         callback({
           ...cached,
@@ -607,7 +557,7 @@ class LocationService {
     return () => {
       subscribers.delete(id);
       console.log(
-        `📢 [SUBSCRIBER] ❌ Unregistered subscriber: ${id} (remaining: ${subscribers.size})`,
+        `📢 [SUBSCRIBER] ❌ Unregistered ${id} (remaining: ${subscribers.size})`,
       );
     };
   }
@@ -622,10 +572,6 @@ class LocationService {
       networkType: 'unknown',
     };
   }
-
-  // ============================================================
-  // 🔋 GET BATTERY & NETWORK
-  // ============================================================
 
   async getBatteryAndNetwork(): Promise<{
     batteryLevel: number;
@@ -643,20 +589,10 @@ class LocationService {
   // ============================================================
 
   private handleAppStateChange = async (nextAppState: AppStateStatus) => {
-    console.log('==================================================');
-    console.log(
-      `📱 [APP_STATE] 🔄 CHANGED: ${this.appState} → ${nextAppState}`,
-    );
-    console.log(`📱 [APP_STATE] isTracking: ${isTrackingActive}`);
-    console.log(`📱 [APP_STATE] isForeground: ${this.isForeground}`);
-    console.log(
-      `📱 [APP_STATE] isBackgroundRunning: ${this.isBackgroundRunning}`,
-    );
-    console.log(`📱 [APP_STATE] isTransitioning: ${this.isTransitioning}`);
-    console.log('==================================================');
+    console.log(`📱 [APP_STATE] 🔄 ${this.appState} → ${nextAppState}`);
 
     if (this.isTransitioning) {
-      console.log('📱 [APP_STATE] ⏳ Already transitioning, ignoring...');
+      console.log('📱 [APP_STATE] ⏳ Transition in progress, ignoring');
       return;
     }
 
@@ -666,25 +602,16 @@ class LocationService {
       this.appState = nextAppState;
 
       if (nextAppState === 'background' && isTrackingActive) {
-        console.log(
-          '📱 [APP_STATE] 🔵 App → BACKGROUND, starting background tracking...',
-        );
+        console.log('📱 [APP_STATE] 🔵 → BACKGROUND');
         await this.startBackgroundTracking();
       } else if (nextAppState === 'active' && isTrackingActive) {
-        console.log(
-          '📱 [APP_STATE] 🟢 App → FOREGROUND, starting foreground tracking...',
-        );
+        console.log('📱 [APP_STATE] 🟢 → FOREGROUND');
         await this.startForegroundTracking();
-      } else {
-        console.log(
-          `📱 [APP_STATE] ⏸️ No action needed (tracking: ${isTrackingActive})`,
-        );
       }
     } catch (error) {
-      console.error('📱 [APP_STATE] ❌ Error during transition:', error);
+      console.error('📱 [APP_STATE] ❌ Error:', error);
     } finally {
       this.isTransitioning = false;
-      console.log('📱 [APP_STATE] ✅ Transition complete');
     }
   };
 
@@ -693,16 +620,9 @@ class LocationService {
   // ============================================================
 
   async requestPermissions(): Promise<boolean> {
-    console.log('==================================================');
-    console.log('🔐 [PERMISSIONS] ════════════════════════════════════');
-    console.log('🔐 [PERMISSIONS] 📋 Requesting all permissions...');
-    console.log(`🔐 [PERMISSIONS] 📱 Android Version: ${Platform.Version}`);
-    console.log('==================================================');
+    console.log('🔐 [PERMISSIONS] Requesting...');
 
-    if (Platform.OS !== 'android') {
-      console.log('🔐 [PERMISSIONS] ✅ Not Android, skipping');
-      return true;
-    }
+    if (Platform.OS !== 'android') return true;
 
     try {
       const permissions: Permission[] = [
@@ -711,9 +631,6 @@ class LocationService {
       ];
 
       if (Platform.Version >= 29) {
-        console.log(
-          `🔐 [PERMISSIONS] 📱 Android ${Platform.Version} >= 29, adding BACKGROUND_LOCATION`,
-        );
         permissions.push(PERMISSIONS.ANDROID.ACCESS_BACKGROUND_LOCATION);
       }
 
@@ -721,14 +638,10 @@ class LocationService {
       const allGranted = statuses.every(s => s === RESULTS.GRANTED);
 
       if (allGranted) {
-        console.log('🔐 [PERMISSIONS] ✅ All permissions already granted');
         await requestNotificationPermission();
         return true;
       }
 
-      console.log(
-        `🔐 [PERMISSIONS] 📋 Requesting ${permissions.length} permissions...`,
-      );
       const results = await Promise.all(
         permissions.map(permission => request(permission)),
       );
@@ -738,18 +651,11 @@ class LocationService {
       );
 
       if (!locationGranted) {
-        console.warn(
-          '🔐 [PERMISSIONS] ❌ Location permissions not fully granted',
-        );
-        results.forEach((status, index) => {
-          console.log(`🔐 [PERMISSIONS] ${permissions[index]} = ${status}`);
-        });
+        console.warn('🔐 [PERMISSIONS] ❌ Denied');
         return false;
       }
 
-      console.log('🔐 [PERMISSIONS] ✅ Location permissions granted');
       await requestNotificationPermission();
-      console.log('🔐 [PERMISSIONS] ✅ All permissions granted');
       return true;
     } catch (error) {
       console.error('🔐 [PERMISSIONS] ❌ Error:', error);
@@ -758,117 +664,71 @@ class LocationService {
   }
 
   // ============================================================
-  // ▶️ START TRACKING - MAIN PUBLIC API
+  // ▶️ START TRACKING
   // ============================================================
 
   async startTracking(shippingId: string): Promise<boolean> {
-    console.log('==================================================');
-    console.log(`🟢 [SERVICE] ════════════════════════════════════`);
-    console.log(`🟢 [SERVICE] ▶️ START TRACKING`);
-    console.log(`🟢 [SERVICE] 📦 shippingId: ${shippingId}`);
-    console.log(`🟢 [SERVICE] 📱 Current App State: ${AppState.currentState}`);
-    console.log(`🟢 [SERVICE] 📊 Current State: ${currentState}`);
-    console.log(`🟢 [SERVICE] 📊 isTracking: ${isTrackingActive}`);
-    console.log('==================================================');
+    console.log(`🟢 [SERVICE] ▶️ START TRACKING: ${shippingId}`);
 
-    // ✅ Validate shippingId
     if (!shippingId || shippingId.trim() === '') {
-      console.error('🟢 [SERVICE] ❌ Invalid shippingId provided');
+      console.error('🟢 [SERVICE] ❌ Invalid shippingId');
       return false;
     }
 
-    // ✅ State Machine: Already RUNNING
     if (currentState === 'RUNNING') {
-      console.log('🟢 [SERVICE] ⏳ Already tracking, returning success');
+      console.log('🟢 [SERVICE] ⏳ Already tracking');
       return true;
     }
 
-    // ✅ State Machine: Already STARTING - wait for it to complete
     if (currentState === 'STARTING') {
-      console.log('🟢 [SERVICE] ⏳ Already starting, waiting...');
       let waitCount = 0;
       while (currentState === 'STARTING' && waitCount < 30) {
         await new Promise<void>(resolve => setTimeout(resolve, 100));
         waitCount++;
       }
-      // After waiting, check if we're now RUNNING
-      // Using type assertion to avoid TypeScript narrowing issue
-      if ((currentState as TrackingState) === 'RUNNING') {
-        return true;
-      }
-      console.log("🟢 [SERVICE] ⚠️ Start didn't complete, proceeding...");
+      if ((currentState as TrackingState) === 'RUNNING') return true;
     }
 
-    // ✅ State Machine: STARTING
     currentState = 'STARTING';
 
     try {
-      // ✅ Store shipping ID and get auth token
       activeShippingId = shippingId;
-      console.log(`🟢 [SERVICE] ✅ shippingId stored: ${activeShippingId}`);
 
-      const token = await getAuthToken();
-      if (!token) {
-        console.error('🟢 [SERVICE] ❌ Failed to get auth token');
-        currentState = 'STOPPED';
-        activeShippingId = null;
-        return false;
-      }
-      activeAuthToken = token;
-      console.log('🟢 [SERVICE] ✅ Auth token stored');
-
-      // ✅ Check permissions
-      console.log('🟢 [SERVICE] 🔐 Checking permissions...');
+      // ✅ Permissions
       const hasPermissions = await this.requestPermissions();
       if (!hasPermissions) {
-        console.log('🟢 [SERVICE] ❌ Permissions denied');
         currentState = 'STOPPED';
         activeShippingId = null;
-        activeAuthToken = null;
         return false;
       }
 
-      // ✅ Check GPS
+      // ✅ GPS check
       await checkGpsProvider();
-      if (!isGpsProviderAvailable) {
-        console.log('🟢 [SERVICE] ⚠️ GPS provider unavailable, but will retry');
-      }
 
-      // ✅ Set tracking active
       isTrackingActive = true;
 
-      // ✅ Start appropriate tracking
       let result = false;
       if (AppState.currentState === 'background') {
-        console.log(
-          '🟢 [SERVICE] 🔵 App is in BACKGROUND, starting background tracking...',
-        );
         result = await this.startBackgroundTracking();
       } else {
-        console.log(
-          '🟢 [SERVICE] 🟢 App is in FOREGROUND, starting foreground tracking...',
-        );
         result = await this.startForegroundTracking();
       }
 
       if (result) {
         currentState = 'RUNNING';
-        console.log('🟢 [SERVICE] ✅ Tracking started successfully');
+        console.log('🟢 [SERVICE] ✅ Tracking started');
       } else {
         currentState = 'STOPPED';
         isTrackingActive = false;
         activeShippingId = null;
-        activeAuthToken = null;
-        console.log('🟢 [SERVICE] ❌ Tracking start failed');
       }
 
       return result;
     } catch (error) {
-      console.error('🟢 [SERVICE] ❌ Start tracking failed:', error);
+      console.error('🟢 [SERVICE] ❌ Start failed:', error);
       currentState = 'STOPPED';
       isTrackingActive = false;
       activeShippingId = null;
-      activeAuthToken = null;
       return false;
     }
   }
@@ -878,98 +738,45 @@ class LocationService {
   // ============================================================
 
   private async startForegroundTracking(): Promise<boolean> {
-    console.log('==================================================');
-    console.log('🟢 [FOREGROUND] ════════════════════════════════════');
-    console.log('🟢 [FOREGROUND] 🚀 STARTING FOREGROUND TRACKING');
-    console.log(`🟢 [FOREGROUND] 📅 Time: ${new Date().toISOString()}`);
-    console.log(
-      `🟢 [FOREGROUND] isBackgroundRunning: ${this.isBackgroundRunning}`,
-    );
-    console.log(
-      `🟢 [FOREGROUND] intervalId: ${this.intervalId ? 'EXISTS' : 'NULL'}`,
-    );
-    console.log('==================================================');
+    console.log('🟢 [FOREGROUND] 🚀 STARTING');
 
-    // Stop background if running
     if (this.isBackgroundRunning) {
-      console.log('🟢 [FOREGROUND] 🔄 Background running, stopping it...');
       await this.stopBackgroundTracking();
     }
 
-    // Clear existing interval
     if (this.intervalId) {
-      console.log('🟢 [FOREGROUND] 🧹 Clearing existing interval...');
       clearInterval(this.intervalId);
       this.intervalId = null;
-      console.log('🟢 [FOREGROUND] ✅ Interval cleared');
     }
 
     this.isForeground = true;
-    console.log('🟢 [FOREGROUND] ✅ isForeground set to true');
 
-    // Get initial location
-    console.log('🟢 [FOREGROUND] 📍 Getting initial location...');
     const location = await getFreshLocationWithRetry();
     if (location) {
-      console.log('🟢 [FOREGROUND] 📤 Sending initial location...');
       await handleLocationAcquired(location);
-      console.log('🟢 [FOREGROUND] ✅ Initial location sent');
-    } else {
-      console.log('🟢 [FOREGROUND] ❌ No initial location available');
     }
 
-    // Start interval
-    console.log(
-      `🟢 [FOREGROUND] ⏰ Setting interval to ${TRACKING_CONFIG.intervalMs}ms...`,
-    );
     this.intervalId = setInterval(() => {
       void (async () => {
-        if (!isTrackingActive || !this.isForeground) {
-          console.log(
-            `🟢 [FOREGROUND] ⏸️ Skipping interval (tracking: ${isTrackingActive}, foreground: ${this.isForeground})`,
-          );
-          return;
-        }
+        if (!isTrackingActive || !this.isForeground) return;
 
-        // Check GPS provider - but don't block if check fails
         if (!isGpsProviderAvailable) {
-          console.log(
-            '🟢 [FOREGROUND] 📡 GPS provider unavailable, checking...',
-          );
           await checkGpsProvider();
-          if (!isGpsProviderAvailable) {
-            console.log(
-              '🟢 [FOREGROUND] ⏸️ GPS provider still unavailable, skipping',
-            );
-            return;
-          }
-          console.log('🟢 [FOREGROUND] ✅ GPS provider available, continuing');
+          if (!isGpsProviderAvailable) return;
         }
 
-        console.log('🟢 [FOREGROUND] 📍 Interval: Getting location...');
         const newLocation = await getFreshLocationWithRetry();
         if (newLocation) {
-          console.log('🟢 [FOREGROUND] 📤 Sending location...');
           await handleLocationAcquired(newLocation);
-          console.log('🟢 [FOREGROUND] ✅ Location sent successfully');
         } else {
-          console.log('🟢 [FOREGROUND] ❌ No location available');
           if (isGpsProviderAvailable) {
-            console.log(
-              '🟢 [FOREGROUND] 📡 GPS provider may be unavailable, checking...',
-            );
             await checkGpsProvider();
           }
         }
       })();
     }, TRACKING_CONFIG.intervalMs);
 
-    console.log('🟢 [FOREGROUND] ✅ Foreground tracking started successfully');
-    console.log(
-      `🟢 [FOREGROUND] 📊 intervalId: ${this.intervalId ? 'SET' : 'NULL'}`,
-    );
-    console.log('🟢 [FOREGROUND] ════════════════════════════════════');
-    console.log('==================================================');
+    console.log('🟢 [FOREGROUND] ✅ Started');
     return true;
   }
 
@@ -978,35 +785,17 @@ class LocationService {
   // ============================================================
 
   private async startBackgroundTracking(): Promise<boolean> {
-    console.log('==================================================');
-    console.log('🔵 [BACKGROUND] ════════════════════════════════════');
-    console.log('🔵 [BACKGROUND] 🚀 STARTING BACKGROUND TRACKING');
-    console.log(`🔵 [BACKGROUND] 📅 Time: ${new Date().toISOString()}`);
-    console.log(`🔵 [BACKGROUND] isForeground: ${this.isForeground}`);
-    console.log(
-      `🔵 [BACKGROUND] intervalId: ${this.intervalId ? 'EXISTS' : 'NULL'}`,
-    );
-    console.log('==================================================');
+    console.log('🔵 [BACKGROUND] 🚀 STARTING');
 
-    // Clear foreground interval
     if (this.intervalId) {
-      console.log('🔵 [BACKGROUND] 🧹 Clearing foreground interval...');
       clearInterval(this.intervalId);
       this.intervalId = null;
       this.isForeground = false;
-      console.log('🔵 [BACKGROUND] ✅ Foreground cleared');
     }
 
-    // Check if background is already running
     const isRunning = await BackgroundActions.isRunning();
-    console.log(
-      `🔵 [BACKGROUND] 📊 BackgroundActions.isRunning(): ${isRunning}`,
-    );
-
     if (isRunning) {
-      console.log('🔵 [BACKGROUND] ⏳ Background already running');
       this.isBackgroundRunning = true;
-      console.log('🔵 [BACKGROUND] ✅ Using existing background service');
       return true;
     }
 
@@ -1016,29 +805,16 @@ class LocationService {
         foregroundServiceType: ['location'] as any,
       };
 
-      console.log('🔵 [BACKGROUND] 📡 Starting BackgroundActions...');
       await BackgroundActions.start(locationTask, options);
-      console.log('🔵 [BACKGROUND] ✅ BackgroundActions.start() completed');
 
-      const isRunningAfterStart = await BackgroundActions.isRunning();
-      console.log(
-        `🔵 [BACKGROUND] 📊 After start, isRunning: ${isRunningAfterStart}`,
-      );
-
-      if (!isRunningAfterStart) {
-        console.error('🔵 [BACKGROUND] ❌ Service failed to start');
+      const isRunningAfter = await BackgroundActions.isRunning();
+      if (!isRunningAfter) {
+        console.error('🔵 [BACKGROUND] ❌ Failed to start');
         return false;
       }
 
       this.isBackgroundRunning = true;
-      console.log(
-        '🔵 [BACKGROUND] ✅ Background tracking started successfully',
-      );
-      console.log(
-        `🔵 [BACKGROUND] 📊 Status: isRunning=${isRunningAfterStart}, isBackgroundRunning=${this.isBackgroundRunning}`,
-      );
-      console.log('🔵 [BACKGROUND] ════════════════════════════════════');
-      console.log('==================================================');
+      console.log('🔵 [BACKGROUND] ✅ Started');
       return true;
     } catch (error) {
       console.error('🔵 [BACKGROUND] ❌ Start failed:', error);
@@ -1047,115 +823,72 @@ class LocationService {
   }
 
   // ============================================================
-  // 🛑 STOP BACKGROUND TRACKING
+  // 🛑 STOP BACKGROUND
   // ============================================================
 
   private async stopBackgroundTracking(): Promise<void> {
-    console.log('==================================================');
-    console.log('🔴 [BACKGROUND] ════════════════════════════════════');
-    console.log('🔴 [BACKGROUND] 🛑 STOPPING BACKGROUND TRACKING');
-    console.log(`🔴 [BACKGROUND] 📅 Time: ${new Date().toISOString()}`);
-    console.log('==================================================');
-
     try {
       const isRunning = await BackgroundActions.isRunning();
-      console.log(`🔴 [BACKGROUND] 📊 Background is running: ${isRunning}`);
-
       if (isRunning) {
-        console.log('🔴 [BACKGROUND] 📡 Calling BackgroundActions.stop()...');
         await BackgroundActions.stop();
-        console.log('🔴 [BACKGROUND] ✅ Background stopped successfully');
-      } else {
-        console.log('🔴 [BACKGROUND] ⏳ Background already stopped');
       }
-
       this.isBackgroundRunning = false;
-      console.log('🔴 [BACKGROUND] ✅ Cleanup complete');
-      console.log('🔴 [BACKGROUND] ════════════════════════════════════');
-      console.log('==================================================');
     } catch (error) {
       console.error('🔴 [BACKGROUND] ❌ Stop failed:', error);
     }
   }
 
   // ============================================================
-  // 🛑 STOP TRACKING - PUBLIC API
+  // 🛑 STOP TRACKING
   // ============================================================
 
   async stopTracking(): Promise<boolean> {
-    console.log('==================================================');
-    console.log('🔴 [SERVICE] ════════════════════════════════════');
     console.log('🔴 [SERVICE] 🛑 STOP TRACKING');
-    console.log(`🔴 [SERVICE] 📅 Time: ${new Date().toISOString()}`);
-    console.log(`🔴 [SERVICE] 📊 Current State: ${currentState}`);
-    console.log(`🔴 [SERVICE] 📊 isTracking: ${isTrackingActive}`);
-    console.log('==================================================');
 
-    // ✅ Already stopped - capture current state to avoid narrowing
     const stateAtEntry: TrackingState = currentState;
 
-    if (stateAtEntry === 'STOPPED') {
-      console.log('🔴 [SERVICE] ⏳ Already stopped, returning');
-      return true;
-    }
+    if (stateAtEntry === 'STOPPED') return true;
 
-    // ✅ Already stopping - wait using a separate check loop
     if (stateAtEntry === 'STOPPING') {
-      console.log('🔴 [SERVICE] ⏳ Already stopping, waiting...');
       let waitCount = 0;
-      // Wait until state changes from STOPPING
       while (currentState === 'STOPPING' && waitCount < 30) {
         await new Promise<void>(resolve => setTimeout(resolve, 100));
         waitCount++;
       }
-      // Now check if we reached STOPPED - use type assertion
-      if ((currentState as TrackingState) === 'STOPPED') {
-        return true;
-      }
-      console.log("🔴 [SERVICE] ⚠️ Stop didn't complete, proceeding...");
+      if ((currentState as TrackingState) === 'STOPPED') return true;
     }
 
-    // Set to STOPPING
     currentState = 'STOPPING';
 
     try {
-      // Clear foreground interval
       if (this.intervalId) {
-        console.log('🔴 [SERVICE] 🧹 Clearing foreground interval...');
         clearInterval(this.intervalId);
         this.intervalId = null;
-        console.log('🔴 [SERVICE] ✅ Interval cleared');
       }
 
-      // Stop background
       if (this.isBackgroundRunning) {
-        console.log('🔴 [SERVICE] 🔵 Stopping background tracking...');
         await this.stopBackgroundTracking();
       }
 
-      // Clear all state
       isTrackingActive = false;
       this.isForeground = false;
       activeShippingId = null;
-      activeAuthToken = null;
       locationRequestPromise = null;
       lastLocationData = null;
       lastLocationTime = 0;
 
       currentState = 'STOPPED';
-      console.log('🔴 [SERVICE] ✅ Tracking stopped successfully');
-      console.log('🔴 [SERVICE] ════════════════════════════════════');
-      console.log('==================================================');
+      console.log('🔴 [SERVICE] ✅ Stopped');
       return true;
     } catch (error) {
-      console.error('🔴 [SERVICE] ❌ Error during stop:', error);
+      console.error('🔴 [SERVICE] ❌ Stop error:', error);
       currentState = 'STOPPED';
       return false;
     }
   }
 
   // ============================================================
-  // 📊 STATUS METHODS
+  // 📊 STATUS
   // ============================================================
 
   isTrackingActive(): boolean {
@@ -1179,7 +912,6 @@ class LocationService {
   }
 
   async getCurrentLocationOnce(): Promise<LocationWithMetadata | null> {
-    console.log('📍 [SERVICE] Getting current location once...');
     const location = await getFreshLocationWithRetry();
     if (!location) return null;
     return await getLocationMetadata(location);

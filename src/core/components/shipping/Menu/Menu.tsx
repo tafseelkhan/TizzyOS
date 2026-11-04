@@ -1,3 +1,5 @@
+// SidebarWithShipping.tsx
+
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -8,18 +10,19 @@ import {
   LayoutAnimation,
   Dimensions,
   Image,
-  ActivityIndicator,
   SafeAreaView,
   Platform,
   UIManager,
   StatusBar,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
-import LinearGradient from 'react-native-linear-gradient';
 import { useNavigation, NavigationProp } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomNavigation from '../../home/BottomNavigation';
 import LottieView from 'lottie-react-native';
+
+// ✅ me() API
+import { me } from '../../../../api/features/public/authPublicSlice';
+import { ApiError } from '../../../../core/utils/handler/apiClient';
 
 // Enable LayoutAnimation for Android
 if (
@@ -30,9 +33,11 @@ if (
 }
 
 const { width } = Dimensions.get('window');
-const BASE_URL = 'http://10.172.218.121:1000';
 
-// Define navigation param list
+// ============================================================
+// TYPES
+// ============================================================
+
 type RootStackParamList = {
   ApplyShipping: undefined;
   AddShipment: undefined;
@@ -40,68 +45,18 @@ type RootStackParamList = {
   Tracking: undefined;
   ShippingOrders: undefined;
   ShippingReviews: undefined;
-  // FWS Navigation Screens
   ApplyFWS: undefined;
   MyFWS: undefined;
   FWSOrders: undefined;
   FWSReviews: undefined;
-  // Employee Navigation Screens
   EmployeeManagement: undefined;
   EmployeeList: undefined;
   EmployeeAttendance: undefined;
   EmployeeLeave: undefined;
   EmployeePayroll: undefined;
-  CreateEmployee: undefined; // Added for Apply Employee
+  CreateEmployee: undefined;
   [key: string]: undefined | object;
 };
-
-// Types for Shipping
-interface ShippingStats {
-  shipments: number;
-  delivered: number;
-  inTransit: number;
-  pending: number;
-}
-
-interface ShippingProfile {
-  id: string;
-  name: string;
-  image: string;
-  isActive: boolean;
-  stats: ShippingStats;
-}
-
-// Types for FWS (Freight & Warehouse Services)
-interface FWSStats {
-  totalOrders: number;
-  completed: number;
-  inProgress: number;
-  pending: number;
-}
-
-interface FWSProfile {
-  id: string;
-  name: string;
-  image: string;
-  isActive: boolean;
-  stats: FWSStats;
-}
-
-// Types for Employee
-interface EmployeeStats {
-  totalEmployees: number;
-  active: number;
-  onLeave: number;
-  pendingApproval: number;
-}
-
-interface EmployeeProfile {
-  id: string;
-  name: string;
-  image: string;
-  isActive: boolean;
-  stats: EmployeeStats;
-}
 
 interface MenuItem {
   segment: string;
@@ -118,148 +73,64 @@ interface MenuSection {
   children: MenuItem[];
 }
 
-// Helper function to get image URL
+// ============================================================
+// HELPERS
+// ============================================================
+
 const getImageUrl = (image?: string): string => {
-  if (!image) return 'https://via.placeholder.com/150';
-  if (image.startsWith('http')) return image;
-  return 'https://via.placeholder.com/150';
+  if (!image) return '';
+  if (image.startsWith('http://') || image.startsWith('https://')) {
+    return image;
+  }
+  return '';
 };
 
-// Shipping API Service
-const shippingApi = {
-  getShippingProfile: async (token: string): Promise<ShippingProfile> => {
-    try {
-      const response = await fetch(`${BASE_URL}/api/v0/shipping`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        return {
-          id: data._id || 'shipping_123',
-          name: data.name || 'Express Logistics',
-          image: getImageUrl(data.image),
-          isActive: data.isActive || true,
-          stats: {
-            shipments: data.stats?.shipments || 125,
-            delivered: data.stats?.delivered || 98,
-            inTransit: data.stats?.inTransit || 15,
-            pending: data.stats?.pending || 12,
-          },
-        };
-      }
-    } catch (error) {
-      console.error('Error fetching shipping profile:', error);
-    }
-
-    // Return mock data if API fails
-    return {
-      id: 'shipping_123',
-      name: 'Express Logistics',
-      image: 'https://via.placeholder.com/150',
-      isActive: true,
-      stats: {
-        shipments: 125,
-        delivered: 98,
-        inTransit: 15,
-        pending: 12,
-      },
-    };
-  },
-
-  getShippingMenu: async (): Promise<MenuSection[]> => {
-    return [
+// ✅ Static shipping menu — no API
+const getShippingMenu = (): MenuSection[] => [
+  {
+    segment: 'shipping',
+    title: 'Shippings Management',
+    iconName: 'grid-outline',
+    iconColor: '#4F46E5',
+    children: [
       {
-        segment: 'shipping',
-        title: 'Shippings Management',
-        iconName: 'grid-outline',
+        segment: 'apply-shipping',
+        title: 'Apply for Shipping',
+        iconName: 'person-add-outline',
         iconColor: '#4F46E5',
-        children: [
-          {
-            segment: 'apply-shipping',
-            title: 'Apply for Shipping',
-            iconName: 'person-add-outline',
-            iconColor: '#4F46E5',
-          },
-          {
-            segment: 'shipments',
-            title: 'My Shipments',
-            iconName: 'cube-outline',
-            iconColor: '#F59E0B',
-          },
-          {
-            segment: 'shipping-orders',
-            title: 'Orders Tracking',
-            iconName: 'cart-outline',
-            iconColor: '#EF4444',
-          },
-        ],
       },
-    ];
-  },
-};
-
-// Employee API Service
-const employeeApi = {
-  getEmployeeProfile: async (token: string): Promise<EmployeeProfile> => {
-    try {
-      const response = await fetch(`${BASE_URL}/api/v0/employee`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        return {
-          id: data._id || 'emp_123',
-          name: data.name || 'HR Department',
-          image: getImageUrl(data.image),
-          isActive: data.isActive || true,
-          stats: {
-            totalEmployees: data.stats?.totalEmployees || 45,
-            active: data.stats?.active || 30,
-            onLeave: data.stats?.onLeave || 8,
-            pendingApproval: data.stats?.pendingApproval || 7,
-          },
-        };
-      }
-    } catch (error) {
-      console.error('Error fetching employee profile:', error);
-    }
-
-    // Return mock data if API fails
-    return {
-      id: 'emp_123',
-      name: 'HR Department',
-      image: 'https://via.placeholder.com/150',
-      isActive: true,
-      stats: {
-        totalEmployees: 45,
-        active: 30,
-        onLeave: 8,
-        pendingApproval: 7,
+      {
+        segment: 'shipments',
+        title: 'My Shipments',
+        iconName: 'cube-outline',
+        iconColor: '#F59E0B',
       },
-    };
+      {
+        segment: 'shipping-orders',
+        title: 'Orders Tracking',
+        iconName: 'cart-outline',
+        iconColor: '#EF4444',
+      },
+    ],
   },
-};
+];
 
-// Custom hook for theme (replace with your actual ThemeContext)
+// ============================================================
+// THEME HOOK
+// ============================================================
+
 const useTheme = () => {
-  const [isDark, setIsDark] = useState(false);
+  const [isDark] = useState(false);
   const resolvedTheme = isDark ? 'dark' : 'light';
-
   return { isDark, resolvedTheme };
 };
 
+// ============================================================
+// COMPONENT
+// ============================================================
+
 const SidebarWithShipping: React.FC = () => {
-  const { isDark, resolvedTheme } = useTheme();
+  const { isDark } = useTheme();
   const navigation = useNavigation<NavigationProp<RootStackParamList>>();
   const [activeTab, setActiveTab] = useState('menu');
   const [expandedSections, setExpandedSections] = useState<
@@ -267,14 +138,9 @@ const SidebarWithShipping: React.FC = () => {
   >({
     shipping: true,
     fws: true,
-    employee: true, // Added Employee section expanded by default
+    employee: true,
   });
   const [activeItem, setActiveItem] = useState<string>('');
-  const [shippingProfile, setShippingProfile] =
-    useState<ShippingProfile | null>(null);
-  const [fwsProfile, setFwsProfile] = useState<FWSProfile | null>(null);
-  const [employeeProfile, setEmployeeProfile] =
-    useState<EmployeeProfile | null>(null);
   const [menuData, setMenuData] = useState<MenuSection[]>([]);
   const [loading, setLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
@@ -283,10 +149,13 @@ const SidebarWithShipping: React.FC = () => {
     name: 'User',
     email: '',
     phone: '',
-    image: 'https://via.placeholder.com/150',
+    image: '',
   });
 
-  // Colors - Premium Modern Minimalist Theme
+  // ============================================================
+  // COLORS
+  // ============================================================
+
   const colors = {
     background: isDark ? '#0F0F12' : '#F8F9FC',
     card: isDark ? '#16161D' : '#FFFFFF',
@@ -304,79 +173,88 @@ const SidebarWithShipping: React.FC = () => {
     info: '#3B82F6',
   };
 
-  // Fetch profile data
+  // ============================================================
+  // ✅ FETCH PROFILE — me() API (only 1 API call)
+  // ============================================================
+
   useEffect(() => {
+    let cancelled = false;
+
     const fetchProfile = async () => {
+      setLoading(true);
+
       try {
-        const token = await AsyncStorage.getItem('authToken');
-        if (!token) return;
+        const response = await me();
 
-        const response = await fetch(`${BASE_URL}/api/v0/profile/me`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        if (cancelled) return;
 
-        const data = await response.json();
+        if (response?.success && response?.user) {
+          const user = response.user as {
+            id?: string;
+            displayName?: string;
+            firstName?: string;
+            lastName?: string;
+            username?: string;
+            email?: string;
+            phone?: string;
+            profilePhoto?: string;
+          };
 
-        if (response.ok) {
-          const normalized = getImageUrl(data?.image);
+          const displayName =
+            user.displayName ||
+            [user.firstName, user.lastName].filter(Boolean).join(' ').trim() ||
+            user.username ||
+            'User';
+
           setProfileData({
-            _id: data?._id ?? '',
-            name: data?.name ?? 'User',
-            email: data?.email ?? 'user@example.com',
-            phone: data?.phone ?? '+91 9876543210',
-            image: normalized,
+            _id: user.id ?? '',
+            name: displayName,
+            email: user.email ?? '',
+            phone: user.phone ?? '',
+            image: getImageUrl(user.profilePhoto),
           });
-        } else {
-          console.error(
-            'Error fetching profile:',
-            data?.message ?? 'Unknown error',
-          );
         }
       } catch (error) {
-        console.error('Error fetching profile:', error);
+        if (cancelled) return;
+
+        if (__DEV__) {
+          console.warn('[SidebarWithShipping.fetchProfile]', error);
+        }
+
+        if (error instanceof ApiError && error.status === 401) {
+          // apiClient ne already tokens clear kar diye
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     };
 
     fetchProfile();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Load data from API
+  // ============================================================
+  // ✅ LOAD MENU — static (no API)
+  // ============================================================
+
   useEffect(() => {
-    loadShippingFWSAndEmployeeData();
+    setMenuData(getShippingMenu());
   }, []);
 
-  const loadShippingFWSAndEmployeeData = async () => {
-    try {
-      setLoading(true);
-      const token = await AsyncStorage.getItem('authToken');
+  // ============================================================
+  // NAVIGATION HANDLER
+  // ============================================================
 
-      // Load all three data in parallel
-      const [shippingProfileData, shippingMenuData] = await Promise.all([
-        shippingApi.getShippingProfile(token || ''),
-        shippingApi.getShippingMenu(),
-      ]);
-
-      setShippingProfile(shippingProfileData);
-      // Combine all three menus
-      setMenuData([...shippingMenuData]);
-    } catch (error) {
-      console.error('Error loading data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Navigation handler
   const handleItemPress = (segment: string) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setActiveItem(segment);
 
     switch (segment) {
-      // Shipping navigation
       case 'apply-shipping':
         navigation.navigate('ApplyShipping');
         break;
@@ -395,7 +273,6 @@ const SidebarWithShipping: React.FC = () => {
       case 'shipping-reviews':
         navigation.navigate('ShippingReviews');
         break;
-
       default:
         console.log('Navigate to:', segment);
     }
@@ -409,14 +286,14 @@ const SidebarWithShipping: React.FC = () => {
     }));
   };
 
+  // ============================================================
+  // LOADING
+  // ============================================================
+
   if (loading) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-        <StatusBar
-          barStyle={isDark ? 'light-content' : 'dark-content'}
-          backgroundColor={colors.background}
-          translucent={false}
-        />
+        <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
         <View
           style={[
             styles.loadingContainer,
@@ -437,28 +314,27 @@ const SidebarWithShipping: React.FC = () => {
     );
   }
 
+  // ============================================================
+  // MAIN RENDER
+  // ============================================================
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <StatusBar
-        barStyle={isDark ? 'light-content' : 'dark-content'}
-        backgroundColor={colors.background}
-        translucent={false}
-      />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
         <ScrollView
           style={[styles.container, { backgroundColor: colors.background }]}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
         >
-          {/* Simple User Profile Section - Only Name and Image */}
+          {/* User Profile Card */}
           <View
             style={[
               styles.userProfileContainer,
               { backgroundColor: colors.card },
             ]}
           >
-            {/* Profile Image with Lottie fallback */}
-            {imageError ? (
+            {imageError || !profileData.image ? (
               <View
                 style={[
                   styles.userLottieContainer,
@@ -487,82 +363,46 @@ const SidebarWithShipping: React.FC = () => {
               <Text style={[styles.userName, { color: colors.textPrimary }]}>
                 {profileData.name}
               </Text>
-              {/* Added Email */}
-              <View style={styles.userDetailRow}>
-                <Icon
-                  name="mail-outline"
-                  size={14}
-                  color={colors.textSecondary}
-                />
-                <Text
-                  style={[
-                    styles.userDetailText,
-                    { color: colors.textSecondary },
-                  ]}
-                >
-                  {profileData.email}
-                </Text>
-              </View>
-              {/* Added Phone */}
-              <View style={styles.userDetailRow}>
-                <Icon
-                  name="call-outline"
-                  size={14}
-                  color={colors.textSecondary}
-                />
-                <Text
-                  style={[
-                    styles.userDetailText,
-                    { color: colors.textSecondary },
-                  ]}
-                >
-                  {profileData.phone}
-                </Text>
-              </View>
+
+              {profileData.email ? (
+                <View style={styles.userDetailRow}>
+                  <Icon
+                    name="mail-outline"
+                    size={14}
+                    color={colors.textSecondary}
+                  />
+                  <Text
+                    style={[
+                      styles.userDetailText,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
+                    {profileData.email}
+                  </Text>
+                </View>
+              ) : null}
+
+              {profileData.phone ? (
+                <View style={styles.userDetailRow}>
+                  <Icon
+                    name="call-outline"
+                    size={14}
+                    color={colors.textSecondary}
+                  />
+                  <Text
+                    style={[
+                      styles.userDetailText,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
+                    {profileData.phone}
+                  </Text>
+                </View>
+              ) : null}
             </View>
           </View>
 
-          {/* Employee Stats Cards - COMMENTED OUT */}
-          {/* {employeeProfile && (
-            <View style={styles.statsContainer}>
-              <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-                <View style={[styles.statIconBg, { backgroundColor: '#EDE9FE' }]}>
-                  <Icon name="people-outline" size={18} color="#8B5CF6" />
-                </View>
-                <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
-                  {employeeProfile.stats.totalEmployees}
-                </Text>
-                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-                  Total Employees
-                </Text>
-              </View>
-
-              <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-                <View style={[styles.statIconBg, { backgroundColor: '#D1FAE5' }]}>
-                  <Icon name="checkmark-circle" size={18} color={colors.success} />
-                </View>
-                <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
-                  {employeeProfile.stats.active}
-                </Text>
-                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-                  Active
-                </Text>
-              </View>
-
-              <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-                <View style={[styles.statIconBg, { backgroundColor: '#FEF3C7' }]}>
-                  <Icon name="time-outline" size={18} color={colors.warning} />
-                </View>
-                <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
-                  {employeeProfile.stats.onLeave}
-                </Text>
-                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-                  On Leave
-                </Text>
-              </View>
-            </View>
-          )} */}
-
+          {/* Menu Sections */}
           {menuData.map(section => (
             <View key={section.segment} style={styles.section}>
               <TouchableOpacity
@@ -619,7 +459,7 @@ const SidebarWithShipping: React.FC = () => {
                     },
                   ]}
                 >
-                  {section.children.map((item, index) => (
+                  {section.children.map(item => (
                     <TouchableOpacity
                       key={item.segment}
                       style={[
@@ -674,16 +514,18 @@ const SidebarWithShipping: React.FC = () => {
             </View>
           ))}
 
-          {/* Extra space for bottom navigation */}
           <View style={styles.bottomSpacer} />
         </ScrollView>
 
-        {/* Bottom Navigation */}
         <BottomNavigation activeTab={activeTab} setActiveTab={setActiveTab} />
       </SafeAreaView>
     </View>
   );
 };
+
+// ============================================================
+// STYLES
+// ============================================================
 
 const styles = StyleSheet.create({
   container: {
@@ -708,7 +550,6 @@ const styles = StyleSheet.create({
     width: 120,
     height: 120,
   },
-  // Premium Modern Header Structure
   userProfileContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -761,40 +602,6 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     fontWeight: '500',
     fontFamily: Platform.OS === 'ios' ? 'System' : 'Roboto',
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    marginBottom: 16,
-    gap: 12,
-  },
-  statCard: {
-    borderRadius: 16,
-    padding: 14,
-    alignItems: 'center',
-    flex: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  statIconBg: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  statNumber: {
-    fontSize: 20,
-    fontWeight: '700',
-    marginBottom: 2,
-  },
-  statLabel: {
-    fontSize: 11,
   },
   section: {
     marginBottom: 16,

@@ -1,3 +1,4 @@
+// src/screens/driver/SidebarWithDriver.tsx
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -8,20 +9,27 @@ import {
   LayoutAnimation,
   Dimensions,
   Image,
-  ActivityIndicator,
   SafeAreaView,
   Platform,
   UIManager,
   StatusBar,
-  Switch,
   Alert,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
-import LinearGradient from 'react-native-linear-gradient';
 import { useNavigation, NavigationProp } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomNavigation from '../../home/BottomNavigation';
 import LottieView from 'lottie-react-native';
+
+// ✅ me() — user profile
+import { me } from '../../../../api/features/public/authPublicSlice';
+
+// ✅ getDriverProfile() — driver profile (NEW SLICE)
+import {
+  getDriverProfile,
+  DriverProfile,
+} from '../../../../api/features/private/driverProfileSlice';
+
+import { ApiError } from '../../../../core/utils/handler/apiClient';
 
 if (
   Platform.OS === 'android' &&
@@ -31,7 +39,6 @@ if (
 }
 
 const { width } = Dimensions.get('window');
-const BASE_URL = 'http://10.172.218.121:1000';
 
 type RootStackParamList = {
   DriverRegistration: undefined;
@@ -46,25 +53,6 @@ type RootStackParamList = {
   DriverSupport: undefined;
   [key: string]: undefined | object;
 };
-
-interface DriverStats {
-  totalRides: number;
-  completed: number;
-  cancelled: number;
-  earnings: number;
-  rating: number;
-}
-
-interface DriverProfile {
-  id: string;
-  name: string;
-  image: string;
-  isActive: boolean;
-  stats: DriverStats;
-  driverCode: string;
-  vehicleNumber: string;
-  status: 'pending' | 'approved' | 'rejected' | 'suspended';
-}
 
 interface MenuItem {
   segment: string;
@@ -81,111 +69,75 @@ interface MenuSection {
   children: MenuItem[];
 }
 
+// ============================================================
+// 🔧 IMAGE HELPER
+// ============================================================
+
 const getImageUrl = (image?: string): string => {
-  if (!image) return 'https://via.placeholder.com/150';
-  if (image.startsWith('http')) return image;
-  return 'https://via.placeholder.com/150';
+  if (!image) return '';
+  if (image.startsWith('http://') || image.startsWith('https://')) {
+    return image;
+  }
+  return '';
 };
 
-const driverApi = {
-  getDriverProfile: async (token: string): Promise<DriverProfile> => {
-    try {
-      const response = await fetch(`${BASE_URL}/api/v0/driver/profile`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      });
+// ============================================================
+// 📋 STATIC MENU — no API
+// ============================================================
 
-      if (response.ok) {
-        const data = await response.json();
-        return {
-          id: data._id || 'driver_123',
-          name: data.name || 'John Driver',
-          image: getImageUrl(data.image),
-          isActive: data.isActive || true,
-          driverCode: data.driverCode || 'DRV001',
-          vehicleNumber: data.vehicleNumber || 'MH01AB1234',
-          status: data.status || 'approved',
-          stats: {
-            totalRides: data.stats?.totalRides || 156,
-            completed: data.stats?.completed || 142,
-            cancelled: data.stats?.cancelled || 8,
-            earnings: data.stats?.earnings || 45230,
-            rating: data.stats?.rating || 4.8,
-          },
-        };
-      }
-    } catch (error) {
-      console.error('Error fetching driver profile:', error);
-    }
-
-    return {
-      id: 'driver_123',
-      name: 'John Driver',
-      image: 'https://via.placeholder.com/150',
-      isActive: true,
-      driverCode: 'DRV001',
-      vehicleNumber: 'MH01AB1234',
-      status: 'approved',
-      stats: {
-        totalRides: 156,
-        completed: 142,
-        cancelled: 8,
-        earnings: 45230,
-        rating: 4.8,
-      },
-    };
-  },
-
-  getDriverMenu: async (): Promise<MenuSection[]> => {
-    return [
+const getDriverMenu = (): MenuSection[] => [
+  {
+    segment: 'driver',
+    title: 'Driver Management',
+    iconName: 'car-sport-outline',
+    iconColor: '#4F46E5',
+    children: [
       {
-        segment: 'driver',
-        title: 'Driver Management',
-        iconName: 'car-sport-outline',
+        segment: 'driver-registration',
+        title: 'Driver Registration',
+        iconName: 'person-add-outline',
         iconColor: '#4F46E5',
-        children: [
-          {
-            segment: 'driver-registration',
-            title: 'Driver Registration',
-            iconName: 'person-add-outline',
-            iconColor: '#4F46E5',
-          },
-          {
-            segment: 'my-rides',
-            title: 'My Rides',
-            iconName: 'car-outline',
-            iconColor: '#10B981',
-          },
-          {
-            segment: 'earnings',
-            title: 'My Earnings',
-            iconName: 'wallet-outline',
-            iconColor: '#F59E0B',
-          },
-          {
-            segment: 'driver-availability',
-            title: 'Driver Availability',
-            iconName: 'radio-button-on-outline',
-            iconColor: '#8B5CF6',
-          },
-        ],
       },
-    ];
+      {
+        segment: 'my-rides',
+        title: 'My Rides',
+        iconName: 'car-outline',
+        iconColor: '#10B981',
+      },
+      {
+        segment: 'earnings',
+        title: 'My Earnings',
+        iconName: 'wallet-outline',
+        iconColor: '#F59E0B',
+      },
+      {
+        segment: 'driver-availability',
+        title: 'Driver Availability',
+        iconName: 'radio-button-on-outline',
+        iconColor: '#8B5CF6',
+      },
+    ],
   },
-};
+];
+
+// ============================================================
+// 🎨 THEME HOOK (same as before)
+// ============================================================
 
 const useTheme = () => {
-  const [isDark, setIsDark] = useState(false);
+  const [isDark] = useState(false);
   const resolvedTheme = isDark ? 'dark' : 'light';
   return { isDark, resolvedTheme };
 };
 
+// ============================================================
+// 🧩 COMPONENT
+// ============================================================
+
 const SidebarWithDriver: React.FC = () => {
-  const { isDark, resolvedTheme } = useTheme();
+  const { isDark } = useTheme();
   const navigation = useNavigation<NavigationProp<RootStackParamList>>();
+
   const [activeTab, setActiveTab] = useState('menu');
   const [expandedSections, setExpandedSections] = useState<
     Record<string, boolean>
@@ -199,14 +151,13 @@ const SidebarWithDriver: React.FC = () => {
   const [menuData, setMenuData] = useState<MenuSection[]>([]);
   const [loading, setLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
-  const [isOnline, setIsOnline] = useState(true);
-  const [isLocationOn, setIsLocationOn] = useState(true);
+
   const [profileData, setProfileData] = useState({
     _id: '',
     name: 'User',
     email: '',
     phone: '',
-    image: 'https://via.placeholder.com/150',
+    image: '',
   });
 
   const colors = {
@@ -226,68 +177,112 @@ const SidebarWithDriver: React.FC = () => {
     info: '#3B82F6',
   };
 
+  // ============================================================
+  // ✅ FETCH USER PROFILE — me() API
+  // ============================================================
   useEffect(() => {
+    let cancelled = false;
+
     const fetchProfile = async () => {
       try {
-        const token = await AsyncStorage.getItem('authToken');
-        if (!token) return;
+        const response = await me();
 
-        const response = await fetch(`${BASE_URL}/api/v0/profile/me`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        if (cancelled) return;
 
-        const data = await response.json();
+        if (response?.success && response?.user) {
+          const user = response.user as {
+            id?: string;
+            displayName?: string;
+            firstName?: string;
+            lastName?: string;
+            username?: string;
+            email?: string;
+            phone?: string;
+            profilePhoto?: string;
+          };
 
-        if (response.ok) {
-          const normalized = getImageUrl(data?.image);
+          const displayName =
+            user.displayName ||
+            [user.firstName, user.lastName]
+              .filter(Boolean)
+              .join(' ')
+              .trim() ||
+            user.username ||
+            'User';
+
           setProfileData({
-            _id: data?._id ?? '',
-            name: data?.name ?? 'User',
-            email: data?.email ?? 'user@example.com',
-            phone: data?.phone ?? '+91 9876543210',
-            image: normalized,
+            _id: user.id ?? '',
+            name: displayName,
+            email: user.email ?? '',
+            phone: user.phone ?? '',
+            image: getImageUrl(user.profilePhoto),
           });
-        } else {
-          console.error(
-            'Error fetching profile:',
-            data?.message ?? 'Unknown error',
-          );
         }
       } catch (error) {
-        console.error('Error fetching profile:', error);
+        if (cancelled) return;
+
+        if (__DEV__) {
+          console.warn('[SidebarWithDriver.fetchProfile]', error);
+        }
+
+        // 401 → apiClient ne already tokens clear kar diye
+        if (error instanceof ApiError && error.status === 401) {
+          // Optional: navigation.reset({ index: 0, routes: [{ name: 'Login' }] })
+        }
       }
     };
 
     fetchProfile();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
+  // ============================================================
+  // ✅ FETCH DRIVER PROFILE — getDriverProfile() API (NEW)
+  // ============================================================
   useEffect(() => {
+    let cancelled = false;
+
+    const loadDriverData = async () => {
+      try {
+        setLoading(true);
+
+        const driverProfileData = await getDriverProfile();
+
+        if (cancelled) return;
+
+        setDriverProfile(driverProfileData);
+        setMenuData(getDriverMenu());
+      } catch (error) {
+        if (cancelled) return;
+
+        if (__DEV__) {
+          console.warn('[SidebarWithDriver.loadDriverData]', error);
+        }
+
+        // 401 → apiClient ne tokens clear kar diye
+        // Driver not registered (404) → profile null rahega
+        // Menu phir bhi dikhega (static)
+        setMenuData(getDriverMenu());
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
     loadDriverData();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const loadDriverData = async () => {
-    try {
-      setLoading(true);
-      const token = await AsyncStorage.getItem('authToken');
-
-      const [driverProfileData, driverMenuData] = await Promise.all([
-        driverApi.getDriverProfile(token || ''),
-        driverApi.getDriverMenu(),
-      ]);
-
-      setDriverProfile(driverProfileData);
-      setMenuData([...driverMenuData]);
-    } catch (error) {
-      console.error('Error loading driver data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // ============================================================
+  // NAVIGATION HANDLERS
+  // ============================================================
   const handleItemPress = (segment: string) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setActiveItem(segment);
@@ -333,28 +328,9 @@ const SidebarWithDriver: React.FC = () => {
     }
   };
 
-  const handleOnlineToggle = (value: boolean) => {
-    setIsOnline(value);
-    Alert.alert(
-      value ? 'Online' : 'Offline',
-      value
-        ? 'You are now online and available for rides'
-        : 'You are now offline and will not receive ride requests',
-      [{ text: 'OK' }],
-    );
-  };
-
-  const handleLocationToggle = (value: boolean) => {
-    setIsLocationOn(value);
-    Alert.alert(
-      value ? 'Location On' : 'Location Off',
-      value
-        ? 'Your location is now visible to riders'
-        : 'Your location is now hidden from riders',
-      [{ text: 'OK' }],
-    );
-  };
-
+  // ============================================================
+  // LOADING STATE
+  // ============================================================
   if (loading) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
@@ -383,6 +359,9 @@ const SidebarWithDriver: React.FC = () => {
     );
   }
 
+  // ============================================================
+  // MAIN RENDER
+  // ============================================================
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <StatusBar
@@ -396,13 +375,14 @@ const SidebarWithDriver: React.FC = () => {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
         >
+          {/* ============ USER PROFILE CARD ============ */}
           <View
             style={[
               styles.userProfileContainer,
               { backgroundColor: colors.card },
             ]}
           >
-            {imageError ? (
+            {imageError || !profileData.image ? (
               <View
                 style={[
                   styles.userLottieContainer,
@@ -432,7 +412,7 @@ const SidebarWithDriver: React.FC = () => {
                 {profileData.name}
               </Text>
 
-              {driverProfile && (
+              {driverProfile && driverProfile.driverCode ? (
                 <View style={styles.userDetailRow}>
                   <Icon
                     name="card-outline"
@@ -448,9 +428,9 @@ const SidebarWithDriver: React.FC = () => {
                     {driverProfile.driverCode}
                   </Text>
                 </View>
-              )}
+              ) : null}
 
-              {driverProfile && (
+              {driverProfile && driverProfile.vehicleNumber ? (
                 <View style={styles.userDetailRow}>
                   <Icon
                     name="car-outline"
@@ -466,9 +446,9 @@ const SidebarWithDriver: React.FC = () => {
                     {driverProfile.vehicleNumber}
                   </Text>
                 </View>
-              )}
+              ) : null}
 
-              {driverProfile && (
+              {driverProfile && driverProfile.status ? (
                 <View style={styles.userDetailRow}>
                   <Icon
                     name="ellipse"
@@ -484,72 +464,11 @@ const SidebarWithDriver: React.FC = () => {
                     {driverProfile.status.toUpperCase()}
                   </Text>
                 </View>
-              )}
+              ) : null}
             </View>
           </View>
 
-          {/* {driverProfile && (
-            <View style={styles.statsContainer}>
-              <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-                <View
-                  style={[styles.statIconBg, { backgroundColor: '#EDE9FE' }]}
-                >
-                  <Icon name="car-outline" size={18} color="#8B5CF6" />
-                </View>
-                <Text
-                  style={[styles.statNumber, { color: colors.textPrimary }]}
-                >
-                  {driverProfile.stats.totalRides}
-                </Text>
-                <Text
-                  style={[styles.statLabel, { color: colors.textSecondary }]}
-                >
-                  Total Rides
-                </Text>
-              </View>
-
-              <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-                <View
-                  style={[styles.statIconBg, { backgroundColor: '#D1FAE5' }]}
-                >
-                  <Icon
-                    name="checkmark-circle"
-                    size={18}
-                    color={colors.success}
-                  />
-                </View>
-                <Text
-                  style={[styles.statNumber, { color: colors.textPrimary }]}
-                >
-                  {driverProfile.stats.completed}
-                </Text>
-                <Text
-                  style={[styles.statLabel, { color: colors.textSecondary }]}
-                >
-                  Completed
-                </Text>
-              </View>
-
-              <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-                <View
-                  style={[styles.statIconBg, { backgroundColor: '#FEF3C7' }]}
-                >
-                  <Icon name="star" size={18} color={colors.warning} />
-                </View>
-                <Text
-                  style={[styles.statNumber, { color: colors.textPrimary }]}
-                >
-                  {driverProfile.stats.rating}
-                </Text>
-                <Text
-                  style={[styles.statLabel, { color: colors.textSecondary }]}
-                >
-                  Rating
-                </Text>
-              </View>
-            </View>
-          )} */}
-
+          {/* ============ MENU SECTIONS ============ */}
           {menuData.map(section => (
             <View key={section.segment} style={styles.section}>
               <TouchableOpacity
@@ -606,117 +525,57 @@ const SidebarWithDriver: React.FC = () => {
                     },
                   ]}
                 >
-                  {section.children.map(item => {
-                    if (item.segment === 'driver-availability') {
-                      return (
+                  {section.children.map(item => (
+                    <TouchableOpacity
+                      key={item.segment}
+                      style={[
+                        styles.subMenuItem,
+                        activeItem === item.segment &&
+                          styles.subMenuItemActive,
+                      ]}
+                      onPress={() => handleItemPress(item.segment)}
+                      activeOpacity={0.6}
+                    >
+                      <View style={styles.subMenuItemLeft}>
                         <View
-                          key={item.segment}
-                          style={styles.driverAvailabilityContainer}
+                          style={[
+                            styles.itemIconContainer,
+                            {
+                              backgroundColor: isDark
+                                ? 'rgba(255,255,255,0.03)'
+                                : '#F3F4F6',
+                            },
+                          ]}
                         >
-                          <TouchableOpacity
-                            style={[
-                              styles.subMenuItem,
-                              activeItem === item.segment &&
-                                styles.subMenuItemActive,
-                            ]}
-                            onPress={() => handleItemPress(item.segment)}
-                            activeOpacity={0.6}
-                          >
-                            <View style={styles.subMenuItemLeft}>
-                              <View
-                                style={[
-                                  styles.itemIconContainer,
-                                  {
-                                    backgroundColor: isDark
-                                      ? 'rgba(255,255,255,0.03)'
-                                      : '#F3F4F6',
-                                  },
-                                ]}
-                              >
-                                <Icon
-                                  name={item.iconName}
-                                  size={20}
-                                  color={item.iconColor}
-                                />
-                              </View>
-                              <Text
-                                style={[
-                                  styles.subMenuText,
-                                  {
-                                    color:
-                                      activeItem === item.segment
-                                        ? colors.accent
-                                        : colors.textPrimary,
-                                  },
-                                ]}
-                              >
-                                {item.title}
-                              </Text>
-                            </View>
-                            <View style={styles.rightContent}>
-                              <Icon
-                                name="chevron-forward"
-                                size={14}
-                                color={colors.textMuted}
-                              />
-                            </View>
-                          </TouchableOpacity>
-                        </View>
-                      );
-                    }
-
-                    return (
-                      <TouchableOpacity
-                        key={item.segment}
-                        style={[
-                          styles.subMenuItem,
-                          activeItem === item.segment &&
-                            styles.subMenuItemActive,
-                        ]}
-                        onPress={() => handleItemPress(item.segment)}
-                        activeOpacity={0.6}
-                      >
-                        <View style={styles.subMenuItemLeft}>
-                          <View
-                            style={[
-                              styles.itemIconContainer,
-                              {
-                                backgroundColor: isDark
-                                  ? 'rgba(255,255,255,0.03)'
-                                  : '#F3F4F6',
-                              },
-                            ]}
-                          >
-                            <Icon
-                              name={item.iconName}
-                              size={20}
-                              color={item.iconColor}
-                            />
-                          </View>
-                          <Text
-                            style={[
-                              styles.subMenuText,
-                              {
-                                color:
-                                  activeItem === item.segment
-                                    ? colors.accent
-                                    : colors.textPrimary,
-                              },
-                            ]}
-                          >
-                            {item.title}
-                          </Text>
-                        </View>
-                        <View style={styles.rightContent}>
                           <Icon
-                            name="chevron-forward"
-                            size={14}
-                            color={colors.textMuted}
+                            name={item.iconName}
+                            size={20}
+                            color={item.iconColor}
                           />
                         </View>
-                      </TouchableOpacity>
-                    );
-                  })}
+                        <Text
+                          style={[
+                            styles.subMenuText,
+                            {
+                              color:
+                                activeItem === item.segment
+                                  ? colors.accent
+                                  : colors.textPrimary,
+                            },
+                          ]}
+                        >
+                          {item.title}
+                        </Text>
+                      </View>
+                      <View style={styles.rightContent}>
+                        <Icon
+                          name="chevron-forward"
+                          size={14}
+                          color={colors.textMuted}
+                        />
+                      </View>
+                    </TouchableOpacity>
+                  ))}
                 </View>
               )}
             </View>
@@ -731,6 +590,9 @@ const SidebarWithDriver: React.FC = () => {
   );
 };
 
+// ============================================================
+// STYLES
+// ============================================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -806,40 +668,6 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     fontWeight: '500',
     fontFamily: Platform.OS === 'ios' ? 'System' : 'Roboto',
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    marginBottom: 16,
-    gap: 12,
-  },
-  statCard: {
-    borderRadius: 16,
-    padding: 14,
-    alignItems: 'center',
-    flex: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  statIconBg: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  statNumber: {
-    fontSize: 20,
-    fontWeight: '700',
-    marginBottom: 2,
-  },
-  statLabel: {
-    fontSize: 11,
   },
   section: {
     marginBottom: 16,
@@ -918,9 +746,6 @@ const styles = StyleSheet.create({
   },
   bottomSpacer: {
     height: 90,
-  },
-  driverAvailabilityContainer: {
-    marginBottom: 4,
   },
 });
 

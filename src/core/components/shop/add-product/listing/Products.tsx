@@ -1,4 +1,4 @@
-// File: ProductForm.tsx - FINAL VERSION (UploadProgressModal alag file mein)
+// ProductForm.tsx
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
@@ -20,7 +20,6 @@ import {
   Switch,
 } from 'react-native';
 import { useNavigation, NavigationProp } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { launchImageLibrary } from 'react-native-image-picker';
@@ -28,20 +27,20 @@ import Video from 'react-native-video';
 
 // ==================== IMPORT SEPARATE COMPONENTS ====================
 import { SellerInformation, SellerLocation } from '../SellerInformation';
-import UploadProgressModal from './upload/uploadProgressModal'; // ✅ ALAG FILE SE IMPORT
+import UploadProgressModal from './upload/uploadProgressModal';
+
+// ✅ API slice
+import {
+  calculateProductPricing,
+  getProductCategories,
+  getUploadUrl,
+  createProduct,
+  Category,
+  Subcategory,
+} from '../../../../../api/features/private/productFormPrivateSlice';
+import { ApiError } from '../../../../../core/utils/handler/apiClient';
 
 // ==================== TYPES ====================
-interface Subcategory {
-  name: string;
-  specs: string[];
-  variantOptions: string[];
-}
-
-interface Category {
-  _id: string;
-  category: string;
-  subcategories: Subcategory[];
-}
 
 interface Variant {
   fields: Record<string, string>;
@@ -106,6 +105,7 @@ interface ProductFormData {
 }
 
 // ==================== PRICE PREVIEW COMPONENT ====================
+
 interface PricePreviewProps {
   mrp: number;
   price: number;
@@ -140,24 +140,13 @@ const PricePreview: React.FC<PricePreviewProps> = ({
     setError(null);
 
     try {
-      const response = await fetch(
-        'http://10.172.218.121:2000/api/v0/seller/product/price-calculation',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            mrp: mrp,
-            price: price,
-            category: category,
-            subcategory: subcategory,
-            gstType: gstType,
-          }),
-        },
-      );
-
-      const result = await response.json();
+      const result = await calculateProductPricing({
+        mrp,
+        price,
+        category,
+        subcategory,
+        gstType,
+      });
 
       if (result.success) {
         setPricingData(result.data);
@@ -174,11 +163,10 @@ const PricePreview: React.FC<PricePreviewProps> = ({
           });
         }
       } else {
-        setError(result.message);
+        setError(result.message || 'Failed to calculate pricing');
       }
-    } catch (err) {
-      setError('Failed to calculate pricing');
-      console.error(err);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to calculate pricing');
     } finally {
       setLoading(false);
     }
@@ -316,9 +304,9 @@ const PricePreview: React.FC<PricePreviewProps> = ({
           </Text>
           <Text style={localStyles.pricePreviewTotalValue}>
             ₹
-            {(
-              pricingData.checkoutTotal || pricingData.finalPrice
-            ).toLocaleString('en-IN')}
+            {(pricingData.checkoutTotal || pricingData.finalPrice).toLocaleString(
+              'en-IN',
+            )}
           </Text>
         </View>
       </View>
@@ -327,6 +315,7 @@ const PricePreview: React.FC<PricePreviewProps> = ({
 };
 
 // ==================== TOGGLE ROW COMPONENT ====================
+
 interface ToggleRowProps {
   label: string;
   icon: string;
@@ -374,6 +363,7 @@ const ToggleRow: React.FC<ToggleRowProps> = ({
 };
 
 // ==================== GST TOGGLE COMPONENT ====================
+
 interface GSTToggleProps {
   gstType: 'INCLUSIVE' | 'EXCLUSIVE';
   onGSTTypeChange: (type: 'INCLUSIVE' | 'EXCLUSIVE') => void;
@@ -441,6 +431,7 @@ const GSTToggle: React.FC<GSTToggleProps> = ({ gstType, onGSTTypeChange }) => {
 };
 
 // ==================== WEIGHT UNIT TOGGLE ====================
+
 interface WeightUnitToggleProps {
   weightUnit: 'GRAM' | 'KG';
   onWeightUnitChange: (unit: 'GRAM' | 'KG') => void;
@@ -492,6 +483,7 @@ const WeightUnitToggle: React.FC<WeightUnitToggleProps> = ({
 };
 
 // ==================== DIMENSION UNIT TOGGLE ====================
+
 interface DimensionUnitToggleProps {
   dimensionUnit: 'CM' | 'INCH';
   onDimensionUnitChange: (unit: 'CM' | 'INCH') => void;
@@ -543,12 +535,14 @@ const DimensionUnitToggle: React.FC<DimensionUnitToggleProps> = ({
 };
 
 // ==================== FORMAT PRICE HELPER ====================
+
 const formatPrice = (price: number): string => {
   if (isNaN(price) || price === 0) return '';
   return price.toLocaleString('en-IN');
 };
 
 // ==================== HELPERS ====================
+
 const pickMultipleImages = async (): Promise<{ uri: string }[]> => {
   return new Promise((resolve, reject) => {
     launchImageLibrary(
@@ -588,6 +582,7 @@ const generateVideoThumbnail = async (
 };
 
 // ==================== VIDEO PREVIEW COMPONENT ====================
+
 interface VideoPreviewProps {
   videoUri: string | null;
   onRemove: () => void;
@@ -665,6 +660,7 @@ const VideoPreview: React.FC<VideoPreviewProps> = ({
 };
 
 // ==================== MAIN COMPONENT ====================
+
 export const ProductForm: React.FC = () => {
   const navigation = useNavigation<NavigationProp<any>>();
 
@@ -797,16 +793,12 @@ export const ProductForm: React.FC = () => {
   // ==================== API CALLS ====================
   const fetchCategories = async () => {
     try {
-      const response = await fetch('http://10.172.218.121:2000/api/v0/categories');
-      const data = await response.json();
-      let categoriesData: Category[] = [];
-      if (Array.isArray(data)) categoriesData = data;
-      else if (data.categories && Array.isArray(data.categories))
-        categoriesData = data.categories;
-      else if (data.data && Array.isArray(data.data))
-        categoriesData = data.data;
+      const categoriesData = await getProductCategories();
       setCategories(categoriesData);
     } catch (error) {
+      if (__DEV__) {
+        console.error('fetchCategories error:', error);
+      }
       Alert.alert('Error', 'Failed to load categories');
     }
   };
@@ -931,7 +923,6 @@ export const ProductForm: React.FC = () => {
     }));
   };
 
-  // ✅ FIXED saveVariant function - Deep copy with all values including GST
   const saveVariant = () => {
     const variantOptions = selectedSubcategory?.variantOptions || [];
     const missing = variantOptions.filter(
@@ -986,7 +977,6 @@ export const ProductForm: React.FC = () => {
       }
     });
 
-    // ✅ CRITICAL FIX: Create a DEEP COPY of the variant with ALL values
     const variantToSave: FrontendVariant = {
       fields: { ...currentVariant.fields },
       sku: currentVariant.sku,
@@ -1015,8 +1005,6 @@ export const ProductForm: React.FC = () => {
       gstSource: currentVariant.gstSource,
       gstAmount: currentVariant.gstAmount,
     };
-
-    console.log('💾 Saving variant with GST Type:', variantToSave.gstType);
 
     if (editingVariantIndex !== null) {
       const variants = [...formData.variants];
@@ -1064,6 +1052,9 @@ export const ProductForm: React.FC = () => {
     ]);
   };
 
+  // ============================================================
+  // ✅ UPLOAD FILE (direct PUT — no auth needed)
+  // ============================================================
   const uploadFileDirect = async (
     file: any,
     uploadUrl: string,
@@ -1098,6 +1089,9 @@ export const ProductForm: React.FC = () => {
     });
   };
 
+  // ============================================================
+  // ✅ UPLOAD ALL FILES (via slice for getUploadUrl)
+  // ============================================================
   const uploadAllFiles = async () => {
     try {
       setUploading(true);
@@ -1134,18 +1128,10 @@ export const ProductForm: React.FC = () => {
         const ext = item.type === 'image' ? 'jpg' : 'mp4';
         const fileName = `products/${item.type}_${Date.now()}_${i}.${ext}`;
 
-        const res = await fetch(
-          'http://10.172.218.121:2000/api/v0/upload/get-upload-url',
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              fileName,
-              fileType: item.type === 'image' ? 'image/jpeg' : 'video/mp4',
-            }),
-          },
+        const { uploadUrl, filePath } = await getUploadUrl(
+          fileName,
+          item.type === 'image' ? 'image/jpeg' : 'video/mp4',
         );
-        const { uploadUrl, filePath } = await res.json();
 
         await uploadFileDirect(
           {
@@ -1154,7 +1140,9 @@ export const ProductForm: React.FC = () => {
           },
           uploadUrl,
           percent => {
-            console.log(`Uploading ${fileName}: ${percent.toFixed(0)}%`);
+            if (__DEV__) {
+              console.log(`Uploading ${fileName}: ${percent.toFixed(0)}%`);
+            }
           },
         );
 
@@ -1182,7 +1170,9 @@ export const ProductForm: React.FC = () => {
       if (longUploadTimer.current) clearTimeout(longUploadTimer.current);
       return true;
     } catch (err) {
-      console.error('Upload error:', err);
+      if (__DEV__) {
+        console.error('Upload error:', err);
+      }
       Alert.alert('Upload Error', 'Failed to upload files. Please try again.');
       return false;
     } finally {
@@ -1191,7 +1181,9 @@ export const ProductForm: React.FC = () => {
     }
   };
 
-  // ==================== SUBMIT ====================
+  // ============================================================
+  // ✅ SUBMIT (via slice)
+  // ============================================================
   const handleSubmit = async () => {
     if (!formData.title || !formData.category || !formData.subcategory) {
       return Alert.alert('Error', 'Title, category & subcategory are required');
@@ -1282,33 +1274,22 @@ export const ProductForm: React.FC = () => {
       fulfillmentType: formData.fulfillmentType,
     };
 
-    console.log('📦 Final payload variants:');
-    payload.variants.forEach((v, idx) => {
-      console.log(`  Variant ${idx + 1}: GST Type = ${v.gstType}`);
-    });
-
-    const token = await AsyncStorage.getItem('authToken');
-    const response = await fetch(
-      'http://10.172.218.121:2000/api/v0/seller/forms/categories/products',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-      },
-    );
-
-    const result = await response.json();
-
-    if (response.ok) {
+    try {
+      await createProduct(payload);
       Alert.alert('Success', 'Product created successfully!');
       navigation.goBack();
-    } else {
-      throw new Error(result.message || 'Failed to create product');
+    } catch (err: any) {
+      if (__DEV__) {
+        console.error('Create product error:', err);
+      }
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : err?.message || 'Failed to create product';
+      Alert.alert('Error', message);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   // ==================== RENDER ====================
@@ -2082,7 +2063,6 @@ export const ProductForm: React.FC = () => {
                 <GSTToggle
                   gstType={currentVariant.gstType}
                   onGSTTypeChange={type => {
-                    console.log('🔄 GST Type changing to:', type);
                     setCurrentVariant(prev => ({ ...prev, gstType: type }));
                   }}
                 />
@@ -2265,10 +2245,7 @@ export const ProductForm: React.FC = () => {
                 />
               </View>
 
-              <TouchableOpacity
-                style={localStyles.saveBtn}
-                onPress={saveVariant}
-              >
+              <TouchableOpacity style={localStyles.saveBtn} onPress={saveVariant}>
                 <Icon name="check-circle" size={22} color="#fff" />
                 <Text style={localStyles.saveBtnText}>
                   {editingVariantIndex !== null
@@ -2281,7 +2258,6 @@ export const ProductForm: React.FC = () => {
         </SafeAreaView>
       </Modal>
 
-      {/* UPLOAD PROGRESS MODAL - AB YAHAN SIRF IMPORT HOGA */}
       <UploadProgressModal
         visible={uploading}
         progress={uploadProgress}

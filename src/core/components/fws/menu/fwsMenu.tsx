@@ -9,7 +9,6 @@ import {
   LayoutAnimation,
   Dimensions,
   Image,
-  ActivityIndicator,
   SafeAreaView,
   Platform,
   UIManager,
@@ -17,8 +16,18 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useNavigation, NavigationProp } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import LottieView from 'lottie-react-native';
+
+// ✅ me() — user profile
+import { me } from '../../../../api/features/public/authPublicSlice';
+
+// ✅ getFWSProfile() — FWS profile (NEW SLICE)
+import {
+  getFWSProfile,
+  FWSProfile,
+} from '../../../../api/features/private/fwsProfileSlice';
+
+import { ApiError } from '../../../../core/utils/handler/apiClient';
 
 // Enable LayoutAnimation for Android
 if (
@@ -29,41 +38,26 @@ if (
 }
 
 const { width } = Dimensions.get('window');
-const BASE_URL = 'http://10.172.218.121:1000';
 
-// Define navigation param list for FWS
+// ============================================================
+// TYPES
+// ============================================================
+
 type RootStackParamList = {
-  // FWS Navigation Screens
   ApplyFWS: undefined;
   MyFWS: undefined;
   FWSOrders: undefined;
   FWSReviews: undefined;
   HandoverScanner: undefined;
   VerifyForDispatch: undefined;
-  // Employee Navigation Screens
   CreateEmployee: undefined;
   EmployeeList: undefined;
   EmployeeAttendance: undefined;
   EmployeeLeave: undefined;
   EmployeePayroll: undefined;
+  FWSScannedOrders: undefined;
   [key: string]: undefined | object;
 };
-
-// Types for FWS (Freight & Warehouse Services)
-interface FWSStats {
-  totalOrders: number;
-  completed: number;
-  inProgress: number;
-  pending: number;
-}
-
-interface FWSProfile {
-  id: string;
-  name: string;
-  image: string;
-  isActive: boolean;
-  stats: FWSStats;
-}
 
 interface MenuItem {
   segment: string;
@@ -80,138 +74,82 @@ interface MenuSection {
   children: MenuItem[];
 }
 
-// Helper function to get image URL
+// ============================================================
+// 🔧 IMAGE HELPER
+// ============================================================
+
 const getImageUrl = (image?: string): string => {
-  if (!image) return 'https://via.placeholder.com/150';
-  if (image.startsWith('http')) return image;
-  return 'https://via.placeholder.com/150';
+  if (!image) return '';
+  if (image.startsWith('http://') || image.startsWith('https://')) {
+    return image;
+  }
+  return '';
 };
 
-// FWS API Service
-const fwsApi = {
-  getFWSProfile: async (token: string): Promise<FWSProfile> => {
-    try {
-      const response = await fetch(`${BASE_URL}/api/v0/fws`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      });
+// ============================================================
+// 📋 STATIC MENU
+// ============================================================
 
-      if (response.ok) {
-        const data = await response.json();
-        return {
-          id: data._id || 'fws_123',
-          name: data.name || 'FWS Logistics',
-          image: getImageUrl(data.image),
-          isActive: data.isActive || true,
-          stats: {
-            totalOrders: data.stats?.totalOrders || 89,
-            completed: data.stats?.completed || 45,
-            inProgress: data.stats?.inProgress || 28,
-            pending: data.stats?.pending || 16,
-          },
-        };
-      }
-    } catch (error) {
-      console.error('Error fetching FWS profile:', error);
-    }
-
-    // Return mock data if API fails
-    return {
-      id: 'fws_123',
-      name: 'FWS Logistics',
-      image: 'https://via.placeholder.com/150',
-      isActive: true,
-      stats: {
-        totalOrders: 89,
-        completed: 45,
-        inProgress: 28,
-        pending: 16,
-      },
-    };
-  },
-
-  getFWSMenu: async (): Promise<MenuSection[]> => {
-    return [
+const getFWSMenu = (): MenuSection[] => [
+  {
+    segment: 'fws',
+    title: 'FWS Management',
+    iconName: 'business-outline',
+    iconColor: '#10B981',
+    children: [
       {
-        segment: 'fws',
-        title: 'FWS Management',
-        iconName: 'business-outline',
+        segment: 'apply-fws',
+        title: 'Apply for FWS',
+        iconName: 'person-add-outline',
         iconColor: '#10B981',
-        children: [
-          {
-            segment: 'apply-fws',
-            title: 'Apply for FWS',
-            iconName: 'person-add-outline',
-            iconColor: '#10B981',
-          },
-          {
-            segment: 'fws-scanned-orders',
-            title: 'Scanned Orders',
-            iconName: 'cart-outline',
-            iconColor: '#EF4444',
-          },
-          // ✅ Handover Scanner
-          {
-            segment: 'handover-scanner',
-            title: 'Handover Scanner',
-            iconName: 'qr-code-outline',
-            iconColor: '#6366F1',
-          },
-          // ✅ Verify QR & Mark Ready for Dispatch
-          {
-            segment: 'verifyqr-andmarkready-fordispatch',
-            title: 'Verify for Dispatch',
-            iconName: 'checkmark-done-outline',
-            iconColor: '#10B981',
-          },
-          // ✅ Employee Management
-          {
-            segment: 'create-employee',
-            title: 'Create Employee',
-            iconName: 'person-add-outline',
-            iconColor: '#8B5CF6',
-          },
-          {
-            segment: 'employee-list',
-            title: 'All Employees',
-            iconName: 'people-outline',
-            iconColor: '#8B5CF6',
-          },
-          // Commented out features - can be enabled later
-          // {
-          //   segment: 'employee-attendance',
-          //   title: 'Attendance',
-          //   iconName: 'calendar-outline',
-          //   iconColor: '#F59E0B',
-          // },
-          // {
-          //   segment: 'employee-leave',
-          //   title: 'Leave Management',
-          //   iconName: 'time-outline',
-          //   iconColor: '#EF4444',
-          // },
-          // {
-          //   segment: 'employee-payroll',
-          //   title: 'Payroll',
-          //   iconName: 'cash-outline',
-          //   iconColor: '#10B981',
-          // },
-        ],
       },
-    ];
+      {
+        segment: 'fws-scanned-orders',
+        title: 'Scanned Orders',
+        iconName: 'cart-outline',
+        iconColor: '#EF4444',
+      },
+      {
+        segment: 'handover-scanner',
+        title: 'Handover Scanner',
+        iconName: 'qr-code-outline',
+        iconColor: '#6366F1',
+      },
+      {
+        segment: 'verifyqr-andmarkready-fordispatch',
+        title: 'Verify for Dispatch',
+        iconName: 'checkmark-done-outline',
+        iconColor: '#10B981',
+      },
+      {
+        segment: 'create-employee',
+        title: 'Create Employee',
+        iconName: 'person-add-outline',
+        iconColor: '#8B5CF6',
+      },
+      {
+        segment: 'employee-list',
+        title: 'All Employees',
+        iconName: 'people-outline',
+        iconColor: '#8B5CF6',
+      },
+    ],
   },
-};
+];
 
-// Custom hook for theme
+// ============================================================
+// 🎨 THEME HOOK
+// ============================================================
+
 const useTheme = () => {
-  const [isDark, setIsDark] = useState(false);
+  const [isDark] = useState(false);
   const resolvedTheme = isDark ? 'dark' : 'light';
-
   return { isDark, resolvedTheme };
 };
+
+// ============================================================
+// 🧩 COMPONENT
+// ============================================================
 
 interface FWSMenuProps {
   activeTab?: string;
@@ -222,27 +160,28 @@ const FWSMenu: React.FC<FWSMenuProps> = ({
   activeTab = 'menu',
   setActiveTab,
 }) => {
-  const { isDark, resolvedTheme } = useTheme();
+  const { isDark } = useTheme();
   const navigation = useNavigation<NavigationProp<RootStackParamList>>();
+
   const [expandedSections, setExpandedSections] = useState<
     Record<string, boolean>
   >({
     fws: true,
   });
   const [activeItem, setActiveItem] = useState<string>('');
-  const [fwsProfile, setFwsProfile] = useState<FWSProfile | null>(null);
   const [menuData, setMenuData] = useState<MenuSection[]>([]);
+  const [fwsProfile, setFwsProfile] = useState<FWSProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
+
   const [profileData, setProfileData] = useState({
     _id: '',
     name: 'User',
     email: '',
     phone: '',
-    image: 'https://via.placeholder.com/150',
+    image: '',
   });
 
-  // Colors - Premium Modern Minimalist Theme
   const colors = {
     background: isDark ? '#0F0F12' : '#F8F9FC',
     card: isDark ? '#16161D' : '#FFFFFF',
@@ -260,78 +199,116 @@ const FWSMenu: React.FC<FWSMenuProps> = ({
     info: '#3B82F6',
   };
 
-  // Fetch profile data
+  // ============================================================
+  // ✅ FETCH USER PROFILE — me()
+  // ============================================================
   useEffect(() => {
+    let cancelled = false;
+
     const fetchProfile = async () => {
       try {
-        const token = await AsyncStorage.getItem('authToken');
-        if (!token) return;
+        const response = await me();
 
-        const response = await fetch(`${BASE_URL}/api/v0/profile/me`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        if (cancelled) return;
 
-        const data = await response.json();
+        if (response?.success && response?.user) {
+          const user = response.user as {
+            id?: string;
+            displayName?: string;
+            firstName?: string;
+            lastName?: string;
+            username?: string;
+            email?: string;
+            phone?: string;
+            profilePhoto?: string;
+          };
 
-        if (response.ok) {
-          const normalized = getImageUrl(data?.image);
+          const displayName =
+            user.displayName ||
+            [user.firstName, user.lastName]
+              .filter(Boolean)
+              .join(' ')
+              .trim() ||
+            user.username ||
+            'User';
+
           setProfileData({
-            _id: data?._id ?? '',
-            name: data?.name ?? 'User',
-            email: data?.email ?? 'user@example.com',
-            phone: data?.phone ?? '+91 9876543210',
-            image: normalized,
+            _id: user.id ?? '',
+            name: displayName,
+            email: user.email ?? '',
+            phone: user.phone ?? '',
+            image: getImageUrl(user.profilePhoto),
           });
-        } else {
-          console.error(
-            'Error fetching profile:',
-            data?.message ?? 'Unknown error',
-          );
         }
       } catch (error) {
-        console.error('Error fetching profile:', error);
+        if (cancelled) return;
+
+        if (__DEV__) {
+          console.warn('[FWSMenu.fetchProfile]', error);
+        }
+
+        if (error instanceof ApiError && error.status === 401) {
+          // apiClient ne tokens clear kar diye
+        }
       }
     };
 
     fetchProfile();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Load data from API
+  // ============================================================
+  // ✅ FETCH FWS PROFILE — getFWSProfile() (NEW)
+  // ============================================================
   useEffect(() => {
-    loadFWSData();
+    let cancelled = false;
+
+    const fetchFWSProfile = async () => {
+      try {
+        const fwsData = await getFWSProfile();
+
+        if (cancelled) return;
+
+        setFwsProfile(fwsData);
+      } catch (error) {
+        if (cancelled) return;
+
+        if (__DEV__) {
+          console.warn('[FWSMenu.fetchFWSProfile]', error);
+        }
+
+        // 404 → FWS not registered (normal)
+        // 401 → apiClient ne tokens clear kar diye
+        // Network → fwsProfile null rahega (graceful)
+      }
+    };
+
+    fetchFWSProfile();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const loadFWSData = async () => {
-    try {
-      setLoading(true);
-      const token = await AsyncStorage.getItem('authToken');
+  // ============================================================
+  // ✅ LOAD MENU (static, no API)
+  // ============================================================
+  useEffect(() => {
+    setMenuData(getFWSMenu());
+    setLoading(false);
+  }, []);
 
-      // Load FWS data
-      const [fwsProfileData, fwsMenuData] = await Promise.all([
-        fwsApi.getFWSProfile(token || ''),
-        fwsApi.getFWSMenu(),
-      ]);
-
-      setFwsProfile(fwsProfileData);
-      setMenuData(fwsMenuData);
-    } catch (error) {
-      console.error('Error loading FWS data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Navigation handler
+  // ============================================================
+  // NAVIGATION HANDLERS
+  // ============================================================
   const handleItemPress = (segment: string) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setActiveItem(segment);
 
     switch (segment) {
-      // FWS navigation
       case 'apply-fws':
         navigation.navigate('ApplyFWS');
         break;
@@ -347,8 +324,6 @@ const FWSMenu: React.FC<FWSMenuProps> = ({
       case 'verifyqr-andmarkready-fordispatch':
         navigation.navigate('VerifyForDispatch');
         break;
-
-      // Employee navigation
       case 'create-employee':
         navigation.navigate('CreateEmployee');
         break;
@@ -364,7 +339,6 @@ const FWSMenu: React.FC<FWSMenuProps> = ({
       case 'employee-payroll':
         navigation.navigate('EmployeePayroll');
         break;
-
       default:
         console.log('Navigate to:', segment);
     }
@@ -378,51 +352,9 @@ const FWSMenu: React.FC<FWSMenuProps> = ({
     }));
   };
 
-  // FWS Stats Cards
-  // const renderFWSStats = () => {
-  //   if (!fwsProfile) return null;
-
-  //   return (
-  //     <View style={styles.statsContainer}>
-  //       <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-  //         <View style={[styles.statIconBg, { backgroundColor: '#EDE9FE' }]}>
-  //           <Icon name="cube-outline" size={18} color="#8B5CF6" />
-  //         </View>
-  //         <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
-  //           {fwsProfile.stats.totalOrders}
-  //         </Text>
-  //         <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-  //           Total Orders
-  //         </Text>
-  //       </View>
-
-  //       <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-  //         <View style={[styles.statIconBg, { backgroundColor: '#D1FAE5' }]}>
-  //           <Icon name="checkmark-circle" size={18} color="#10B981" />
-  //         </View>
-  //         <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
-  //           {fwsProfile.stats.completed}
-  //         </Text>
-  //         <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-  //           Completed
-  //         </Text>
-  //       </View>
-
-  //       <View style={[styles.statCard, { backgroundColor: colors.card }]}>
-  //         <View style={[styles.statIconBg, { backgroundColor: '#FEF3C7' }]}>
-  //           <Icon name="time-outline" size={18} color="#F59E0B" />
-  //         </View>
-  //         <Text style={[styles.statNumber, { color: colors.textPrimary }]}>
-  //           {fwsProfile.stats.inProgress}
-  //         </Text>
-  //         <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-  //           In Progress
-  //         </Text>
-  //       </View>
-  //     </View>
-  //   );
-  // };
-
+  // ============================================================
+  // LOADING
+  // ============================================================
   if (loading) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
@@ -451,6 +383,9 @@ const FWSMenu: React.FC<FWSMenuProps> = ({
     );
   }
 
+  // ============================================================
+  // MAIN RENDER
+  // ============================================================
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <StatusBar
@@ -464,14 +399,14 @@ const FWSMenu: React.FC<FWSMenuProps> = ({
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
         >
-          {/* User Profile Section */}
+          {/* ============ USER PROFILE CARD ============ */}
           <View
             style={[
               styles.userProfileContainer,
               { backgroundColor: colors.card },
             ]}
           >
-            {imageError ? (
+            {imageError || !profileData.image ? (
               <View
                 style={[
                   styles.userLottieContainer,
@@ -500,43 +435,134 @@ const FWSMenu: React.FC<FWSMenuProps> = ({
               <Text style={[styles.userName, { color: colors.textPrimary }]}>
                 {profileData.name}
               </Text>
-              <View style={styles.userDetailRow}>
-                <Icon
-                  name="mail-outline"
-                  size={14}
-                  color={colors.textSecondary}
-                />
-                <Text
-                  style={[
-                    styles.userDetailText,
-                    { color: colors.textSecondary },
-                  ]}
-                >
-                  {profileData.email}
-                </Text>
-              </View>
-              <View style={styles.userDetailRow}>
-                <Icon
-                  name="call-outline"
-                  size={14}
-                  color={colors.textSecondary}
-                />
-                <Text
-                  style={[
-                    styles.userDetailText,
-                    { color: colors.textSecondary },
-                  ]}
-                >
-                  {profileData.phone}
-                </Text>
-              </View>
+
+              {profileData.email ? (
+                <View style={styles.userDetailRow}>
+                  <Icon
+                    name="mail-outline"
+                    size={14}
+                    color={colors.textSecondary}
+                  />
+                  <Text
+                    style={[
+                      styles.userDetailText,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
+                    {profileData.email}
+                  </Text>
+                </View>
+              ) : null}
+
+              {profileData.phone ? (
+                <View style={styles.userDetailRow}>
+                  <Icon
+                    name="call-outline"
+                    size={14}
+                    color={colors.textSecondary}
+                  />
+                  <Text
+                    style={[
+                      styles.userDetailText,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
+                    {profileData.phone}
+                  </Text>
+                </View>
+              ) : null}
+
+              {/* ✅ FWS Profile Info (if available) */}
+              {fwsProfile && fwsProfile.name ? (
+                <View style={styles.userDetailRow}>
+                  <Icon
+                    name="business-outline"
+                    size={14}
+                    color={colors.textSecondary}
+                  />
+                  <Text
+                    style={[
+                      styles.userDetailText,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
+                    {fwsProfile.name}
+                  </Text>
+                </View>
+              ) : null}
             </View>
           </View>
 
-          {/* FWS Stats Cards */}
-          {/* {renderFWSStats()} */}
+          {/* ============ FWS STATS CARDS (if available) ============ */}
+          {fwsProfile && fwsProfile.stats.totalOrders > 0 ? (
+            <View style={styles.statsContainer}>
+              <View
+                style={[styles.statCard, { backgroundColor: colors.card }]}
+              >
+                <View
+                  style={[styles.statIconBg, { backgroundColor: '#EDE9FE' }]}
+                >
+                  <Icon name="cube-outline" size={18} color="#8B5CF6" />
+                </View>
+                <Text
+                  style={[styles.statNumber, { color: colors.textPrimary }]}
+                >
+                  {fwsProfile.stats.totalOrders}
+                </Text>
+                <Text
+                  style={[styles.statLabel, { color: colors.textSecondary }]}
+                >
+                  Total Orders
+                </Text>
+              </View>
 
-          {/* FWS Menu Sections */}
+              <View
+                style={[styles.statCard, { backgroundColor: colors.card }]}
+              >
+                <View
+                  style={[styles.statIconBg, { backgroundColor: '#D1FAE5' }]}
+                >
+                  <Icon
+                    name="checkmark-circle"
+                    size={18}
+                    color="#10B981"
+                  />
+                </View>
+                <Text
+                  style={[styles.statNumber, { color: colors.textPrimary }]}
+                >
+                  {fwsProfile.stats.completed}
+                </Text>
+                <Text
+                  style={[styles.statLabel, { color: colors.textSecondary }]}
+                >
+                  Completed
+                </Text>
+              </View>
+
+              <View
+                style={[styles.statCard, { backgroundColor: colors.card }]}
+              >
+                <View
+                  style={[styles.statIconBg, { backgroundColor: '#FEF3C7' }]}
+                >
+                  <Icon name="time-outline" size={18} color="#F59E0B" />
+                </View>
+                <Text
+                  style={[styles.statNumber, { color: colors.textPrimary }]}
+                >
+                  {fwsProfile.stats.inProgress}
+                </Text>
+                <Text
+                  style={[styles.statLabel, { color: colors.textSecondary }]}
+                >
+                  In Progress
+                </Text>
+              </View>
+            </View>
+          ) : null}
+
+          {/* ============ MENU ============ */}
           {menuData.map(section => (
             <View key={section.segment} style={styles.section}>
               <TouchableOpacity
@@ -598,7 +624,8 @@ const FWSMenu: React.FC<FWSMenuProps> = ({
                       key={item.segment}
                       style={[
                         styles.subMenuItem,
-                        activeItem === item.segment && styles.subMenuItemActive,
+                        activeItem === item.segment &&
+                          styles.subMenuItemActive,
                       ]}
                       onPress={() => handleItemPress(item.segment)}
                       activeOpacity={0.6}
@@ -648,7 +675,6 @@ const FWSMenu: React.FC<FWSMenuProps> = ({
             </View>
           ))}
 
-          {/* Extra space for bottom */}
           <View style={styles.bottomSpacer} />
         </ScrollView>
       </SafeAreaView>
@@ -656,6 +682,9 @@ const FWSMenu: React.FC<FWSMenuProps> = ({
   );
 };
 
+// ============================================================
+// STYLES
+// ============================================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
