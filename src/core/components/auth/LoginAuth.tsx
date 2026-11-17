@@ -89,7 +89,8 @@ export default function LoginScreen() {
   const [isAnimating, setIsAnimating] = useState(false);
 
   const otp = otpArray.join('');
-  const primaryColor = '#5EE817';
+  // 🔵 Blue theme (replaces previous green)
+  const primaryColor = '#3B82F6';
   const errorColor = '#FF4D4D';
 
   // ─── OTP expiry timer (Single timer based on backend expiry) ─────────────
@@ -488,7 +489,8 @@ export default function LoginScreen() {
   const renderSubtitle = () => {
     switch (step) {
       case 'login':
-        return 'Log in to your TizzyGo account';
+        // 🔵 TizzyGo → TizzyOS
+        return 'Log in to your TizzyOS account';
       case 'login_otp':
         return maskedPhone
           ? `Enter the OTP sent to ${maskedPhone}`
@@ -631,7 +633,7 @@ export default function LoginScreen() {
           activeOpacity={0.7}
         >
           {isResending ? (
-            <ActivityIndicator size="small" color="#5EE817" />
+            <ActivityIndicator size="small" color={primaryColor} />
           ) : (
             <Text
               style={[
@@ -651,8 +653,9 @@ export default function LoginScreen() {
     <View style={styles.mainContainer}>
       <StatusBar barStyle="dark-content" />
 
+      {/* 🔵 Light blue gradient (was light green) */}
       <LinearGradient
-        colors={['#F2FCE4', '#FFFFFF']}
+        colors={['#EFF6FF', '#FFFFFF']}
         style={styles.backgroundGradient}
       />
 
@@ -923,7 +926,7 @@ export default function LoginScreen() {
               activeOpacity={0.8}
             >
               {isLoading || isAnimating ? (
-                <ActivityIndicator color="#000" />
+                <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <Text style={styles.primaryButtonText}>
                   {primaryButtonLabel()}
@@ -952,7 +955,8 @@ export default function LoginScreen() {
                   style={styles.brandLogo}
                   resizeMode="contain"
                 />
-                <Text style={styles.brandName}>TizzyGo</Text>
+                {/* 🔵 Brand name changed: TizzyGo → TizzyOS */}
+                <Text style={styles.brandName}>TizzyOS</Text>
               </View>
               <View style={styles.builtWithRow}>
                 <Image
@@ -1061,9 +1065,10 @@ const styles = StyleSheet.create({
     marginTop: 4,
     paddingVertical: 4,
   },
+  // 🔵 Forgot link blue (was green)
   forgotLinkText: {
     fontSize: 14,
-    color: '#5EE817',
+    color: '#3B82F6',
     fontWeight: '700',
   },
 
@@ -1073,14 +1078,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 20,
-    shadowColor: '#5EE817',
+    // 🔵 Blue shadow (was green)
+    shadowColor: '#3B82F6',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.3,
     shadowRadius: 12,
     elevation: 6,
   },
   primaryButtonText: {
-    color: '#000000',
+    color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '800',
     letterSpacing: 0.5,
@@ -1095,8 +1101,9 @@ const styles = StyleSheet.create({
     color: '#777777',
     fontSize: 14,
   },
+  // 🔵 Sign Up link blue (was green)
   footerLink: {
-    color: '#5EE817',
+    color: '#3B82F6',
     fontSize: 14,
     fontWeight: '700',
   },
@@ -1149,12 +1156,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  // 🔵 OTP focus blue
   otpBoxFocused: {
-    borderColor: '#5EE817',
+    borderColor: '#3B82F6',
     backgroundColor: '#FFFFFF',
   },
+  // 🔵 OTP filled blue
   otpBoxFilled: {
-    borderColor: '#5EE817',
+    borderColor: '#3B82F6',
   },
   otpBoxError: {
     borderColor: '#FF4D4D',
@@ -1191,9 +1200,10 @@ const styles = StyleSheet.create({
   resendButtonDisabled: {
     opacity: 0.55,
   },
+  // 🔵 Resend text blue (was green)
   resendButtonText: {
     fontSize: 14,
-    color: '#5EE817',
+    color: '#3B82F6',
     fontWeight: '700',
   },
   resendButtonTextDisabled: {

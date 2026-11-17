@@ -31,7 +31,6 @@ import SetupWallet from '../screens/shop/PayoutPortalSetupScreen';
 // import SellerReviewsScreen from "../screens/shop/SellerReviewsScreen";
 
 // Shippings Imports*
-import ShipperScreen from '../screens/shipping/menuScreen';
 import ApplyShippingScreen from '../screens/shipping/applyShippingScreen';
 import RegistrationSuccess from '../screens/shipping/registrationSuccessScreen';
 // import AddShipmentScreen from '../screens/shipping/AddShipmentScreen';
@@ -52,7 +51,6 @@ import EmployeeList from '../screens/fws/employeeList';
 import EmployeeDetail from '../screens/fws/employeeDetail';
 import HandoverScanner from '../screens/fws/handoverScanner/scanner';
 import VerifyForDispatch from '../screens/fws/verifyForDispatch/verifyForDispatch';
-import FWSMenuScreen from '../screens/fws/menu/fwsMenu';
 import FWSScannedOrders from '../screens/fws/scannedOrders/scannedOrders';
 // import EmployeeAttendance from '../screens/employee/EmployeeAttendance';
 // import EmployeeLeave from '../screens/employee/EmployeeLeave';
@@ -60,7 +58,6 @@ import FWSScannedOrders from '../screens/fws/scannedOrders/scannedOrders';
 // import EmployeeManagement from '../screens/employee/EmployeeManagement';
 
 // CabDriver Imports*
-import CabDriverScreen from '../screens/cab/menuScreen';
 import DriverRegistrationScreen from '../screens/cab/driver/driverRegistration';
 import DriverStatusScreen from '../screens/cab/driver/driverStatus';
 import DriverAvailabilityScreen from '../screens/cab/driverAvailableStatus/driverAvailability';
@@ -145,7 +142,6 @@ const AppNavigator = forwardRef<
         <Stack.Screen name="SellerOrders" component={SellerOrdersScreen} />
 
         {/* Commented Shipping Screens - Add when needed */}
-        <Stack.Screen name="Shipper" component={ShipperScreen} />
         <Stack.Screen name="ApplyShipping" component={ApplyShippingScreen} />
         <Stack.Screen
           name="RegistrationSuccess"
@@ -168,7 +164,6 @@ const AppNavigator = forwardRef<
         <Stack.Screen name="EmployeeDetail" component={EmployeeDetail} />
         <Stack.Screen name="HandoverScanner" component={HandoverScanner} />
         <Stack.Screen name="VerifyForDispatch" component={VerifyForDispatch} />
-        <Stack.Screen name="FWS" component={FWSMenuScreen} />
         <Stack.Screen name="FWSScannedOrders" component={FWSScannedOrders} />
         {/* <Stack.Screen name="EmployeeAttendance" component={EmployeeAttendance} />
           <Stack.Screen name="EmployeeLeave" component={EmployeeLeave} />
@@ -176,7 +171,6 @@ const AppNavigator = forwardRef<
           <Stack.Screen name="EmployeeManagement" component={EmployeeManagement} /> */}
 
         {/* CabDriver Screens - Add when needed */}
-        <Stack.Screen name="CabDriver" component={CabDriverScreen} />
         <Stack.Screen
           name="DriverRegistration"
           component={DriverRegistrationScreen}

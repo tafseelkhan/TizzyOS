@@ -1,6 +1,7 @@
-import React from "react";
-import SignupScreen from "../../core/components/auth/signupAuth";
+import React from 'react';
+// ✅ Correct
+import SignupScreen from '../../core/components/auth/SignupAuth';
 
 export default function SignupForm() {
-    return <SignupScreen />;
+  return <SignupScreen />;
 }

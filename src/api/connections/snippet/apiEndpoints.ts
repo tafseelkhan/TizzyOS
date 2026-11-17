@@ -16,9 +16,11 @@ export const API_ENDPOINTS = {
   RESEND_OTP: '/api/v0/auth/resend-otp',
   REFRESH: '/api/v0/auth/refresh',
   LOGOUT: '/api/v0/auth/logout',
+  UPDATE_APP_ROLE: '/api/v0/auth/update-app-role',   // ← NEW
 
-  // ✅ NEW — User theme
-  USER_THEME: '/api/v0/user/theme',
+  THEME_COLOR: '/api/v0/auth/theme-color',                // GET
+  UPDATE_THEME_COLOR: '/api/v0/auth/update-theme-color',  // PUT
+
   GET_SELLER_PRODUCTS: '/api/v0/seller/forms/categories/user',
   DELETE_SELLER_PRODUCT: '/api/v0/delete/product',
 
@@ -35,15 +37,6 @@ export const API_ENDPOINTS = {
     '/api/v0/delivery/tracking/shipping/seller/assign/auto-manual',
   SELLER_DELIVER_TO_FWS:
     '/api/v0/delivery/tracking/shipping/seller/deliver-to-fws',
-
-  // ✅ NEW — Profile management (Quton Connect)
-  UPDATE_BASIC_PROFILE: '/api/v0/auth/profile',
-  UPDATE_APP_ROLE: '/api/v0/auth/profile/app-role',
-  REQUEST_RECOVERY_CONNECT_UPDATE: '/api/v0/auth/profile/recovery-connect',
-  VERIFY_RECOVERY_CONNECT_UPDATE:
-    '/api/v0/auth/profile/recovery-connect/verify-otp',
-  REQUEST_PHONE_CHANGE_OTP: '/api/v0/auth/profile/change-phone/request-otp',
-  VERIFY_PHONE_CHANGE_OTP: '/api/v0/auth/profile/change-phone/verify-otp',
 
   // Account switching endpoints
   SWITCH_ACCOUNT: '/api/v0/auth/switch-account',

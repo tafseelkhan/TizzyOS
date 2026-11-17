@@ -1,4 +1,4 @@
-import { TIZZYGO_API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
+import { TIZZYOS_API_BASE_URL } from '../../connections/snippet/apiBaseUrl';
 import { API_ENDPOINTS } from '../../connections/snippet/apiEndpoints';
 import {
   apiRequest,
@@ -60,6 +60,11 @@ export interface ConnectResendOtpPayload {
   verificationId: string;
 }
 
+export interface ConnectUpdateAppRolePayload {
+  app: string;          // must be "TIZZYOS"
+  roles: string[];      // ["SELLER", "FWS", "SHIPPING", ...]
+}
+
 // ============================================================
 // RESPONSE TYPES
 // ============================================================
@@ -118,6 +123,15 @@ export interface ConnectLogoutResponse {
   message: string;
 }
 
+export interface ConnectUpdateAppRoleResponse {
+  success?: boolean;
+  message?: string;
+  apps?: ConnectApp[];
+  activeApp?: string;
+  activeRoles?: string[];
+  [key: string]: unknown;
+}
+
 // ============================================================
 // TOKEN HELPERS
 // ============================================================
@@ -145,7 +159,7 @@ export const signup = async (
   payload: ConnectSignupPayload,
 ): Promise<ConnectAuthResponse> => {
   return apiRequest<ConnectAuthResponse>(
-    `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.SIGNUP}`,
+    `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.SIGNUP}`,
     {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -159,7 +173,7 @@ export const verifyPhone = async (
   payload: ConnectVerifyPhonePayload,
 ): Promise<ConnectAuthResponse> => {
   const data = await apiRequest<ConnectAuthResponse>(
-    `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.VERIFY_PHONE}`,
+    `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.VERIFY_PHONE}`,
     {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -184,7 +198,7 @@ export const login = async (
   payload: ConnectLoginPayload,
 ): Promise<ConnectAuthResponse> => {
   return apiRequest<ConnectAuthResponse>(
-    `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.LOGIN}`,
+    `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.LOGIN}`,
     {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -201,7 +215,7 @@ export const verifyLoginOtp = async (
   payload: ConnectVerifyLoginOtpPayload,
 ): Promise<ConnectAuthResponse> => {
   const data = await apiRequest<ConnectAuthResponse>(
-    `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.LOGIN_VERIFY_OTP}`,
+    `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.LOGIN_VERIFY_OTP}`,
     {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -225,7 +239,7 @@ export const requestForgotPassword = async (
   payload: ConnectForgotPasswordPayload,
 ): Promise<ConnectAuthResponse> => {
   return apiRequest<ConnectAuthResponse>(
-    `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.FORGOT_PASSWORD}`,
+    `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.FORGOT_PASSWORD}`,
     {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -242,7 +256,7 @@ export const verifyForgotPasswordOtp = async (
   payload: ConnectVerifyForgotPasswordOtpPayload,
 ): Promise<ConnectAuthResponse> => {
   return apiRequest<ConnectAuthResponse>(
-    `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.FORGOT_PASSWORD_VERIFY_OTP}`,
+    `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.FORGOT_PASSWORD_VERIFY_OTP}`,
     {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -260,7 +274,7 @@ export const resetPassword = async (
   payload: ConnectResetPasswordPayload,
 ): Promise<ConnectAuthResponse> => {
   return apiRequest<ConnectAuthResponse>(
-    `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.FORGOT_PASSWORD_RESET}`,
+    `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.FORGOT_PASSWORD_RESET}`,
     {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -282,7 +296,7 @@ export const resendOtp = async (
   payload: ConnectResendOtpPayload,
 ): Promise<ConnectAuthResponse> => {
   return apiRequest<ConnectAuthResponse>(
-    `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.RESEND_OTP}`,
+    `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.RESEND_OTP}`,
     {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -298,7 +312,7 @@ export const resendOtp = async (
 
 export const me = async (): Promise<ConnectMeResponse> => {
   return apiRequest<ConnectMeResponse>(
-    `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.ME}`,
+    `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.ME}`,
     {
       method: 'GET',
     },
@@ -314,7 +328,7 @@ export const refresh = async (): Promise<ConnectRefreshResponse> => {
 
   // Direct fetch avoids recursively triggering apiClient refresh.
   const response = await fetch(
-    `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.REFRESH}`,
+    `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.REFRESH}`,
     {
       method: 'POST',
       headers: {
@@ -354,7 +368,7 @@ export const logout = async (): Promise<ConnectLogoutResponse> => {
     const sessionToken = await getSessionToken();
 
     return await apiRequest<ConnectLogoutResponse>(
-      `${TIZZYGO_API_BASE_URL}${API_ENDPOINTS.LOGOUT}`,
+      `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.LOGOUT}`,
       {
         method: 'POST',
         headers: sessionToken
@@ -365,4 +379,41 @@ export const logout = async (): Promise<ConnectLogoutResponse> => {
   } finally {
     await clearLocalAuth();
   }
+};
+
+// ============================================================
+// PROFILE API – UPDATE APP ROLES (TIZZYOS ONLY)
+// ============================================================
+
+/**
+ * Update the authenticated user's TIZZYOS app roles.
+ *
+ * Backend rules (enforced server-side):
+ * - Only `app: "TIZZYOS"` is accepted.
+ * - `roles` must be a non-empty array of strings.
+ * - Allowed values: SELLER, FWS, SHIPPING, CAB, RENT
+ * - Duplicates are rejected.
+ *
+ * Requires an authenticated session (access token sent by apiClient).
+ * Uses the same refresh-on-401 behaviour as other protected endpoints.
+ */
+export const updateAppRole = async (
+  payload: ConnectUpdateAppRolePayload,
+): Promise<ConnectUpdateAppRoleResponse> => {
+  if (
+    !payload ||
+    typeof payload.app !== 'string' ||
+    !Array.isArray(payload.roles) ||
+    payload.roles.length === 0
+  ) {
+    throw new Error('App and at least one role are required.');
+  }
+
+  return apiRequest<ConnectUpdateAppRoleResponse>(
+    `${TIZZYOS_API_BASE_URL}${API_ENDPOINTS.UPDATE_APP_ROLE}`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  );
 };

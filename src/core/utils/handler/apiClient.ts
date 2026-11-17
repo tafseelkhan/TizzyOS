@@ -6,7 +6,7 @@ import {
 } from '../../../api/connections/token/tokenSlice';
 
 import { API_ENDPOINTS } from '../../../api/connections/snippet/apiEndpoints';
-import { TIZZYGO_API_BASE_URL } from '../../../api/connections/snippet/apiBaseUrl';
+import { TIZZYOS_API_BASE_URL } from '../../../api/connections/snippet/apiBaseUrl';
 
 // ============================================================
 // API REQUEST OPTIONS
@@ -60,11 +60,11 @@ const buildUrl = (path: string): string => {
     return path;
   }
 
-  if (!TIZZYGO_API_BASE_URL) {
-    throw new Error('TIZZYGO_API_BASE_URL is not configured.');
+  if (!TIZZYOS_API_BASE_URL) {
+    throw new Error('TIZZYOS_API_BASE_URL is not configured.');
   }
 
-  return `${TIZZYGO_API_BASE_URL.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`;
+  return `${TIZZYOS_API_BASE_URL.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`;
 };
 
 // ============================================================

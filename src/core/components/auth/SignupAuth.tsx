@@ -97,7 +97,9 @@ export default function SignupScreen() {
 
   const otp = otpArray.join('');
 
-  const primaryColor = '#5EE817';
+  // 🔵 Blue theme (replaces previous green)
+  const primaryColor = '#3B82F6';
+  const primaryDark = '#2563EB';
   const errorColor = '#FF4D4D';
 
   // --- OTP TIMER EFFECT ---
@@ -365,8 +367,9 @@ export default function SignupScreen() {
   return (
     <View style={styles.mainContainer}>
       <StatusBar barStyle="dark-content" />
+      {/* 🔵 Light blue gradient (was light green) */}
       <LinearGradient
-        colors={['#F2FCE4', '#FFFFFF']}
+        colors={['#EFF6FF', '#FFFFFF']}
         style={styles.backgroundGradient}
       />
       <SafeAreaView style={styles.safeArea}>
@@ -760,7 +763,7 @@ export default function SignupScreen() {
                     activeOpacity={0.7}
                   >
                     {isResending ? (
-                      <ActivityIndicator size="small" color="#5EE817" />
+                      <ActivityIndicator size="small" color={primaryColor} />
                     ) : (
                       <Text style={styles.resendButtonText}>Resend OTP</Text>
                     )}
@@ -795,7 +798,7 @@ export default function SignupScreen() {
               activeOpacity={0.8}
             >
               {isLoading || isAnimating ? (
-                <ActivityIndicator color="#000" />
+                <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <Text style={styles.primaryButtonText}>
                   {step === 1
@@ -830,7 +833,8 @@ export default function SignupScreen() {
                   style={styles.brandLogo}
                   resizeMode="contain"
                 />
-                <Text style={styles.brandName}>TizzyGo</Text>
+                {/* 🔵 Brand name changed: TizzyGo → TizzyOS */}
+                <Text style={styles.brandName}>TizzyOS</Text>
               </View>
               <View style={styles.builtWithRow}>
                 <Image
@@ -968,21 +972,23 @@ const styles = StyleSheet.create({
   dividerHorizontal: { height: 1, backgroundColor: 'rgba(0,0,0,0.1)' },
   termsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 10 },
   termsText: { flex: 1, fontSize: 14, color: '#555555', lineHeight: 22 },
-  termsLink: { color: '#10B981', fontWeight: '700' },
+  // 🔵 Terms link blue (was green)
+  termsLink: { color: '#3B82F6', fontWeight: '700' },
   primaryButton: {
     height: 56,
     borderRadius: 28,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 20,
-    shadowColor: '#5EE817',
+    // 🔵 Blue shadow (was green)
+    shadowColor: '#3B82F6',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.3,
     shadowRadius: 12,
     elevation: 6,
   },
   primaryButtonText: {
-    color: '#000000',
+    color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '800',
     letterSpacing: 0.5,
@@ -994,7 +1000,8 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   loginRedirectText: { fontSize: 14, color: '#555555', fontWeight: '500' },
-  loginRedirectLink: { fontSize: 14, color: '#10B981', fontWeight: '800' },
+  // 🔵 Login link blue (was green)
+  loginRedirectLink: { fontSize: 14, color: '#3B82F6', fontWeight: '800' },
   brandFooter: { alignItems: 'center', marginTop: 12, marginBottom: 10 },
   brandRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   brandLogo: { width: 24, height: 24, marginRight: 8, borderRadius: 4 },
@@ -1021,8 +1028,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  otpBoxFocused: { borderColor: '#5EE817', backgroundColor: '#FFFFFF' },
-  otpBoxFilled: { borderColor: '#5EE817' },
+  // 🔵 OTP focus state blue
+  otpBoxFocused: { borderColor: '#3B82F6', backgroundColor: '#FFFFFF' },
+  // 🔵 OTP filled state blue
+  otpBoxFilled: { borderColor: '#3B82F6' },
   otpBoxError: {
     borderColor: '#FF4D4D',
     backgroundColor: 'rgba(255, 77, 77, 0.1)',
@@ -1041,5 +1050,6 @@ const styles = StyleSheet.create({
   timerExpiredText: { fontSize: 14, color: '#FF4D4D', fontWeight: '600' },
   resendButton: { alignItems: 'center', marginTop: 12, paddingVertical: 8 },
   resendButtonDisabled: { opacity: 0.55 },
-  resendButtonText: { fontSize: 14, color: '#5EE817', fontWeight: '700' },
+  // 🔵 Resend text blue
+  resendButtonText: { fontSize: 14, color: '#3B82F6', fontWeight: '700' },
 });

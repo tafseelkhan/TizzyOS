@@ -14,12 +14,11 @@ import {
   StatusBar,
   View,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// ✅ NEW — API slice
+// ✅ combined theme+color API slice
 import {
-  getUserTheme,
-  updateUserTheme,
+  getThemeColor,
+  updateThemeColor,
   ThemeMode,
 } from '../../../api/features/private/themePrivateSlice';
 import { ApiError } from '../../../core/utils/handler/apiClient';
@@ -31,11 +30,18 @@ import { ApiError } from '../../../core/utils/handler/apiClient';
 type ColorScheme = 'light' | 'dark';
 
 interface ThemeContextType {
+  // Theme
   theme: ThemeMode;
   setTheme: (theme: ThemeMode) => Promise<void>;
   isDark: boolean;
   resolvedTheme: ColorScheme;
   systemColorScheme: ColorScheme;
+
+  // Accent color
+  color: string;
+  setColor: (color: string) => Promise<void>;
+
+  // Lifecycle
   refreshThemeFromAPI: () => Promise<void>;
   loading: boolean;
   error: string | null;
@@ -51,6 +57,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
   const [theme, setThemeState] = useState<ThemeMode>('system');
+  const [color, setColorState] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -105,29 +112,37 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [isDark]);
 
   // ============================================================
-  // ✅ REFRESH THEME FROM API (via slice)
+  // ✅ REFRESH THEME + COLOR FROM API (via slice)
   // ============================================================
 
   const refreshThemeFromAPI = useCallback(async (): Promise<void> => {
     try {
-      const remoteTheme = await getUserTheme();
+      const remote = await getThemeColor();
 
-      if (remoteTheme) {
-        if (__DEV__) {
-          console.log('🎨 Setting theme from API:', remoteTheme);
-        }
-        setThemeState(remoteTheme);
-        await AsyncStorage.setItem('app-theme', remoteTheme);
+      if (!remote) return;
+
+      if (__DEV__) {
+        console.log('🎨 Theme/color fetched from API:', remote);
+      }
+
+      // Apply theme if valid
+      if (remote.theme && ['light', 'dark', 'system'].includes(remote.theme)) {
+        setThemeState(remote.theme);
+      }
+
+      // Apply color if present
+      if (typeof remote.color === 'string') {
+        setColorState(remote.color);
       }
     } catch (err) {
       if (__DEV__) {
-        console.error('❌ Error refreshing theme from API:', err);
+        console.error('❌ Error refreshing theme/color from API:', err);
       }
     }
   }, []);
 
   // ============================================================
-  // ✅ LOAD THEME ON STARTUP
+  // ✅ LOAD THEME + COLOR ON STARTUP (server only)
   // ============================================================
 
   const loadTheme = useCallback(async () => {
@@ -135,14 +150,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
       setLoading(true);
       setError(null);
 
-      const savedTheme = await AsyncStorage.getItem('app-theme');
-      if (
-        savedTheme &&
-        ['light', 'dark', 'system'].includes(savedTheme)
-      ) {
-        setThemeState(savedTheme as ThemeMode);
-      }
-
+      // Pull everything from the server
       await refreshThemeFromAPI();
     } catch (err) {
       if (__DEV__) {
@@ -159,7 +167,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [loadTheme]);
 
   // ============================================================
-  // ✅ SET THEME (via slice)
+  // ✅ SET THEME (via combined API)
   // ============================================================
 
   const handleSetTheme = async (newTheme: ThemeMode): Promise<void> => {
@@ -167,26 +175,15 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
       setLoading(true);
       setError(null);
 
-      // Optimistic update (local first)
+      // Optimistic update (in-memory only)
       setThemeState(newTheme);
-      await AsyncStorage.setItem('app-theme', newTheme);
-
-      // Check if user is logged in — if not, skip API call
-      const token = await AsyncStorage.getItem('authToken');
-      if (!token) {
-        if (__DEV__) {
-          console.log('👤 No user token, theme saved locally only');
-        }
-        return;
-      }
 
       // Sync with backend
-      const serverTheme = await updateUserTheme(newTheme);
+      const result = await updateThemeColor({ theme: newTheme });
 
       // If server normalized the theme (rare), apply it
-      if (serverTheme !== newTheme) {
-        setThemeState(serverTheme);
-        await AsyncStorage.setItem('app-theme', serverTheme);
+      if (result.theme && result.theme !== newTheme) {
+        setThemeState(result.theme);
       }
 
       if (__DEV__) {
@@ -197,17 +194,78 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
         console.error('❌ Error setting theme:', err);
       }
 
-      const isNetwork =
-        err instanceof ApiError && err.status === 0;
+      const isNetwork = err instanceof ApiError && err.status === 0;
       const errorMsg = isNetwork
-        ? 'Network error. Theme saved locally.'
-        : 'Server error. Theme saved locally.';
+        ? 'Network error. Please try again.'
+        : 'Server error. Please try again.';
 
       setError(errorMsg);
 
-      Alert.alert('Theme Updated', errorMsg, [
+      Alert.alert('Theme Update Failed', errorMsg, [
         { text: 'OK', onPress: () => setError(null) },
       ]);
+
+      // Revert optimistic update on failure
+      // (server state is the source of truth)
+      await refreshThemeFromAPI();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ============================================================
+  // ✅ SET COLOR (via combined API)
+  // ============================================================
+
+  const handleSetColor = async (newColor: string): Promise<void> => {
+    const trimmed = newColor.trim();
+
+    if (!trimmed) {
+      setError('Color cannot be empty');
+      return;
+    }
+
+    if (trimmed.length > 32) {
+      setError('Color value is too long');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      // Optimistic update (in-memory only)
+      setColorState(trimmed);
+
+      // Sync with backend
+      const result = await updateThemeColor({ color: trimmed });
+
+      // If server normalized the color, apply it
+      if (result.color && result.color !== trimmed) {
+        setColorState(result.color);
+      }
+
+      if (__DEV__) {
+        console.log('🎉 Color synced with backend');
+      }
+    } catch (err: any) {
+      if (__DEV__) {
+        console.error('❌ Error setting color:', err);
+      }
+
+      const isNetwork = err instanceof ApiError && err.status === 0;
+      const errorMsg = isNetwork
+        ? 'Network error. Please try again.'
+        : 'Server error. Please try again.';
+
+      setError(errorMsg);
+
+      Alert.alert('Color Update Failed', errorMsg, [
+        { text: 'OK', onPress: () => setError(null) },
+      ]);
+
+      // Revert optimistic update on failure
+      await refreshThemeFromAPI();
     } finally {
       setLoading(false);
     }
@@ -223,6 +281,10 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
     isDark,
     resolvedTheme,
     systemColorScheme: systemTheme,
+
+    color,
+    setColor: handleSetColor,
+
     refreshThemeFromAPI,
     loading,
     error,

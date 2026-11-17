@@ -1,5 +1,5 @@
-// SettingsScreen.tsx - FINAL FIXED VERSION (Only Orders + Dark Mode)
-// Push Notification & Biometric code COMMENTED (not removed)
+// SettingsScreen.tsx - FINAL FIXED VERSION
+// Uses `me()` for profile + ThemeContext (theme + color)
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
@@ -18,7 +18,6 @@ import {
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import MaterialCommunityIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import FeatherIcon from 'react-native-vector-icons/Feather';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import LottieView from 'lottie-react-native';
 import { SettingsItem } from './SettingItem';
 import {
@@ -28,7 +27,9 @@ import {
 } from '../../types/Settings';
 import { useTheme } from '../../contexts/theme/ThemeContext';
 import { useNavigation } from '@react-navigation/native';
-import { profileApi } from '../../../api/features/private/profilePrivateSlice';
+
+// ✅ `me` API — same file jahan se auth APIs aati hain
+import { me } from '../../../api/features/public/authPublicSlice';
 
 // Helper function to get image URL
 const getImageUrl = (image?: string): string => {
@@ -48,17 +49,11 @@ export const SettingsScreen: React.FC = () => {
     isDark,
     resolvedTheme,
     loading: themeLoading,
+    color,          // ✅ NEW — accent color from ThemeContext
   } = useTheme();
+
   const [previewImage, setPreviewImage] = useState('');
-
-  // ✅ Push Notification state - COMMENTED but kept
-  // const [notifications, setNotifications] = useState(true);
-
   const [themeModal, setThemeModal] = useState(false);
-
-  // ✅ Biometric state - COMMENTED but kept
-  // const [biometric, setBiometric] = useState(false);
-
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [imageError, setImageError] = useState(false);
@@ -68,35 +63,49 @@ export const SettingsScreen: React.FC = () => {
     fetchProfile();
   }, []);
 
+  // ============================================================
+  // ✅ FETCH PROFILE VIA me()
+  // ============================================================
   const fetchProfile = async () => {
     try {
       setLoading(true);
-      const data = await profileApi.getProfile();
 
-      console.log('✅ Profile data received:', JSON.stringify(data, null, 2));
+      const response = await me();
 
-      if (data) {
-        const profile: ProfileData = {
-          _id: data.userId || data._id || '',
-          name: data.name || '',
-          image: data.image || '',
-          email: data.email || '',
-          phone: data.phone || '',
-          joinDate: data.joinDate || new Date().toISOString(),
-          verified: data.verified || false,
-        };
-
-        setProfileData(profile);
-
-        const imageUrl = getImageUrl(profile.image);
-        console.log('🖼️ Setting image URL:', imageUrl);
-        setPreviewImage(imageUrl);
-      } else {
-        throw new Error('Invalid profile data received');
+      if (!response?.success || !response?.user) {
+        throw new Error(response?.message || 'Invalid profile response');
       }
+
+      const user = response.user;
+
+      // Build a display name from firstName + lastName + username
+      const fullName =
+        [user.firstName, user.lastName].filter(Boolean).join(' ').trim() ||
+        user.displayName ||
+        user.username ||
+        '';
+
+      const profile: ProfileData = {
+        _id: user.id || '',
+        name: fullName,
+        image: user.profilePhoto || '',
+        email: '', // me() response mein email nahi hai
+        phone: user.phone || '',
+        joinDate: user.createdAt || new Date().toISOString(),
+        verified: user.phoneVerified ? 'Verified' : 'Not verified',
+      };
+
+      setProfileData(profile);
+
+      const imageUrl = getImageUrl(profile.image);
+      setPreviewImage(imageUrl);
+      setImageError(false);
     } catch (error: any) {
       console.error('❌ Profile fetch error:', error);
-      Alert.alert('Error', error.message || 'Failed to load profile');
+      Alert.alert(
+        'Error',
+        error?.message || 'Failed to load profile',
+      );
     } finally {
       setLoading(false);
     }
@@ -107,23 +116,14 @@ export const SettingsScreen: React.FC = () => {
   );
 
   const handleItemPress = (segment: string) => {
-    // ✅ SIRF YourOrders ka navigation kaam karega
     if (segment === 'YourOrders') {
       navigation.navigate('YourOrders' as never);
     } else {
       console.log('🔒 Feature disabled:', segment);
-      // ❌ Baaki sab buttons disabled - kuch nahi hoga
     }
   };
 
-  // ✅ Biometric toggle function - COMMENTED but kept
-  // const handleBiometricToggle = (value: boolean) => {
-  //   setBiometric(value);
-  //   // ❌ Disabled - kuch nahi hoga
-  // };
-
   const handleLogout = async () => {
-    // ❌ Logout disabled
     console.log('🔒 Logout disabled');
     Alert.alert('Info', 'Logout feature is currently disabled');
   };
@@ -213,7 +213,6 @@ export const SettingsScreen: React.FC = () => {
 
   // ✅ ONLY TWO ITEMS: Appearance (Dark Mode) + Your Orders
   const settingsData: SettingsItemType[] = [
-    // ✅ 1. Appearance / Dark Mode Button - ACTIVE
     {
       segment: ``,
       title: 'Appearance',
@@ -231,7 +230,6 @@ export const SettingsScreen: React.FC = () => {
       ),
     },
     { kind: 'divider' } as SettingsItemType,
-    // ✅ 2. Your Orders Button - ACTIVE
     {
       segment: `YourOrders`,
       title: 'Your Orders',
@@ -245,58 +243,6 @@ export const SettingsScreen: React.FC = () => {
         />
       ),
     },
-    // ❌ All other buttons are COMMENTED / REMOVED
-    // {
-    //   kind: 'header',
-    //   title: 'AI & Preferences',
-    // } as SettingsItemType,
-    // {
-    //   segment: `xai-nexmind/tizzygo`,
-    //   title: 'XAI-NexMind',
-    //   icon: <Sparkles />,
-    //   value: 'AI Assistant',
-    //   rightElement: <Icon name="keyboard-arrow-right" size={24} color={isDark ? '#94A3B8' : '#64748B'} />,
-    // },
-    // {
-    //   kind: 'header',
-    //   title: 'Security & Account',
-    // } as SettingsItemType,
-    // {
-    //   segment: `security`,
-    //   title: 'Security Settings',
-    //   icon: <Icon name="security" size={24} color="#EF4444" />,
-    //   value: 'Do have any changes. Please enter your issue here!',
-    //   rightElement: <Icon name="keyboard-arrow-right" size={24} color={isDark ? '#94A3B8' : '#64748B'} />,
-    // },
-    // {
-    //   segment: `privacy`,
-    //   title: 'Privacy Policy',
-    //   icon: <Icon name="privacy-tip" size={24} color="#6B7280" />,
-    //   value: 'Did You have any questions? Click this.',
-    //   rightElement: <Icon name="keyboard-arrow-right" size={24} color={isDark ? '#94A3B8' : '#64748B'} />,
-    // },
-    // {
-    //   segment: `help`,
-    //   title: 'Help & Support',
-    //   icon: <Icon name="help-center" size={24} color="#8B5CF6" />,
-    //   value: 'Contact us',
-    //   rightElement: <Icon name="keyboard-arrow-right" size={24} color={isDark ? '#94A3B8' : '#64748B'} />,
-    // },
-    // {
-    //   segment: `about`,
-    //   title: 'About App',
-    //   icon: <Icon name="info" size={24} color="#06B6D4" />,
-    //   value: 'Version 2.4.1',
-    //   rightElement: <Icon name="keyboard-arrow-right" size={24} color={isDark ? '#94A3B8' : '#64748B'} />,
-    // },
-    // {
-    //   segment: ``,
-    //   title: 'Logout',
-    //   icon: <Icon name="logout" size={24} color="#F44336" />,
-    //   value: 'Sign out',
-    //   onPress: handleLogout,
-    //   rightElement: <Icon name="keyboard-arrow-right" size={24} color={isDark ? '#94A3B8' : '#64748B'} />,
-    // },
   ];
 
   // ✅ Render profile image component
@@ -358,13 +304,13 @@ export const SettingsScreen: React.FC = () => {
         { backgroundColor: isDark ? '#0F172A' : '#F8FAFC' },
       ]}
     >
-      {/* Header with Back Button */}
+      {/* Header */}
       <View
         style={[
           styles.header,
           {
             backgroundColor: isDark ? '#1E293B' : 'white',
-            shadowColor: isDark ? '#000' : '#000',
+            shadowColor: '#000',
           },
         ]}
       >
@@ -419,127 +365,52 @@ export const SettingsScreen: React.FC = () => {
           />
         ))}
 
-        {/* ✅ Push Notifications & Biometric - COMMENTED but kept */}
-        <View
-          style={[
-            styles.toggleContainer,
-            {
-              backgroundColor: isDark ? '#1E293B' : 'white',
-              shadowColor: isDark ? '#000' : '#000',
-            },
-          ]}
-        >
-          {/* 
-          // ✅ PUSH NOTIFICATIONS - COMMENTED 
-          <View style={styles.toggleItem}>
-            <View style={styles.toggleLeft}>
-              <View
-                style={[
-                  styles.iconContainer,
-                  { backgroundColor: isDark ? '#334155' : '#FEF3F2' },
-                ]}
-              >
-                <Icon name="notifications" size={24} color="#DC2626" />
-              </View>
-              <View>
-                <Text
-                  style={[
-                    styles.toggleTitle,
-                    { color: isDark ? '#F1F5F9' : '#1E293B' },
-                  ]}
-                >
-                  Push Notifications
-                </Text>
-                <Text
-                  style={[
-                    styles.toggleSubtitle,
-                    { color: isDark ? '#94A3B8' : '#64748B' },
-                  ]}
-                >
-                  Order updates & reminders
-                </Text>
-              </View>
-            </View>
-            <Switch
-              value={notifications}
-              onValueChange={() => {}} // ❌ Do nothing
-              trackColor={{
-                false: isDark ? '#374151' : '#E5E7EB',
-                true: '#10B981',
-              }}
-              thumbColor={isDark ? '#94A3B8' : '#F1F5F9'}
-            />
-          </View>
-          */}
-
-          {/* 
-          // ✅ BIOMETRIC LOGIN - COMMENTED 
-          <View style={styles.toggleItem}>
-            <View style={styles.toggleLeft}>
-              <View
-                style={[
-                  styles.iconContainer,
-                  { backgroundColor: isDark ? '#334155' : '#FEF7CD' },
-                ]}
-              >
-                <Icon name="fingerprint" size={24} color="#D97706" />
-              </View>
-              <View>
-                <Text
-                  style={[
-                    styles.toggleTitle,
-                    { color: isDark ? '#F1F5F9' : '#1E293B' },
-                  ]}
-                >
-                  Biometric Login
-                </Text>
-                <Text
-                  style={[
-                    styles.toggleSubtitle,
-                    { color: isDark ? '#94A3B8' : '#64748B' },
-                  ]}
-                >
-                  Use fingerprint or face ID
-                </Text>
-              </View>
-            </View>
-            <Switch
-              value={biometric}
-              onValueChange={() => {}} // ❌ Do nothing
-              trackColor={{
-                false: isDark ? '#374151' : '#E5E7EB',
-                true: '#10B981',
-              }}
-              thumbColor={isDark ? '#94A3B8' : '#F1F5F9'}
-            />
-          </View>
-          */}
-        </View>
-
-        {/* 
-        // ✅ APP INFO - COMMENTED 
-        <View style={styles.appInfo}>
-          <Text
+        {/* ✅ Color preview (optional) — shows current accent color */}
+        {!!color && (
+          <View
             style={[
-              styles.appVersion,
-              { color: isDark ? '#94A3B8' : '#94A3B8' },
+              styles.toggleContainer,
+              {
+                backgroundColor: isDark ? '#1E293B' : 'white',
+                shadowColor: '#000',
+              },
             ]}
           >
-            Version 2.4.1
-          </Text>
-          <Text
-            style={[
-              styles.appCopyright,
-              { color: isDark ? '#64748B' : '#CBD5E1' },
-            ]}
-          >
-            © 2024 XAI-NexMind. All rights reserved.
-          </Text>
-        </View>
-        */}
+            <View style={styles.toggleItem}>
+              <View style={styles.toggleLeft}>
+                <View
+                  style={[
+                    styles.iconContainer,
+                    { backgroundColor: color || '#6366F1' },
+                  ]}
+                >
+                  <Icon name="color-lens" size={24} color="#FFFFFF" />
+                </View>
+                <View>
+                  <Text
+                    style={[
+                      styles.toggleTitle,
+                      { color: isDark ? '#F1F5F9' : '#1E293B' },
+                    ]}
+                  >
+                    Accent Color
+                  </Text>
+                  <Text
+                    style={[
+                      styles.toggleSubtitle,
+                      { color: isDark ? '#94A3B8' : '#64748B' },
+                    ]}
+                  >
+                    {color}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          </View>
+        )}
       </ScrollView>
 
-      {/* ✅ Theme Modal - ACTIVE (Dark Mode) */}
+      {/* ✅ Theme Modal */}
       <Modal
         visible={themeModal}
         transparent={true}
@@ -688,20 +559,6 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   toggleSubtitle: { fontSize: 14 },
-  appInfo: {
-    alignItems: 'center',
-    padding: 24,
-    paddingBottom: 32,
-  },
-  appVersion: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  appCopyright: {
-    fontSize: 12,
-    textAlign: 'center',
-  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
